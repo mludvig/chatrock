@@ -40,6 +40,7 @@ interface ChatState {
   appendThinkingDelta: (text: string) => void
   markThinkingDone: () => void
   addToolCall: (tc: ToolCall) => void
+  updateToolCallInput: (toolUseId: string, input: string) => void
   resolveToolCall: (toolUseId: string, result: string, isError: boolean) => void
   finalizeStream: (content: string) => void
   clearStream: () => void
@@ -102,6 +103,15 @@ export const useChatStore = create<ChatState>()(
           ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
           toolCalls: [...(s.streamingMsg?.toolCalls ?? []), tc],
         } as StreamingMsg,
+      })),
+
+      updateToolCallInput: (toolUseId, input) => set((s) => ({
+        streamingMsg: s.streamingMsg ? {
+          ...s.streamingMsg,
+          toolCalls: (s.streamingMsg.toolCalls ?? []).map(tc =>
+            tc.toolUseId === toolUseId ? { ...tc, input } : tc
+          ),
+        } : null,
       })),
 
       resolveToolCall: (toolUseId, result, isError) => set((s) => ({

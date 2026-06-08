@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGear, faPaperPlane, faXmark, faCheck } from '@fortawesome/free-solid-svg-icons'
+import { faGear, faPaperPlane, faXmark, faCheck, faBrain } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
 import type { Model } from '../api/http'
 import { sendMessage, ensureConnected, setWSHandlers } from '../api/ws'
@@ -24,7 +24,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const {
     chats, messages, streamingMsg,
     setMessages, appendDelta, appendThinkingDelta, markThinkingDone,
-    addToolCall, resolveToolCall, finalizeStream, clearStream,
+    addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream,
     renameChat, sending, setSending, updateChatSystemPrompt,
   } = useChatStore()
 
@@ -35,6 +35,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // For existing chats
   const [editingSystemPrompt, setEditingSystemPrompt] = useState('')
   const [showSettings, setShowSettings] = useState(false)
+  const [thinkingBudget, setThinkingBudget] = useState(0)
 
   const [input, setInput] = useState('')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -60,10 +61,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         appendThinkingDelta(evt.text)
       } else if (evt.type === 'thinking_done') {
         markThinkingDone()
+      } else if (evt.type === 'tool_call_start') {
+        addToolCall({ toolUseId: evt.toolUseId, name: evt.name, input: '' })
       } else if (evt.type === 'tool_call') {
-        addToolCall({ toolUseId: evt.toolUseId, name: evt.name, input: evt.input })
+        updateToolCallInput(evt.toolUseId, evt.input)
       } else if (evt.type === 'tool_result') {
-        resolveToolCall(evt.toolUseId, '', evt.isError)
+        resolveToolCall(evt.toolUseId, evt.content ?? '', evt.isError)
       } else if (evt.type === 'done') {
         const content = streamBuf.current
         streamBuf.current = ''
@@ -77,16 +80,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         setErrorMsg(evt.message)
       }
     })
-  }, [appendDelta, finalizeStream, clearStream, renameChat, setSending])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream, renameChat, setSending])
 
-  // Load messages when navigating to an existing chat
+  // Load messages when navigating to an existing chat — skip during active send to
+  // avoid wiping optimistic messages before they're persisted to DynamoDB.
   useEffect(() => {
     if (isNew || !chatId) {
       setMessages([])
       return
     }
+    if (sending) return
     api.listMessages(chatId).then(r => setMessages(r.messages))
-  }, [chatId, isNew, setMessages])
+  }, [chatId, isNew, setMessages, sending])
 
   // Auto-scroll
   useEffect(() => {
@@ -126,7 +131,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           updatedAt: now,
         })
         await ensureConnected(accessToken)
-        sendMessage({ chatId: res.chatId, content, model, systemPrompt })
+        sendMessage({ chatId: res.chatId, content, model, systemPrompt, thinkingBudget })
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
         setSending(false)
@@ -156,6 +161,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         content,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
+        thinkingBudget,
       })
     } catch (err) {
       setSending(false)
@@ -227,6 +233,24 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             value={newSystemPrompt}
             onChange={e => setNewSystemPrompt(e.target.value)}
           />
+          <div className="thinking-setting">
+            <label className="thinking-label">
+              <FontAwesomeIcon icon={faBrain} />
+              <span>Thinking budget: {thinkingBudget === 0 ? 'Off' : `${thinkingBudget.toLocaleString()} tokens`}</span>
+              {thinkingBudget > 0 && currentModel !== 'global.anthropic.claude-opus-4-8' && (
+                <span className="thinking-warn">(Opus 4.8 only)</span>
+              )}
+            </label>
+            <input
+              type="range"
+              className="thinking-slider"
+              min={0}
+              max={8192}
+              step={256}
+              value={thinkingBudget}
+              onChange={e => setThinkingBudget(Number(e.target.value))}
+            />
+          </div>
         </div>
       )}
 
@@ -241,6 +265,24 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             value={editingSystemPrompt}
             onChange={e => setEditingSystemPrompt(e.target.value)}
           />
+          <div className="thinking-setting">
+            <label className="thinking-label">
+              <FontAwesomeIcon icon={faBrain} />
+              <span>Thinking budget: {thinkingBudget === 0 ? 'Off' : `${thinkingBudget.toLocaleString()} tokens`}</span>
+              {thinkingBudget > 0 && currentModel !== 'global.anthropic.claude-opus-4-8' && (
+                <span className="thinking-warn">(Opus 4.8 only)</span>
+              )}
+            </label>
+            <input
+              type="range"
+              className="thinking-slider"
+              min={0}
+              max={8192}
+              step={256}
+              value={thinkingBudget}
+              onChange={e => setThinkingBudget(Number(e.target.value))}
+            />
+          </div>
           <div className="settings-actions">
             <button className="btn-icon" onClick={() => setShowSettings(false)} title="Cancel">
               <FontAwesomeIcon icon={faXmark} />

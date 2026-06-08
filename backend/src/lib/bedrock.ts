@@ -18,6 +18,7 @@ export type StreamChunk =
   | { type: 'thinking_delta'; text: string }
   | { type: 'thinking_done' }
   | { type: 'delta'; text: string }
+  | { type: 'tool_call_start'; toolUseId: string; name: string }
   | { type: 'tool_call'; toolUseId: string; name: string; input: string }
   | { type: 'tool_result'; toolUseId: string; name: string; content: string; isError: boolean }
   | { type: 'stop'; stopReason: string }
@@ -35,13 +36,17 @@ async function* streamOneTurn(
   systemPrompt: string,
   messages: Message[],
   tools: Tool[],
+  thinkingBudget = 0,
 ): AsyncGenerator<StreamChunk, TurnResult> {
   const cmd = new ConverseStreamCommand({
     modelId,
     system: systemPrompt ? [{ text: systemPrompt }] : undefined,
     messages,
-    inferenceConfig: { maxTokens: 8192 },
+    inferenceConfig: { maxTokens: thinkingBudget > 0 ? thinkingBudget + 8192 : 8192 },
     ...(tools.length > 0 ? { toolConfig: { tools } } : {}),
+    ...(thinkingBudget > 0 ? {
+      additionalModelRequestFields: { thinking: { type: 'enabled', budget_tokens: thinkingBudget } },
+    } : {}),
   })
 
   const res = await bedrockClient.send(cmd)
@@ -62,6 +67,7 @@ async function* streamOneTurn(
       if (start?.toolUse) {
         blockType[idx] = 'toolUse'
         toolUseAcc[idx] = { toolUseId: start.toolUse.toolUseId ?? '', name: start.toolUse.name ?? '', inputJson: '' }
+        yield { type: 'tool_call_start', toolUseId: start.toolUse.toolUseId ?? '', name: start.toolUse.name ?? '' }
       } else {
         blockType[idx] = 'text'
       }
@@ -118,13 +124,14 @@ export async function* converseStream(
   modelId: string,
   systemPrompt: string,
   messages: Message[],
+  thinkingBudget = 0,
 ): AsyncGenerator<StreamChunk> {
   const tools = WEB_TOOLS
   const conversation: Message[] = [...messages]
 
   // Safety cap: max 5 tool-use rounds before forcing a final answer
   for (let round = 0; round < 5; round++) {
-    const gen = streamOneTurn(modelId, systemPrompt, conversation, tools)
+    const gen = streamOneTurn(modelId, systemPrompt, conversation, tools, thinkingBudget)
     let result: TurnResult | undefined
 
     // Drain the generator, forwarding chunks to caller

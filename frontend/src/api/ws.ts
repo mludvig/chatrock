@@ -4,8 +4,9 @@ export type WSEvent =
   | { type: 'delta';          text: string }
   | { type: 'thinking_delta'; text: string }
   | { type: 'thinking_done' }
+  | { type: 'tool_call_start'; toolUseId: string; name: string }
   | { type: 'tool_call';      toolUseId: string; name: string; input: string }
-  | { type: 'tool_result';    toolUseId: string; name: string; isError: boolean }
+  | { type: 'tool_result';    toolUseId: string; name: string; isError: boolean; content?: string }
   | { type: 'done';           stopReason: string }
   | { type: 'titleUpdated';   chatId: string; title: string }
   | { type: 'error';          message: string }
@@ -54,6 +55,7 @@ export function sendMessage(payload: {
   content: string
   model: string
   systemPrompt: string
+  thinkingBudget?: number
 }) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     throw new Error('WebSocket not connected')
