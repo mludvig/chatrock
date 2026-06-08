@@ -610,6 +610,167 @@ body {
   gap: 10px;
 }
 
+// ── Thinking block ────────────────────────────────────────────────────────────
+.thinking-block {
+  margin-bottom: 10px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: $surface2;
+  border: none;
+  padding: 7px 10px;
+  cursor: pointer;
+  color: $muted;
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.12s;
+
+  &:hover { background: color.adjust($surface2, $lightness: -3%); }
+
+  .thinking-spinner { margin-left: auto; }
+}
+
+.thinking-body {
+  padding: 10px 12px;
+  background: $surface;
+  color: $muted;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+// ── Tool call pills ───────────────────────────────────────────────────────────
+.tool-pill {
+  margin-bottom: 8px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+
+  &.pending .tool-status { color: $muted; }
+  &.error   .tool-status { color: $danger; }
+  &:not(.pending):not(.error) .tool-status { color: #16a34a; }
+}
+
+.tool-pill-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: $surface2;
+  border: none;
+  padding: 7px 10px;
+  cursor: pointer;
+  color: $text;
+  font-size: 13px;
+  text-align: left;
+  transition: background 0.12s;
+
+  &:hover { background: color.adjust($surface2, $lightness: -3%); }
+
+  .tool-icon   { color: $accent; flex-shrink: 0; }
+  .tool-label  { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: $muted; }
+  .tool-status { flex-shrink: 0; }
+  .tool-chevron { flex-shrink: 0; color: $muted; font-size: 11px; }
+}
+
+.tool-result-body {
+  padding: 10px 12px;
+  background: $surface;
+  border-top: 1px solid $border;
+
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+    line-height: 1.5;
+    color: $muted;
+    margin: 0;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+}
+
+// ── Markdown rendering ────────────────────────────────────────────────────────
+.md {
+  line-height: 1.65;
+
+  p  { margin: 0 0 0.75em; &:last-child { margin-bottom: 0; } }
+  h1, h2, h3, h4 { font-weight: 600; margin: 1em 0 0.4em; line-height: 1.3; }
+  h1 { font-size: 1.25em; }
+  h2 { font-size: 1.1em; }
+  h3 { font-size: 1em; }
+
+  ul, ol { padding-left: 1.4em; margin: 0.4em 0 0.75em; }
+  li { margin-bottom: 0.2em; }
+
+  code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.875em;
+    background: $surface2;
+    border: 1px solid $border;
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  pre {
+    background: #1e1e2e;
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0.6em 0;
+
+    code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: #cdd6f4;
+      font-size: 0.85em;
+    }
+  }
+
+  blockquote {
+    border-left: 3px solid $accent;
+    margin: 0.5em 0;
+    padding: 4px 12px;
+    color: $muted;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.6em 0;
+    font-size: 0.9em;
+
+    th, td {
+      border: 1px solid $border;
+      padding: 6px 10px;
+      text-align: left;
+    }
+    th { background: $surface2; font-weight: 600; }
+  }
+
+  a { color: $accent; text-decoration: none; &:hover { text-decoration: underline; } }
+
+  hr { border: none; border-top: 1px solid $border; margin: 1em 0; }
+}
+
+// For user messages, code inside still gets a readable style
+.message.user .md code { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.2); color: #fff; }
+.message.user .md a    { color: rgba(255,255,255,0.9); }
+
 // ── Scrollbar ─────────────────────────────────────────────────────────────────
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
