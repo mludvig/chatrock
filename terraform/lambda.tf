@@ -7,6 +7,7 @@ locals {
     DYNAMO_TABLE                        = aws_dynamodb_table.chatrock.name
     COGNITO_USER_POOL_ID                = aws_cognito_user_pool.chatrock.id
     COGNITO_CLIENT_ID                   = aws_cognito_user_pool_client.spa.id
+    JINA_API_KEY                        = var.jina_api_key
     AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
   }
 }

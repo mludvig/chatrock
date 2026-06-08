@@ -1,10 +1,14 @@
 import { ENV } from '../env'
 
 export type WSEvent =
-  | { type: 'delta';        text: string }
-  | { type: 'done';         stopReason: string }
-  | { type: 'titleUpdated'; chatId: string; title: string }
-  | { type: 'error';        message: string }
+  | { type: 'delta';          text: string }
+  | { type: 'thinking_delta'; text: string }
+  | { type: 'thinking_done' }
+  | { type: 'tool_call';      toolUseId: string; name: string; input: string }
+  | { type: 'tool_result';    toolUseId: string; name: string; isError: boolean }
+  | { type: 'done';           stopReason: string }
+  | { type: 'titleUpdated';   chatId: string; title: string }
+  | { type: 'error';          message: string }
 
 type EventHandler = (evt: WSEvent) => void
 
