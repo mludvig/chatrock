@@ -9,3 +9,5 @@ terraform/terraform.tfvars
 terraform/terraform.tfvars.json
 frontend/dist/
 .env*
+.screenshots/
+.playwright-mcp/

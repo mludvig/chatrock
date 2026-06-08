@@ -8,18 +8,19 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-apigatewaymanagementapi": "^3",
+    "@aws-sdk/client-bedrock-runtime": "^3",
     "@aws-sdk/client-dynamodb": "^3",
     "@aws-sdk/lib-dynamodb": "^3",
-    "@aws-sdk/client-bedrock-runtime": "^3",
-    "@aws-sdk/client-apigatewaymanagementapi": "^3",
     "aws-jwt-verify": "^4",
     "uuid": "^9"
   },
   "devDependencies": {
+    "@types/archiver": "^6",
     "@types/aws-lambda": "^8",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20",
     "@types/uuid": "^9",
-    "@types/archiver": "^6",
     "archiver": "^7",
     "esbuild": "^0.21",
     "jest": "^29",
@@ -29,6 +30,8 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "node",
-    "testMatch": ["**/tests/**/*.test.ts"]
+    "testMatch": [
+      "**/tests/**/*.test.ts"
+    ]
   }
 }
