@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { Message } from '@aws-sdk/client-bedrock-runtime'
 import { getConnection, getChat, listMessages, putMessage, updateChatTitle, buildMsgKey } from '../lib/dynamo'
 import { converseStream, converseOnce } from '../lib/bedrock'
-import { TITLE_MODEL } from '../config/models'
+import { TITLE_MODEL, type ModelSettings } from '../config/models'
 
 interface WSSendEvent {
   requestContext: {
@@ -26,9 +26,9 @@ export const buildHandler = (postFn: PostFn) => async (
     content: string
     model: string
     systemPrompt: string
-    thinkingBudget?: number
+    modelSettings?: ModelSettings
   }
-  const { chatId, content, model, systemPrompt, thinkingBudget = 0 } = body
+  const { chatId, content, model, systemPrompt, modelSettings = {} } = body
 
   const conn = await getConnection(connId)
   if (!conn) return { statusCode: 410, body: 'Gone' }
@@ -62,7 +62,7 @@ export const buildHandler = (postFn: PostFn) => async (
   let fullText = ''
 
   try {
-    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages, thinkingBudget)) {
+    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages, modelSettings)) {
       switch (chunk.type) {
         case 'thinking_delta':
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })

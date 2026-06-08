@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGear, faPaperPlane, faXmark, faCheck, faBrain } from '@fortawesome/free-solid-svg-icons'
-import { api } from '../api/http'
-import type { Model } from '../api/http'
+import { faGear, faPaperPlane, faXmark, faCheck } from '@fortawesome/free-solid-svg-icons'
+import { api, defaultSettings, migrateSettings } from '../api/http'
+import type { Model, ModelSettings, ModelCapabilities } from '../api/http'
 import { sendMessage, ensureConnected, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble from './MessageBubble'
+import ModelSettingsPanel from './ModelSettingsPanel'
 
 interface Props {
   accessToken: string
@@ -35,7 +36,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // For existing chats
   const [editingSystemPrompt, setEditingSystemPrompt] = useState('')
   const [showSettings, setShowSettings] = useState(false)
-  const [thinkingBudget, setThinkingBudget] = useState(0)
+
+  // Per-session model settings — derived from selected model's capabilities
+  const [modelSettings, setModelSettings] = useState<ModelSettings>({})
 
   const [input, setInput] = useState('')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -45,11 +48,26 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const streamBuf = useRef('')
 
   const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
+  const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
+  const currentModelDef = models.find(m => m.id === currentModelId)
+  const currentCaps: ModelCapabilities = currentModelDef?.capabilities
+    ?? { temperature: true, topP: true, topK: false, thinking: 'none' }
 
   // Sync newModel when defaultModel resolves (models loaded async)
   useEffect(() => {
     if (isNew && defaultModel && !newModel) setNewModel(defaultModel)
   }, [defaultModel, isNew, newModel])
+
+  // Initialise modelSettings when the current model's capabilities are first known
+  useEffect(() => {
+    if (currentModelDef) {
+      setModelSettings(s => {
+        // Only re-initialise if settings are empty (first load or model change handled elsewhere)
+        if (Object.keys(s).length === 0) return defaultSettings(currentModelDef.capabilities)
+        return s
+      })
+    }
+  }, [currentModelDef])
 
   // Register WS event handler
   useEffect(() => {
@@ -105,12 +123,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setErrorMsg(null)
 
     if (isNew) {
-      // Create the chat server-side first, then send
       setCreatingChat(true)
       const model = newModel || defaultModel
       const systemPrompt = newSystemPrompt
 
-      // Optimistically show the user message
       setSending(true)
       setMessages([
         { msgId: crypto.randomUUID(), role: 'user', content, model: '', createdAt: new Date().toISOString() },
@@ -118,8 +134,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       streamBuf.current = ''
 
       try {
-        // onChatCreated creates the chat + navigates to /c/:chatId
-        // We need to send the WS message after navigation — handle via a one-shot flag
         const res = await api.createChat(model, systemPrompt)
         const now = new Date().toISOString()
         useChatStore.getState().addChat({
@@ -131,7 +145,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           updatedAt: now,
         })
         await ensureConnected(accessToken)
-        sendMessage({ chatId: res.chatId, content, model, systemPrompt, thinkingBudget })
+        sendMessage({ chatId: res.chatId, content, model, systemPrompt, modelSettings })
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
         setSending(false)
@@ -161,7 +175,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         content,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
-        thinkingBudget,
+        modelSettings,
       })
     } catch (err) {
       setSending(false)
@@ -171,6 +185,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   function handleModelChange(modelId: string) {
     onModelChange(modelId)
+    const newCaps = models.find(m => m.id === modelId)?.capabilities
+    if (newCaps) setModelSettings(s => migrateSettings(s, newCaps))
+
     if (isNew) {
       setNewModel(modelId)
       return
@@ -189,7 +206,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setShowSettings(false)
   }
 
-  const currentModel = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
 
   return (
@@ -199,7 +215,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         <div className="header-controls">
           <select
             className="model-select"
-            value={currentModel}
+            value={currentModelId}
             onChange={e => handleModelChange(e.target.value)}
             disabled={sending}
           >
@@ -207,92 +223,49 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
-          {!isNew && (
-            <button
-              className={`btn-icon${showSettings ? ' active' : ''}`}
-              onClick={() => {
-                setEditingSystemPrompt(activeChat?.systemPrompt ?? '')
-                setShowSettings(s => !s)
-              }}
-              title="Chat settings"
-            >
-              <FontAwesomeIcon icon={faGear} />
-            </button>
-          )}
+          <button
+            className={`btn-icon${showSettings ? ' active' : ''}`}
+            onClick={() => {
+              if (!isNew) setEditingSystemPrompt(activeChat?.systemPrompt ?? '')
+              setShowSettings(s => !s)
+            }}
+            title="Chat settings"
+          >
+            <FontAwesomeIcon icon={faGear} />
+          </button>
         </div>
       </div>
 
-      {/* System prompt editor for /c/new — shown inline above messages */}
-      {isNew && (
-        <div className="settings-panel new-chat-settings">
-          <label>System prompt <span className="hint">(optional)</span></label>
+      {/* Settings panel — shown for both new and existing chats */}
+      {showSettings && (
+        <div className={`settings-panel${isNew ? ' new-chat-settings' : ''}`}>
+          <label>System prompt{isNew && <span className="hint"> (optional)</span>}</label>
           <textarea
             className="system-prompt-input"
-            rows={2}
+            rows={isNew ? 2 : 4}
             placeholder="You are a helpful assistant…"
-            value={newSystemPrompt}
-            onChange={e => setNewSystemPrompt(e.target.value)}
+            value={isNew ? newSystemPrompt : editingSystemPrompt}
+            onChange={e => isNew ? setNewSystemPrompt(e.target.value) : setEditingSystemPrompt(e.target.value)}
           />
-          <div className="thinking-setting">
-            <label className="thinking-label">
-              <FontAwesomeIcon icon={faBrain} />
-              <span>Thinking budget: {thinkingBudget === 0 ? 'Off' : `${thinkingBudget.toLocaleString()} tokens`}</span>
-              {thinkingBudget > 0 && currentModel !== 'global.anthropic.claude-opus-4-8' && (
-                <span className="thinking-warn">(Opus 4.8 only)</span>
-              )}
-            </label>
-            <input
-              type="range"
-              className="thinking-slider"
-              min={0}
-              max={8192}
-              step={256}
-              value={thinkingBudget}
-              onChange={e => setThinkingBudget(Number(e.target.value))}
-            />
-          </div>
-        </div>
-      )}
 
-      {/* Settings panel for existing chats */}
-      {!isNew && showSettings && (
-        <div className="settings-panel">
-          <label>System prompt</label>
-          <textarea
-            className="system-prompt-input"
-            rows={4}
-            placeholder="You are a helpful assistant…"
-            value={editingSystemPrompt}
-            onChange={e => setEditingSystemPrompt(e.target.value)}
+          <ModelSettingsPanel
+            caps={currentCaps}
+            settings={modelSettings}
+            onChange={setModelSettings}
           />
-          <div className="thinking-setting">
-            <label className="thinking-label">
-              <FontAwesomeIcon icon={faBrain} />
-              <span>Thinking budget: {thinkingBudget === 0 ? 'Off' : `${thinkingBudget.toLocaleString()} tokens`}</span>
-              {thinkingBudget > 0 && currentModel !== 'global.anthropic.claude-opus-4-8' && (
-                <span className="thinking-warn">(Opus 4.8 only)</span>
-              )}
-            </label>
-            <input
-              type="range"
-              className="thinking-slider"
-              min={0}
-              max={8192}
-              step={256}
-              value={thinkingBudget}
-              onChange={e => setThinkingBudget(Number(e.target.value))}
-            />
-          </div>
-          <div className="settings-actions">
-            <button className="btn-icon" onClick={() => setShowSettings(false)} title="Cancel">
-              <FontAwesomeIcon icon={faXmark} />
-              <span>Cancel</span>
-            </button>
-            <button className="btn-primary btn-sm" onClick={saveSystemPrompt}>
-              <FontAwesomeIcon icon={faCheck} />
-              <span>Save</span>
-            </button>
-          </div>
+
+          {!isNew && (
+            <div className="settings-actions">
+              <button className="btn-icon" onClick={() => setShowSettings(false)} title="Cancel">
+                <FontAwesomeIcon icon={faXmark} />
+                <span>Cancel</span>
+              </button>
+              <button className="btn-primary btn-sm" onClick={saveSystemPrompt}>
+                <FontAwesomeIcon icon={faCheck} />
+                <span>Save</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -334,7 +307,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             }
           }}
           disabled={sending || creatingChat}
-          autoFocus={isNew}
+          autoFocus
         />
         <button
           className="btn-send"

@@ -7,6 +7,7 @@ import {
   type ContentBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import { executeTool, WEB_TOOLS } from './tools'
+import { getCapabilities, type ModelSettings } from '../config/models'
 
 export const bedrockClient = new BedrockRuntimeClient({
   region: process.env.AWS_REGION ?? 'ap-southeast-2',
@@ -31,22 +32,43 @@ interface TurnResult {
   toolUses: Array<{ toolUseId: string; name: string; inputJson: string }>
 }
 
+function buildInferenceParams(modelId: string, settings: ModelSettings) {
+  const caps = getCapabilities(modelId)
+  const thinkingActive = caps.thinking !== 'none' && settings.thinkingEffort && settings.thinkingEffort !== 'off'
+
+  // Temperature and topP must be omitted when thinking is active (API requirement)
+  const inferenceConfig: Record<string, unknown> = { maxTokens: 16000 }
+  if (!thinkingActive) {
+    if (caps.temperature && settings.temperature !== undefined) inferenceConfig.temperature = settings.temperature
+    if (caps.topP && settings.topP !== undefined) inferenceConfig.topP = settings.topP
+  }
+
+  const additionalFields: Record<string, unknown> = {}
+  if (caps.topK && settings.topK !== undefined) additionalFields.top_k = settings.topK
+  if (thinkingActive && caps.thinking === 'adaptive') {
+    additionalFields.thinking = { type: 'adaptive' }
+    additionalFields.output_config = { effort: settings.thinkingEffort }
+  }
+
+  return {
+    inferenceConfig,
+    ...(Object.keys(additionalFields).length > 0 ? { additionalModelRequestFields: additionalFields } : {}),
+  }
+}
+
 async function* streamOneTurn(
   modelId: string,
   systemPrompt: string,
   messages: Message[],
   tools: Tool[],
-  thinkingBudget = 0,
+  settings: ModelSettings,
 ): AsyncGenerator<StreamChunk, TurnResult> {
   const cmd = new ConverseStreamCommand({
     modelId,
     system: systemPrompt ? [{ text: systemPrompt }] : undefined,
     messages,
-    inferenceConfig: { maxTokens: thinkingBudget > 0 ? thinkingBudget + 8192 : 8192 },
+    ...buildInferenceParams(modelId, settings),
     ...(tools.length > 0 ? { toolConfig: { tools } } : {}),
-    ...(thinkingBudget > 0 ? {
-      additionalModelRequestFields: { thinking: { type: 'enabled', budget_tokens: thinkingBudget } },
-    } : {}),
   })
 
   const res = await bedrockClient.send(cmd)
@@ -124,14 +146,14 @@ export async function* converseStream(
   modelId: string,
   systemPrompt: string,
   messages: Message[],
-  thinkingBudget = 0,
+  settings: ModelSettings = {},
 ): AsyncGenerator<StreamChunk> {
   const tools = WEB_TOOLS
   const conversation: Message[] = [...messages]
 
   // Safety cap: max 5 tool-use rounds before forcing a final answer
   for (let round = 0; round < 5; round++) {
-    const gen = streamOneTurn(modelId, systemPrompt, conversation, tools, thinkingBudget)
+    const gen = streamOneTurn(modelId, systemPrompt, conversation, tools, settings)
     let result: TurnResult | undefined
 
     // Drain the generator, forwarding chunks to caller

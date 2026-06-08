@@ -1,4 +1,5 @@
 import { ENV } from '../env'
+import type { ModelSettings } from './http'
 
 export type WSEvent =
   | { type: 'delta';          text: string }
@@ -55,7 +56,7 @@ export function sendMessage(payload: {
   content: string
   model: string
   systemPrompt: string
-  thinkingBudget?: number
+  modelSettings?: ModelSettings
 }) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     throw new Error('WebSocket not connected')
