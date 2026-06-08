@@ -8,6 +8,7 @@ terraform/.terraform.lock.hcl
 terraform/terraform.tfvars
 terraform/terraform.tfvars.json
 frontend/dist/
+frontend/.deploy*
 .env*
 .screenshots/
 .playwright-mcp/
