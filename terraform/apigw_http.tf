@@ -102,6 +102,14 @@ resource "aws_apigatewayv2_route" "chats_delete" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
+resource "aws_apigatewayv2_route" "chats_retitle" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/chats/{chatId}/retitle"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
 resource "aws_apigatewayv2_route" "messages_list" {
   api_id             = aws_apigatewayv2_api.http.id
   route_key          = "GET /api/chats/{chatId}/messages"

@@ -32,8 +32,12 @@ data "aws_iam_policy_document" "lambda_policy" {
   }
 
   statement {
-    actions   = ["bedrock:InvokeModelWithResponseStream", "bedrock:InvokeModel"]
-    resources = ["arn:aws:bedrock:${var.aws_region}::foundation-model/*"]
+    actions = ["bedrock:InvokeModelWithResponseStream", "bedrock:InvokeModel"]
+    resources = [
+      "arn:aws:bedrock:${var.aws_region}::foundation-model/*",
+      "arn:aws:bedrock:*::foundation-model/*",
+      "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+    ]
   }
 
   statement {
