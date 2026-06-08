@@ -6,9 +6,11 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// Handlers to bundle — add more here as phases progress
 const handlers = [
   { name: 'http-hello',       entry: 'src/http/hello.ts' },
+  { name: 'http-chats',       entry: 'src/http/chats.ts' },
+  { name: 'http-messages',    entry: 'src/http/messages.ts' },
+  { name: 'http-models',      entry: 'src/http/models.ts' },
 ]
 
 const distDir = path.join(__dirname, '..', 'terraform', 'dist')

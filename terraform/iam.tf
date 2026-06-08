@@ -19,4 +19,28 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Additional permissions added in later phases (DynamoDB, Bedrock, WS connections)
+data "aws_iam_policy_document" "lambda_policy" {
+  statement {
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:Query",
+    ]
+    resources = [aws_dynamodb_table.chatrock.arn]
+  }
+
+  statement {
+    actions   = ["bedrock:InvokeModelWithResponseStream", "bedrock:InvokeModel"]
+    resources = ["arn:aws:bedrock:${var.aws_region}::foundation-model/*"]
+  }
+
+  # execute-api:ManageConnections added in Phase D (WebSocket)
+}
+
+resource "aws_iam_role_policy" "lambda" {
+  name   = "chatrock-lambda-policy-${var.env}"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.lambda_policy.json
+}
