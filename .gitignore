@@ -1,0 +1,11 @@
+node_modules/
+dist/
+terraform/dist/
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/terraform.tfvars.json
+frontend/dist/
+.env*
