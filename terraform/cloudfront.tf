@@ -1,8 +1,9 @@
 locals {
   s3_origin_id       = "s3-spa"
   http_api_origin_id = "http-api"
-  # Strip https:// from API endpoint to get just the hostname
+  ws_api_origin_id   = "ws-api"
   http_api_hostname  = replace(aws_apigatewayv2_api.http.api_endpoint, "https://", "")
+  ws_api_hostname    = "${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com"
 }
 
 resource "aws_cloudfront_distribution" "chatrock" {
@@ -12,14 +13,13 @@ resource "aws_cloudfront_distribution" "chatrock" {
   web_acl_id          = aws_wafv2_web_acl.chatrock.arn
   price_class         = "PriceClass_100"
 
-  # S3 origin (SPA static assets)
+  # ── Origins ──────────────────────────────────────────────────────────────
   origin {
     domain_name              = aws_s3_bucket.spa.bucket_regional_domain_name
     origin_id                = local.s3_origin_id
     origin_access_control_id = aws_cloudfront_origin_access_control.spa.id
   }
 
-  # HTTP API origin
   origin {
     domain_name = local.http_api_hostname
     origin_id   = local.http_api_origin_id
@@ -29,6 +29,37 @@ resource "aws_cloudfront_distribution" "chatrock" {
       origin_protocol_policy = "https-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
+  }
+
+  origin {
+    domain_name = local.ws_api_hostname
+    origin_id   = local.ws_api_origin_id
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  # ── Cache behaviors ───────────────────────────────────────────────────────
+
+  # /ws* → WebSocket API (passthrough, no cache)
+  ordered_cache_behavior {
+    path_pattern           = "/ws*"
+    target_origin_id       = local.ws_api_origin_id
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    forwarded_values {
+      query_string = true
+      headers      = ["*"]
+      cookies { forward = "all" }
+    }
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+    compress    = false
   }
 
   # /api/* → HTTP API (no cache, forward auth header)
@@ -65,7 +96,7 @@ resource "aws_cloudfront_distribution" "chatrock" {
     compress    = true
   }
 
-  # SPA client-side routing: serve index.html for 403/404
+  # SPA client-side routing fallback
   custom_error_response {
     error_code            = 403
     response_code         = 200

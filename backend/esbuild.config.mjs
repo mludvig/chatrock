@@ -11,6 +11,10 @@ const handlers = [
   { name: 'http-chats',       entry: 'src/http/chats.ts' },
   { name: 'http-messages',    entry: 'src/http/messages.ts' },
   { name: 'http-models',      entry: 'src/http/models.ts' },
+  { name: 'ws-authorizer',    entry: 'src/ws/authorizer.ts' },
+  { name: 'ws-connect',       entry: 'src/ws/connect.ts' },
+  { name: 'ws-disconnect',    entry: 'src/ws/disconnect.ts' },
+  { name: 'ws-sendMessage',   entry: 'src/ws/sendMessage.ts' },
 ]
 
 const distDir = path.join(__dirname, '..', 'terraform', 'dist')
