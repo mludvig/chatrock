@@ -119,7 +119,7 @@ export default function MessageBubble({ message }: Props) {
         {isAssistant && waiting && (
           <span className="waiting-indicator">
             <FontAwesomeIcon icon={faSpinner} spin />
-            <span>Thinking…</span>
+            <span>Processing…</span>
           </span>
         )}
 
