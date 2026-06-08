@@ -6,12 +6,12 @@ resource "aws_apigatewayv2_api" "ws" {
 }
 
 resource "aws_apigatewayv2_authorizer" "ws_lambda" {
-  api_id                           = aws_apigatewayv2_api.ws.id
-  authorizer_type                  = "REQUEST"
-  authorizer_uri                   = aws_lambda_function.ws_authorizer.invoke_arn
-  identity_sources                 = ["route.request.querystring.token"]
-  name                             = "ws-lambda-auth"
-  authorizer_result_ttl_in_seconds = 300
+  api_id           = aws_apigatewayv2_api.ws.id
+  authorizer_type  = "REQUEST"
+  authorizer_uri   = aws_lambda_function.ws_authorizer.invoke_arn
+  identity_sources = ["route.request.querystring.token"]
+  name             = "ws-lambda-auth"
+  # TTL caching not supported for WEBSOCKET protocol APIs
 }
 
 resource "aws_apigatewayv2_stage" "ws" {
