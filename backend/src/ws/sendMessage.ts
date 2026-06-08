@@ -21,7 +21,7 @@ export const buildHandler = (postFn: PostFn) => async (
   event: WSSendEvent,
 ): Promise<APIGatewayProxyResultV2> => {
   const connId = event.requestContext.connectionId
-  const body   = JSON.parse(event.body ?? '{}') as {
+  const body = JSON.parse(event.body ?? '{}') as {
     chatId: string
     content: string
     model: string
@@ -40,7 +40,7 @@ export const buildHandler = (postFn: PostFn) => async (
   }
 
   // Persist user message
-  const now       = new Date().toISOString()
+  const now = new Date().toISOString()
   const userMsgId = uuidv4()
   await putMessage({
     ...buildMsgKey(chatId, now, userMsgId),
@@ -50,44 +50,70 @@ export const buildHandler = (postFn: PostFn) => async (
     createdAt: now,
   })
 
-  // Build Bedrock message history
+  // Build Bedrock message history (only user/assistant text messages)
   const history = await listMessages(chatId)
   const bedrockMessages: Message[] = history.map(m => ({
     role: m.role as 'user' | 'assistant',
     content: [{ text: m.content as string }],
   }))
 
-  // Stream response
   console.log(JSON.stringify({ event: 'stream_start', chatId, model, connId }))
   let fullText = ''
+
   try {
-  for await (const chunk of converseStream(model, systemPrompt, bedrockMessages)) {
-    if (chunk.type === 'delta' && chunk.text) {
-      fullText += chunk.text
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
+    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages)) {
+      switch (chunk.type) {
+        case 'thinking_delta':
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
+          break
+        case 'thinking_done':
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_done' }) })
+          break
+        case 'delta':
+          fullText += chunk.text
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
+          break
+        case 'tool_call':
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({
+            type: 'tool_call',
+            toolUseId: chunk.toolUseId,
+            name: chunk.name,
+            input: chunk.input,
+          }) })
+          break
+        case 'tool_result':
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({
+            type: 'tool_result',
+            toolUseId: chunk.toolUseId,
+            name: chunk.name,
+            isError: chunk.isError,
+          }) })
+          break
+        case 'stop':
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
+          break
+      }
     }
-    if (chunk.type === 'stop') {
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
-    }
-  }
   } catch (err) {
     console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: String(err) }))
     await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: String(err) }) })
     return { statusCode: 200, body: '' }
   }
 
-  // Persist assistant message
-  const assistantNow   = new Date().toISOString()
-  const assistantMsgId = uuidv4()
-  await putMessage({
-    ...buildMsgKey(chatId, assistantNow, assistantMsgId),
-    role: 'assistant',
-    content: fullText,
-    model,
-    createdAt: assistantNow,
-  })
+  // Persist assistant message (text only — tool calls are ephemeral)
+  if (fullText) {
+    const assistantNow = new Date().toISOString()
+    const assistantMsgId = uuidv4()
+    await putMessage({
+      ...buildMsgKey(chatId, assistantNow, assistantMsgId),
+      role: 'assistant',
+      content: fullText,
+      model,
+      createdAt: assistantNow,
+    })
+  }
 
-  // Auto-title on first exchange (title still 'New Chat')
+  // Auto-title on first exchange
   if (chat.title === 'New Chat') {
     const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content}`
     const title = await converseOnce(TITLE_MODEL, '', [
@@ -102,11 +128,10 @@ export const buildHandler = (postFn: PostFn) => async (
   return { statusCode: 200, body: '' }
 }
 
-// Real Lambda handler — constructs postFn from the event context
 export const handler = async (
   event: WSSendEvent,
 ): Promise<APIGatewayProxyResultV2> => {
-  const endpoint  = `https://${event.requestContext.domainName}/${event.requestContext.stage}`
+  const endpoint = `https://${event.requestContext.domainName}/${event.requestContext.stage}`
   const apigwClient = new ApiGatewayManagementApiClient({ endpoint })
   const postFn: PostFn = ({ ConnectionId, Data }) =>
     apigwClient.send(new PostToConnectionCommand({ ConnectionId, Data })).then(() => {})

@@ -22,3 +22,9 @@ variable "default_model" {
   description = "Default Bedrock model ID for chat"
   default     = "apac.anthropic.claude-sonnet-4-6"
 }
+
+variable "jina_api_key" {
+  description = "Jina AI API key for web search (optional — search disabled if empty)"
+  default     = ""
+  sensitive   = true
+}

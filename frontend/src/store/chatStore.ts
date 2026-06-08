@@ -2,9 +2,20 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model } from '../api/http'
 
-interface StreamingMsg {
+export interface ToolCall {
+  toolUseId: string
+  name: string
+  input: string
+  result?: string
+  isError?: boolean
+}
+
+export interface StreamingMsg {
   role: 'assistant'
   content: string
+  thinking?: string       // accumulated thinking text
+  thinkingDone?: boolean
+  toolCalls?: ToolCall[]
   streaming: true
 }
 
@@ -26,6 +37,10 @@ interface ChatState {
   setActiveChat: (chatId: string | null) => void
   setMessages: (messages: Message[]) => void
   appendDelta: (text: string) => void
+  appendThinkingDelta: (text: string) => void
+  markThinkingDone: () => void
+  addToolCall: (tc: ToolCall) => void
+  resolveToolCall: (toolUseId: string, result: string, isError: boolean) => void
   finalizeStream: (content: string) => void
   clearStream: () => void
   setModels: (models: Model[]) => void
@@ -61,13 +76,43 @@ export const useChatStore = create<ChatState>()(
       })),
       setActiveChat: (chatId) => set({ activeChatId: chatId, messages: [], streamingMsg: null }),
       setMessages: (messages) => set({ messages }),
+
       appendDelta: (text) => set((s) => ({
         streamingMsg: {
-          role: 'assistant',
+          ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
           content: (s.streamingMsg?.content ?? '') + text,
-          streaming: true,
-        },
+        } as StreamingMsg,
       })),
+
+      appendThinkingDelta: (text) => set((s) => ({
+        streamingMsg: {
+          ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
+          thinking: (s.streamingMsg?.thinking ?? '') + text,
+        } as StreamingMsg,
+      })),
+
+      markThinkingDone: () => set((s) => ({
+        streamingMsg: s.streamingMsg
+          ? { ...s.streamingMsg, thinkingDone: true }
+          : null,
+      })),
+
+      addToolCall: (tc) => set((s) => ({
+        streamingMsg: {
+          ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
+          toolCalls: [...(s.streamingMsg?.toolCalls ?? []), tc],
+        } as StreamingMsg,
+      })),
+
+      resolveToolCall: (toolUseId, result, isError) => set((s) => ({
+        streamingMsg: s.streamingMsg ? {
+          ...s.streamingMsg,
+          toolCalls: (s.streamingMsg.toolCalls ?? []).map(tc =>
+            tc.toolUseId === toolUseId ? { ...tc, result, isError } : tc
+          ),
+        } : null,
+      })),
+
       finalizeStream: (content) => set((s) => ({
         messages: [
           ...s.messages,
@@ -75,6 +120,7 @@ export const useChatStore = create<ChatState>()(
         ],
         streamingMsg: null,
       })),
+
       clearStream: () => set({ streamingMsg: null }),
       setModels: (models) => set({ models }),
       setLoading: (loading) => set({ loading }),

@@ -7,6 +7,7 @@ import type { Model } from '../api/http'
 import { sendMessage, ensureConnected, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
+import MessageBubble from './MessageBubble'
 
 interface Props {
   accessToken: string
@@ -22,7 +23,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   const {
     chats, messages, streamingMsg,
-    setMessages, appendDelta, finalizeStream, clearStream,
+    setMessages, appendDelta, appendThinkingDelta, markThinkingDone,
+    addToolCall, resolveToolCall, finalizeStream, clearStream,
     renameChat, sending, setSending, updateChatSystemPrompt,
   } = useChatStore()
 
@@ -54,6 +56,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       if (evt.type === 'delta') {
         streamBuf.current += evt.text
         appendDelta(evt.text)
+      } else if (evt.type === 'thinking_delta') {
+        appendThinkingDelta(evt.text)
+      } else if (evt.type === 'thinking_done') {
+        markThinkingDone()
+      } else if (evt.type === 'tool_call') {
+        addToolCall({ toolUseId: evt.toolUseId, name: evt.name, input: evt.input })
+      } else if (evt.type === 'tool_result') {
+        resolveToolCall(evt.toolUseId, '', evt.isError)
       } else if (evt.type === 'done') {
         const content = streamBuf.current
         streamBuf.current = ''
@@ -251,12 +261,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </div>
         )}
         {allMessages.map((m, i) => (
-          <div key={'msgId' in m ? m.msgId : `stream-${i}`} className={`message ${m.role}`}>
-            <div className="message-content">
-              {m.content}
-              {'streaming' in m && <span className="cursor">▋</span>}
-            </div>
-          </div>
+          <MessageBubble
+            key={'msgId' in m ? m.msgId : `stream-${i}`}
+            message={m}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
