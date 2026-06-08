@@ -1,0 +1,68 @@
+import { ENV } from '../env'
+
+export type WSEvent =
+  | { type: 'delta';        text: string }
+  | { type: 'done';         stopReason: string }
+  | { type: 'titleUpdated'; chatId: string; title: string }
+  | { type: 'error';        message: string }
+
+type EventHandler = (evt: WSEvent) => void
+
+let socket: WebSocket | null = null
+let pendingToken = ''
+let onEventCb: EventHandler | null = null
+
+export function setWSHandlers(onEvent: EventHandler) {
+  onEventCb = onEvent
+}
+
+export function connect(accessToken: string): Promise<void> {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    pendingToken = accessToken
+    return Promise.resolve()
+  }
+  pendingToken = accessToken
+  return new Promise((resolve, reject) => {
+    socket = new WebSocket(`${ENV.wsUrl}?token=${encodeURIComponent(accessToken)}`)
+    socket.onopen  = () => resolve()
+    socket.onerror = () => reject(new Error('WebSocket connect failed'))
+    socket.onmessage = (ev) => {
+      try {
+        const data: WSEvent = JSON.parse(ev.data)
+        onEventCb?.(data)
+      } catch {
+        // ignore malformed frames
+      }
+    }
+    socket.onclose = () => {
+      socket = null
+    }
+  })
+}
+
+export function disconnect() {
+  socket?.close()
+  socket = null
+}
+
+export function sendMessage(payload: {
+  chatId: string
+  content: string
+  model: string
+  systemPrompt: string
+}) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    throw new Error('WebSocket not connected')
+  }
+  socket.send(JSON.stringify({ action: 'sendMessage', ...payload }))
+}
+
+export function isConnected() {
+  return socket !== null && socket.readyState === WebSocket.OPEN
+}
+
+export async function ensureConnected(accessToken: string) {
+  if (!isConnected()) {
+    await connect(accessToken)
+  }
+}
