@@ -1,15 +1,17 @@
 locals {
   lambda_runtime = "nodejs20.x"
   lambda_env_base = {
-    APP_ENV       = var.env
-    DOMAIN_NAME   = var.domain_name
-    DEFAULT_MODEL = var.default_model
-    DYNAMO_TABLE  = aws_dynamodb_table.chatrock.name
+    APP_ENV                             = var.env
+    DOMAIN_NAME                         = var.domain_name
+    DEFAULT_MODEL                       = var.default_model
+    DYNAMO_TABLE                        = aws_dynamodb_table.chatrock.name
+    COGNITO_USER_POOL_ID                = aws_cognito_user_pool.chatrock.id
+    COGNITO_CLIENT_ID                   = aws_cognito_user_pool_client.spa.id
     AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
   }
 }
 
-# ── Smoke-test hello (Phase A — kept for now, removed in Phase G) ──────────
+# ── Smoke-test hello (Phase A — removed in Phase G cleanup) ───────────────
 resource "aws_lambda_function" "http_hello" {
   function_name    = "chatrock-http-hello-${var.env}"
   role             = aws_iam_role.lambda.arn
@@ -85,4 +87,81 @@ resource "aws_lambda_permission" "http_models_apigw" {
   function_name = aws_lambda_function.http_models.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
+# ── WebSocket handlers ──────────────────────────────────────────────────────
+resource "aws_lambda_function" "ws_authorizer" {
+  function_name    = "chatrock-ws-authorizer-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/ws-authorizer.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/ws-authorizer.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 10
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "ws_authorizer_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ws_authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
+}
+
+resource "aws_lambda_function" "ws_connect" {
+  function_name    = "chatrock-ws-connect-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/ws-connect.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/ws-connect.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 10
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "ws_connect_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ws_connect.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
+}
+
+resource "aws_lambda_function" "ws_disconnect" {
+  function_name    = "chatrock-ws-disconnect-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/ws-disconnect.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/ws-disconnect.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 10
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "ws_disconnect_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ws_disconnect.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
+}
+
+resource "aws_lambda_function" "ws_send_message" {
+  function_name    = "chatrock-ws-sendMessage-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/ws-sendMessage.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/ws-sendMessage.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 300
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "ws_send_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ws_send_message.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
 }

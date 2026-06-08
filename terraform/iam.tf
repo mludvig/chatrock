@@ -36,7 +36,10 @@ data "aws_iam_policy_document" "lambda_policy" {
     resources = ["arn:aws:bedrock:${var.aws_region}::foundation-model/*"]
   }
 
-  # execute-api:ManageConnections added in Phase D (WebSocket)
+  statement {
+    actions   = ["execute-api:ManageConnections"]
+    resources = ["arn:aws:execute-api:${var.aws_region}:*:${aws_apigatewayv2_api.ws.id}/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "lambda" {
