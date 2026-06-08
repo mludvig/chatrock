@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from 'react-oidc-context'
 import { ENV } from './env'
 import App from './App'
@@ -22,15 +23,17 @@ const oidcConfig = {
     jwks_uri: `${cognitoIdpBase}/${ENV.cognitoUserPoolId}/.well-known/jwks.json`,
   },
   onSigninCallback: () => {
-    // Clean up the PKCE callback params from the URL
-    window.history.replaceState({}, document.title, window.location.pathname)
+    // Clean up the PKCE callback params and redirect to /c/new
+    window.history.replaceState({}, document.title, '/c/new')
   },
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <AuthProvider {...oidcConfig}>
-      <App />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider {...oidcConfig}>
+        <App />
+      </AuthProvider>
+    </BrowserRouter>
   </React.StrictMode>
 )

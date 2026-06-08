@@ -54,6 +54,12 @@ body {
 .sidebar-brand {
   font-weight: 700;
   font-size: 16px;
+  letter-spacing: -0.3px;
+}
+
+.sidebar-brand-icon {
+  color: $accent;
+  margin-right: 7px;
 }
 
 .btn-new {
@@ -196,6 +202,31 @@ body {
   color: $muted;
 }
 
+.chat-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.welcome {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+
+  h2 { font-size: 20px; color: $text; }
+  p  { color: $muted; font-size: 14px; }
+}
+
+.welcome-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+}
+
 .chat-view {
   display: flex;
   flex-direction: column;
@@ -206,27 +237,118 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 24px;
+  padding: 10px 20px;
   border-bottom: 1px solid $border;
   background: $surface;
   flex-shrink: 0;
 
   h2 {
-    font-size: 16px;
+    flex: 1;
+    font-size: 15px;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
   }
 }
 
-.model-badge {
-  font-size: 11px;
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.model-select {
   background: $surface2;
+  border: 1px solid $border;
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: $text;
+  font-family: $font;
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+
+  &:focus { border-color: $accent; }
+  &:disabled { opacity: 0.5; cursor: default; }
+}
+
+.btn-icon {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: $muted;
-  border-radius: 4px;
-  padding: 2px 7px;
-  white-space: nowrap;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+
+  &:hover { background: $surface2; color: $text; border-color: $border; }
+  &.active { color: $accent; border-color: $accent-light; background: $accent-light; }
+}
+
+// ── Settings panel ────────────────────────────────────────────────────────────
+.settings-panel.new-chat-settings {
+  background: $bg;
+  border-bottom: 1px solid $border;
+
+  textarea { rows: 2; }
+}
+
+.settings-panel {
+  background: $surface;
+  border-bottom: 1px solid $border;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+
+  label { font-size: 13px; color: $muted; font-weight: 500; }
+}
+
+.system-prompt-input {
+  background: $surface2;
+  border: 1px solid $border;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: $text;
+  font-family: $font;
+  font-size: 14px;
+  resize: vertical;
+  outline: none;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+  &:focus { border-color: $accent; background: $surface; }
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  align-items: center;
+
+  .btn-icon {
+    width: auto;
+    padding: 0 10px;
+    gap: 5px;
+    span { font-size: 13px; }
+  }
+}
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -278,6 +400,31 @@ body {
 
 @keyframes blink {
   50% { opacity: 0; }
+}
+
+// ── Error banner ─────────────────────────────────────────────────────────────
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 24px;
+  background: #fef2f2;
+  border-top: 1px solid #fecaca;
+  color: $danger;
+  font-size: 13px;
+  flex-shrink: 0;
+
+  button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: $danger;
+    font-size: 14px;
+    padding: 0 4px;
+    opacity: 0.7;
+    &:hover { opacity: 1; }
+  }
 }
 
 // ── Input bar ─────────────────────────────────────────────────────────────────
@@ -358,8 +505,21 @@ body {
   min-width: 340px;
   box-shadow: 0 4px 24px rgba(0,0,0,0.08);
 
-  h1 { font-size: 30px; }
+  h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
   p  { color: $muted; }
+}
+
+.login-logo {
+  width: 72px;
+  height: 72px;
+  background: linear-gradient(135deg, $accent 0%, color.adjust($accent, $hue: 30deg) 100%);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 32px;
+  box-shadow: 0 4px 16px rgba($accent, 0.35);
 }
 
 // ── Buttons ───────────────────────────────────────────────────────────────────

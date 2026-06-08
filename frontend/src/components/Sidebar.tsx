@@ -1,4 +1,7 @@
 import { useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faPlus, faPenToSquare, faTrash, faWandMagicSparkles, faRightFromBracket, faComments } from '@fortawesome/free-solid-svg-icons'
 import type { Chat } from '../api/http'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
@@ -7,18 +10,23 @@ interface Props {
   userName: string
   onNewChat: () => void
   onSignOut: () => void
+  onRenameChat: (chatId: string, title: string) => void
 }
 
-export default function Sidebar({ userName, onNewChat, onSignOut }: Props) {
-  const { chats, activeChatId, setActiveChat, removeChat, renameChat } = useChatStore()
+export default function Sidebar({ userName, onNewChat, onSignOut, onRenameChat }: Props) {
+  const navigate = useNavigate()
+  const { chatId: activeChatId } = useParams<{ chatId?: string }>()
+  const { chats, removeChat } = useChatStore()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
+  const [retitling, setRetitling] = useState<string | null>(null)
 
   async function handleDelete(e: React.MouseEvent, chatId: string) {
     e.stopPropagation()
     if (!confirm('Delete this chat?')) return
     await api.deleteChat(chatId)
     removeChat(chatId)
+    if (activeChatId === chatId) navigate('/c/new')
   }
 
   function startRename(e: React.MouseEvent, chat: Chat) {
@@ -31,9 +39,20 @@ export default function Sidebar({ userName, onNewChat, onSignOut }: Props) {
     const title = editTitle.trim()
     if (title) {
       await api.renameChat(chatId, title)
-      renameChat(chatId, title)
+      onRenameChat(chatId, title)
     }
     setEditingId(null)
+  }
+
+  async function handleRetitle(e: React.MouseEvent, chatId: string) {
+    e.stopPropagation()
+    setRetitling(chatId)
+    try {
+      const res = await api.retitleChat(chatId)
+      onRenameChat(chatId, res.title)
+    } finally {
+      setRetitling(null)
+    }
   }
 
   const sorted = [...chats].sort((a, b) =>
@@ -43,8 +62,13 @@ export default function Sidebar({ userName, onNewChat, onSignOut }: Props) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <span className="sidebar-brand">🪨 Chatrock</span>
-        <button className="btn-new" onClick={onNewChat} title="New chat">＋</button>
+        <span className="sidebar-brand">
+          <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
+          Chatrock
+        </span>
+        <button className="btn-new" onClick={onNewChat} title="New chat">
+          <FontAwesomeIcon icon={faPlus} />
+        </button>
       </div>
 
       <div className="chat-list">
@@ -52,7 +76,7 @@ export default function Sidebar({ userName, onNewChat, onSignOut }: Props) {
           <div
             key={chat.chatId}
             className={`chat-item${chat.chatId === activeChatId ? ' active' : ''}`}
-            onClick={() => setActiveChat(chat.chatId)}
+            onClick={() => navigate(`/c/${chat.chatId}`)}
           >
             {editingId === chat.chatId ? (
               <input
@@ -71,21 +95,35 @@ export default function Sidebar({ userName, onNewChat, onSignOut }: Props) {
               <>
                 <span className="chat-title">{chat.title}</span>
                 <div className="chat-actions">
-                  <button onClick={e => startRename(e, chat)} title="Rename">✏️</button>
-                  <button onClick={e => handleDelete(e, chat.chatId)} title="Delete">🗑️</button>
+                  <button
+                    onClick={e => handleRetitle(e, chat.chatId)}
+                    title="Re-generate title"
+                    disabled={retitling === chat.chatId}
+                  >
+                    <FontAwesomeIcon icon={faWandMagicSparkles} spin={retitling === chat.chatId} />
+                  </button>
+                  <button onClick={e => startRename(e, chat)} title="Rename">
+                    <FontAwesomeIcon icon={faPenToSquare} />
+                  </button>
+                  <button onClick={e => handleDelete(e, chat.chatId)} title="Delete">
+                    <FontAwesomeIcon icon={faTrash} />
+                  </button>
                 </div>
               </>
             )}
           </div>
         ))}
         {chats.length === 0 && (
-          <p className="empty-hint">No chats yet. Click ＋ to start.</p>
+          <p className="empty-hint">No chats yet. Click + to start.</p>
         )}
       </div>
 
       <div className="sidebar-footer">
         <span className="user-name" title={userName}>{userName}</span>
-        <button className="btn-signout" onClick={onSignOut}>Sign out</button>
+        <button className="btn-signout" onClick={onSignOut} title="Sign out">
+          <FontAwesomeIcon icon={faRightFromBracket} />
+          <span>Sign out</span>
+        </button>
       </div>
     </aside>
   )
