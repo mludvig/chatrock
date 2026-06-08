@@ -26,8 +26,9 @@ export const buildHandler = (postFn: PostFn) => async (
     content: string
     model: string
     systemPrompt: string
+    thinkingBudget?: number
   }
-  const { chatId, content, model, systemPrompt } = body
+  const { chatId, content, model, systemPrompt, thinkingBudget = 0 } = body
 
   const conn = await getConnection(connId)
   if (!conn) return { statusCode: 410, body: 'Gone' }
@@ -61,7 +62,7 @@ export const buildHandler = (postFn: PostFn) => async (
   let fullText = ''
 
   try {
-    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages)) {
+    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages, thinkingBudget)) {
       switch (chunk.type) {
         case 'thinking_delta':
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
@@ -72,6 +73,13 @@ export const buildHandler = (postFn: PostFn) => async (
         case 'delta':
           fullText += chunk.text
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
+          break
+        case 'tool_call_start':
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({
+            type: 'tool_call_start',
+            toolUseId: chunk.toolUseId,
+            name: chunk.name,
+          }) })
           break
         case 'tool_call':
           await postFn({ ConnectionId: connId, Data: JSON.stringify({
@@ -87,6 +95,7 @@ export const buildHandler = (postFn: PostFn) => async (
             toolUseId: chunk.toolUseId,
             name: chunk.name,
             isError: chunk.isError,
+            content: chunk.content,
           }) })
           break
         case 'stop':

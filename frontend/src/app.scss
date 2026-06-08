@@ -610,6 +610,35 @@ body {
   gap: 10px;
 }
 
+// ── Thinking budget slider ────────────────────────────────────────────────────
+.thinking-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.thinking-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: $muted;
+  font-weight: 500;
+
+  .thinking-warn {
+    color: #d97706;
+    font-size: 12px;
+    font-weight: 400;
+  }
+}
+
+.thinking-slider {
+  width: 100%;
+  accent-color: $accent;
+  cursor: pointer;
+  height: 4px;
+}
+
 // ── Thinking block ────────────────────────────────────────────────────────────
 .thinking-block {
   margin-bottom: 10px;
