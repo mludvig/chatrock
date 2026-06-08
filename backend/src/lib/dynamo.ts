@@ -59,6 +59,25 @@ export async function updateChatTitle(sub: string, chatId: string, title: string
   }))
 }
 
+export async function updateChatSystemPrompt(sub: string, chatId: string, systemPrompt: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET systemPrompt = :sp, updatedAt = :u',
+    ExpressionAttributeValues: { ':sp': systemPrompt, ':u': new Date().toISOString() },
+  }))
+}
+
+export async function updateChatModel(sub: string, chatId: string, model: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET #m = :m, updatedAt = :u',
+    ExpressionAttributeNames: { '#m': 'model' },
+    ExpressionAttributeValues: { ':m': model, ':u': new Date().toISOString() },
+  }))
+}
+
 export async function deleteChat(sub: string, chatId: string) {
   await ddb.send(new DeleteCommand({
     TableName: TABLE,

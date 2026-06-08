@@ -58,7 +58,9 @@ export const buildHandler = (postFn: PostFn) => async (
   }))
 
   // Stream response
+  console.log(JSON.stringify({ event: 'stream_start', chatId, model, connId }))
   let fullText = ''
+  try {
   for await (const chunk of converseStream(model, systemPrompt, bedrockMessages)) {
     if (chunk.type === 'delta' && chunk.text) {
       fullText += chunk.text
@@ -67,6 +69,11 @@ export const buildHandler = (postFn: PostFn) => async (
     if (chunk.type === 'stop') {
       await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
     }
+  }
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: String(err) }))
+    await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: String(err) }) })
+    return { statusCode: 200, body: '' }
   }
 
   // Persist assistant message

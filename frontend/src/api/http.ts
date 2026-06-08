@@ -51,7 +51,12 @@ export const api = {
     req<{ chatId: string }>('POST', '/api/chats', { model, systemPrompt }),
   renameChat: (chatId: string, title: string) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { title }),
+  updateSystemPrompt: (chatId: string, systemPrompt: string) =>
+    req<void>('PATCH', `/api/chats/${chatId}`, { systemPrompt }),
+  updateModel: (chatId: string, model: string) =>
+    req<void>('PATCH', `/api/chats/${chatId}`, { model }),
   deleteChat: (chatId: string)         => req<void>('DELETE', `/api/chats/${chatId}`),
   listMessages: (chatId: string)       => req<{ messages: Message[] }>('GET', `/api/chats/${chatId}/messages`),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
+  retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
 }

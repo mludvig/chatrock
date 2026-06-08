@@ -136,13 +136,25 @@ echo "  App URL  : $APP_URL"
 
 # ── 4. Frontend: build + S3 sync ──────────────────────────────────────────
 if [ "$SKIP_FRONTEND" = false ]; then
+  # Write current TF outputs to a sentinel file so staleness check catches
+  # env-var changes even when source files haven't changed.
+  DEPLOY_ENV="$ROOT_DIR/frontend/.deploy-env"
+  printf '%s\n' \
+    "VITE_API_BASE_URL=$HTTP_API_ENDPOINT" \
+    "VITE_WS_URL=$WS_API_ENDPOINT" \
+    "VITE_COGNITO_USER_POOL_ID=$COGNITO_USER_POOL_ID" \
+    "VITE_COGNITO_CLIENT_ID=$COGNITO_CLIENT_ID" \
+    "VITE_COGNITO_DOMAIN=$COGNITO_HOSTED_UI_DOMAIN" \
+    "VITE_APP_URL=$APP_URL" > "$DEPLOY_ENV"
+
   FRONTEND_ARTIFACT="$ROOT_DIR/frontend/dist/index.html"
   if is_stale "$FRONTEND_ARTIFACT" \
        "$ROOT_DIR/frontend/src" \
        "$ROOT_DIR/frontend/public" \
        "$ROOT_DIR/frontend/index.html" \
        "$ROOT_DIR/frontend/package.json" \
-       "$ROOT_DIR/frontend/vite.config.ts"; then
+       "$ROOT_DIR/frontend/vite.config.ts" \
+       "$DEPLOY_ENV"; then
     echo "▶ Building frontend..."
     npm --prefix "$ROOT_DIR/frontend" install --silent
     VITE_API_BASE_URL="$HTTP_API_ENDPOINT" \
@@ -152,6 +164,8 @@ if [ "$SKIP_FRONTEND" = false ]; then
     VITE_COGNITO_DOMAIN="$COGNITO_HOSTED_UI_DOMAIN" \
     VITE_APP_URL="$APP_URL" \
     npm --prefix "$ROOT_DIR/frontend" run build
+    # Touch sentinel to match new dist mtime
+    touch "$DEPLOY_ENV"
   else
     echo "▶ Frontend up-to-date, skipping build"
   fi
