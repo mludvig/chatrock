@@ -40,9 +40,43 @@ export interface Message {
   createdAt: string
 }
 
+export interface ModelCapabilities {
+  temperature: boolean
+  topP: boolean
+  topK: boolean
+  thinking: 'adaptive' | 'none'
+}
+
+export interface ModelSettings {
+  temperature?: number
+  topP?: number
+  topK?: number
+  thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
+}
+
 export interface Model {
   id: string
   name: string
+  capabilities: ModelCapabilities
+}
+
+export const THINKING_EFFORTS = ['off', 'low', 'medium', 'high', 'max'] as const
+
+export function defaultSettings(caps: ModelCapabilities): ModelSettings {
+  return {
+    ...(caps.thinking !== 'none' ? { thinkingEffort: 'off' as const } : {}),
+  }
+}
+
+// Carry over settings that are valid for the new model; fill missing with defaults
+export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): ModelSettings {
+  const defaults = defaultSettings(caps)
+  return {
+    ...(caps.temperature && prev.temperature !== undefined ? { temperature: prev.temperature } : {}),
+    ...(caps.topP && prev.topP !== undefined ? { topP: prev.topP } : {}),
+    ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
+    ...(caps.thinking !== 'none' ? { thinkingEffort: prev.thinkingEffort ?? defaults.thinkingEffort } : {}),
+  }
 }
 
 export const api = {
