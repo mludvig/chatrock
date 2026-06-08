@@ -22,19 +22,3 @@ variable "default_model" {
   description = "Default Bedrock model ID for chat"
   default     = "apac.anthropic.claude-sonnet-4-6"
 }
-
-# Placeholder overrides — replaced by real resources in Phase E (Cognito)
-variable "cognito_user_pool_id_override" {
-  description = "Cognito User Pool ID (set automatically once Cognito is provisioned)"
-  default     = ""
-}
-
-variable "cognito_client_id_override" {
-  description = "Cognito App Client ID (set automatically once Cognito is provisioned)"
-  default     = ""
-}
-
-variable "cognito_hosted_ui_domain_override" {
-  description = "Cognito Hosted UI domain URL (set automatically once Cognito is provisioned)"
-  default     = ""
-}

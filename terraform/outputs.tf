@@ -18,20 +18,18 @@ output "s3_bucket" {
   value = aws_s3_bucket.spa.bucket
 }
 
-# Populated in Phase D (WebSocket API)
 output "ws_api_endpoint" {
   value = "wss://${var.domain_name}/ws/prod"
 }
 
-# Populated in Phase E (Cognito) — empty string until then
 output "cognito_user_pool_id" {
-  value = var.cognito_user_pool_id_override
+  value = aws_cognito_user_pool.chatrock.id
 }
 
 output "cognito_client_id" {
-  value = var.cognito_client_id_override
+  value = aws_cognito_user_pool_client.spa.id
 }
 
 output "cognito_hosted_ui_domain" {
-  value = var.cognito_hosted_ui_domain_override
+  value = "https://${aws_cognito_user_pool_domain.chatrock.domain}.auth.${var.aws_region}.amazoncognito.com"
 }
