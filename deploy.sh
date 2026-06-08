@@ -12,6 +12,7 @@ set -euo pipefail
 #   ./deploy.sh backend    build backend if stale + terraform apply (no frontend)
 #   ./deploy.sh tf         terraform apply only (zips must already exist)
 #
+# All deploy paths (apply/backend/tf/frontend) end with a CloudFront invalidation.
 # Rebuilds are skipped when source files are not newer than existing artifacts.
 # Use --force-rebuild to override.
 #
@@ -35,7 +36,6 @@ FORCE_REBUILD=false
 
 for arg in "$@"; do
   case $arg in
-    # Subcommands
     apply)         SUBCOMMAND="apply" ;;
     plan)          SUBCOMMAND="plan" ;;
     validate)      SUBCOMMAND="validate" ;;
@@ -43,7 +43,6 @@ for arg in "$@"; do
     backend)       SUBCOMMAND="backend" ;;
     tf)            SUBCOMMAND="tf" ;;
     --force-rebuild) FORCE_REBUILD=true ;;
-    # Legacy flags
     --backend-only)  SKIP_FRONTEND=true ;;
     --frontend-only) SKIP_BACKEND=true; SKIP_TERRAFORM=true ;;
     --tf-only)       SKIP_BACKEND=true; SKIP_FRONTEND=true ;;
@@ -56,7 +55,6 @@ for arg in "$@"; do
   esac
 done
 
-# Map subcommands to skip flags
 case "$SUBCOMMAND" in
   apply)    ;;
   plan)     SKIP_FRONTEND=true; TF_ACTION="plan" ;;
@@ -67,14 +65,11 @@ case "$SUBCOMMAND" in
   "")       ;;
 esac
 
-# ── Helper: is_stale <artifact> <source_dirs...>
-# Returns 0 (stale/needs rebuild) if artifact doesn't exist or any source file
-# is newer than the artifact. Returns 1 (up to date) otherwise.
+# ── Helper: is_stale <artifact> <source_dirs...> ──────────────────────────────
 is_stale() {
   local artifact="$1"; shift
   if [ "$FORCE_REBUILD" = true ]; then return 0; fi
   if [ ! -e "$artifact" ]; then return 0; fi
-  # find any source file newer than the artifact
   local newer
   newer=$(find "$@" -newer "$artifact" -type f 2>/dev/null | head -1)
   [ -n "$newer" ]
@@ -99,7 +94,7 @@ fi
 # ── 2. Terraform ───────────────────────────────────────────────────────────
 RUN_TF=false
 [ "$SKIP_TERRAFORM" = false ] && RUN_TF=true
-[ "$TF_ACTION" != "apply" ] && RUN_TF=true   # plan/validate always run terraform
+[ "$TF_ACTION" != "apply" ] && RUN_TF=true
 
 if [ "$RUN_TF" = true ]; then
   echo "▶ Running terraform init..."
@@ -127,23 +122,19 @@ if [ "$RUN_TF" = true ]; then
   esac
 fi
 
-# ── 3. Read Terraform outputs ──────────────────────────────────────────────
-if [ "$SKIP_FRONTEND" = false ]; then
-  echo "▶ Reading Terraform outputs..."
-  HTTP_API_ENDPOINT=$(terraform -chdir="$TF_DIR" output -raw http_api_endpoint)
-  WS_API_ENDPOINT=$(terraform -chdir="$TF_DIR" output -raw ws_api_endpoint)
-  COGNITO_USER_POOL_ID=$(terraform -chdir="$TF_DIR" output -raw cognito_user_pool_id)
-  COGNITO_CLIENT_ID=$(terraform -chdir="$TF_DIR" output -raw cognito_client_id)
-  COGNITO_HOSTED_UI_DOMAIN=$(terraform -chdir="$TF_DIR" output -raw cognito_hosted_ui_domain)
-  S3_BUCKET=$(terraform -chdir="$TF_DIR" output -raw s3_bucket)
-  DISTRIBUTION_ID=$(terraform -chdir="$TF_DIR" output -raw cloudfront_distribution_id)
-  APP_URL=$(terraform -chdir="$TF_DIR" output -raw app_url)
+# ── 3. Read Terraform outputs (always needed for S3/CF steps) ─────────────
+echo "▶ Reading Terraform outputs..."
+HTTP_API_ENDPOINT=$(terraform -chdir="$TF_DIR" output -raw http_api_endpoint)
+WS_API_ENDPOINT=$(terraform -chdir="$TF_DIR" output -raw ws_api_endpoint)
+COGNITO_USER_POOL_ID=$(terraform -chdir="$TF_DIR" output -raw cognito_user_pool_id)
+COGNITO_CLIENT_ID=$(terraform -chdir="$TF_DIR" output -raw cognito_client_id)
+COGNITO_HOSTED_UI_DOMAIN=$(terraform -chdir="$TF_DIR" output -raw cognito_hosted_ui_domain)
+S3_BUCKET=$(terraform -chdir="$TF_DIR" output -raw s3_bucket)
+DISTRIBUTION_ID=$(terraform -chdir="$TF_DIR" output -raw cloudfront_distribution_id)
+APP_URL=$(terraform -chdir="$TF_DIR" output -raw app_url)
+echo "  App URL  : $APP_URL"
 
-  echo "  HTTP API : $HTTP_API_ENDPOINT"
-  echo "  App URL  : $APP_URL"
-fi
-
-# ── 4. Frontend: build + deploy ────────────────────────────────────────────
+# ── 4. Frontend: build + S3 sync ──────────────────────────────────────────
 if [ "$SKIP_FRONTEND" = false ]; then
   FRONTEND_ARTIFACT="$ROOT_DIR/frontend/dist/index.html"
   if is_stale "$FRONTEND_ARTIFACT" \
@@ -154,7 +145,6 @@ if [ "$SKIP_FRONTEND" = false ]; then
        "$ROOT_DIR/frontend/vite.config.ts"; then
     echo "▶ Building frontend..."
     npm --prefix "$ROOT_DIR/frontend" install --silent
-
     VITE_API_BASE_URL="$HTTP_API_ENDPOINT" \
     VITE_WS_URL="$WS_API_ENDPOINT" \
     VITE_COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" \
@@ -167,25 +157,22 @@ if [ "$SKIP_FRONTEND" = false ]; then
   fi
 
   echo "▶ Syncing to S3: s3://$S3_BUCKET"
-  # Long-lived assets (hashed filenames from Vite)
   aws s3 sync "$ROOT_DIR/frontend/dist/" "s3://$S3_BUCKET" \
     --delete \
     --cache-control "max-age=31536000,immutable" \
     --exclude "index.html"
-
-  # index.html — always revalidate
   aws s3 cp "$ROOT_DIR/frontend/dist/index.html" "s3://$S3_BUCKET/index.html" \
     --cache-control "no-cache,no-store,must-revalidate"
-
-  echo "▶ Creating CloudFront invalidation for distribution $DISTRIBUTION_ID..."
-  INV_ID=$(aws cloudfront create-invalidation \
-    --distribution-id "$DISTRIBUTION_ID" \
-    --paths "/*" \
-    --query 'Invalidation.Id' --output text)
-  echo "  Invalidation ID: $INV_ID"
-
-  echo "  ✓ Frontend deployed"
+  echo "  ✓ Frontend synced"
 fi
+
+# ── 5. CloudFront invalidation (always after any deploy) ──────────────────
+echo "▶ CloudFront invalidation (distribution $DISTRIBUTION_ID)..."
+INV_ID=$(aws cloudfront create-invalidation \
+  --distribution-id "$DISTRIBUTION_ID" \
+  --paths "/*" \
+  --query 'Invalidation.Id' --output text)
+echo "  Invalidation ID: $INV_ID"
 
 echo ""
 echo "✅  Chatrock deployed → $APP_URL"

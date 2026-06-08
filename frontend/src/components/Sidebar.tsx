@@ -1,0 +1,92 @@
+import { useState } from 'react'
+import type { Chat } from '../api/http'
+import { api } from '../api/http'
+import { useChatStore } from '../store/chatStore'
+
+interface Props {
+  userName: string
+  onNewChat: () => void
+  onSignOut: () => void
+}
+
+export default function Sidebar({ userName, onNewChat, onSignOut }: Props) {
+  const { chats, activeChatId, setActiveChat, removeChat, renameChat } = useChatStore()
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+
+  async function handleDelete(e: React.MouseEvent, chatId: string) {
+    e.stopPropagation()
+    if (!confirm('Delete this chat?')) return
+    await api.deleteChat(chatId)
+    removeChat(chatId)
+  }
+
+  function startRename(e: React.MouseEvent, chat: Chat) {
+    e.stopPropagation()
+    setEditingId(chat.chatId)
+    setEditTitle(chat.title)
+  }
+
+  async function commitRename(chatId: string) {
+    const title = editTitle.trim()
+    if (title) {
+      await api.renameChat(chatId, title)
+      renameChat(chatId, title)
+    }
+    setEditingId(null)
+  }
+
+  const sorted = [...chats].sort((a, b) =>
+    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  )
+
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-header">
+        <span className="sidebar-brand">🪨 Chatrock</span>
+        <button className="btn-new" onClick={onNewChat} title="New chat">＋</button>
+      </div>
+
+      <div className="chat-list">
+        {sorted.map(chat => (
+          <div
+            key={chat.chatId}
+            className={`chat-item${chat.chatId === activeChatId ? ' active' : ''}`}
+            onClick={() => setActiveChat(chat.chatId)}
+          >
+            {editingId === chat.chatId ? (
+              <input
+                autoFocus
+                className="rename-input"
+                value={editTitle}
+                onChange={e => setEditTitle(e.target.value)}
+                onBlur={() => commitRename(chat.chatId)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitRename(chat.chatId)
+                  if (e.key === 'Escape') setEditingId(null)
+                }}
+                onClick={e => e.stopPropagation()}
+              />
+            ) : (
+              <>
+                <span className="chat-title">{chat.title}</span>
+                <div className="chat-actions">
+                  <button onClick={e => startRename(e, chat)} title="Rename">✏️</button>
+                  <button onClick={e => handleDelete(e, chat.chatId)} title="Delete">🗑️</button>
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+        {chats.length === 0 && (
+          <p className="empty-hint">No chats yet. Click ＋ to start.</p>
+        )}
+      </div>
+
+      <div className="sidebar-footer">
+        <span className="user-name" title={userName}>{userName}</span>
+        <button className="btn-signout" onClick={onSignOut}>Sign out</button>
+      </div>
+    </aside>
+  )
+}
