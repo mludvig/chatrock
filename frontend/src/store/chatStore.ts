@@ -17,6 +17,7 @@ export interface StreamingMsg {
   thinkingDone?: boolean
   toolCalls?: ToolCall[]
   streaming: true
+  waiting?: boolean       // true until first content event arrives
 }
 
 interface ChatState {
@@ -36,6 +37,7 @@ interface ChatState {
   updateChatSystemPrompt: (chatId: string, systemPrompt: string) => void
   setActiveChat: (chatId: string | null) => void
   setMessages: (messages: Message[]) => void
+  startStream: () => void
   appendDelta: (text: string) => void
   appendThinkingDelta: (text: string) => void
   markThinkingDone: () => void
@@ -78,10 +80,15 @@ export const useChatStore = create<ChatState>()(
       setActiveChat: (chatId) => set({ activeChatId: chatId, messages: [], streamingMsg: null }),
       setMessages: (messages) => set({ messages }),
 
+      startStream: () => set({
+        streamingMsg: { role: 'assistant', streaming: true, content: '', waiting: true },
+      }),
+
       appendDelta: (text) => set((s) => ({
         streamingMsg: {
           ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
           content: (s.streamingMsg?.content ?? '') + text,
+          waiting: false,
         } as StreamingMsg,
       })),
 
@@ -89,6 +96,7 @@ export const useChatStore = create<ChatState>()(
         streamingMsg: {
           ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
           thinking: (s.streamingMsg?.thinking ?? '') + text,
+          waiting: false,
         } as StreamingMsg,
       })),
 
@@ -102,6 +110,7 @@ export const useChatStore = create<ChatState>()(
         streamingMsg: {
           ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
           toolCalls: [...(s.streamingMsg?.toolCalls ?? []), tc],
+          waiting: false,
         } as StreamingMsg,
       })),
 
