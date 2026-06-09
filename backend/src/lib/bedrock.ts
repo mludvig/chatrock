@@ -5,9 +5,11 @@ import {
   type Message,
   type Tool,
   type ContentBlock,
+  type SystemContentBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
 import { executeTool, WEB_TOOLS } from './tools'
+import { capToolResultText } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 
 export const bedrockClient = new BedrockRuntimeClient({
@@ -24,6 +26,17 @@ export type StreamChunk =
   | { type: 'tool_call'; toolUseId: string; name: string; input: string }
   | { type: 'tool_result'; toolUseId: string; name: string; content: string; isError: boolean }
   | { type: 'stop'; stopReason: string }
+  // Backend-only: drives per-turn persistence; never sent raw over WS
+  | { type: 'turn'; role: 'user' | 'assistant'; content: ContentBlock[]; turnIndex: number }
+  // Forwarded as a compact WS event for live display
+  | { type: 'usage'; usage: TokenUsage }
+
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens?: number
+  cacheWriteInputTokens?: number
+}
 
 // ── Internal streaming for one Bedrock turn ──────────────────────────────────
 
@@ -31,6 +44,9 @@ interface TurnResult {
   stopReason: string
   textContent: string
   toolUses: Array<{ toolUseId: string; name: string; inputJson: string }>
+  // Verbatim assembled ContentBlock[] in arrival order (for persistence)
+  content: ContentBlock[]
+  usage?: TokenUsage
 }
 
 function buildInferenceParams(modelId: string, settings: ModelSettings) {
@@ -57,6 +73,72 @@ function buildInferenceParams(modelId: string, settings: ModelSettings) {
   }
 }
 
+// The Bedrock SDK uses discriminated unions for Tool / SystemContentBlock /
+// ContentBlock — cachePoint is a valid member but TypeScript's structural
+// typing requires a cast to the base interface type.
+const CACHE_POINT_TOOL    = { cachePoint: { type: 'default' as const } } as unknown as Tool
+const CACHE_POINT_SYSTEM  = { cachePoint: { type: 'default' as const } } as unknown as SystemContentBlock
+const CACHE_POINT_CONTENT = { cachePoint: { type: 'default' as const } } as unknown as ContentBlock
+
+/**
+ * Build the tools list with a trailing cachePoint so the tool definitions
+ * (which are stable across all turns) get cached on first use.
+ */
+function buildToolsWithCache(): Tool[] {
+  return [...WEB_TOOLS, CACHE_POINT_TOOL]
+}
+
+/**
+ * Build the system prompt array with a trailing cachePoint.
+ * Returns undefined when systemPrompt is empty (no dangling cachePoint).
+ */
+function buildSystemWithCache(systemPrompt: string): SystemContentBlock[] | undefined {
+  if (!systemPrompt) return undefined
+  return [
+    { text: systemPrompt } as SystemContentBlock,
+    CACHE_POINT_SYSTEM,
+  ]
+}
+
+/**
+ * Derive the messages array for a given round, injecting ONE trailing
+ * cachePoint on the last stable prior message (everything before the
+ * messages added in this round).  Re-derived each round so the cachePoint
+ * REPLACES (not accumulates) as the conversation grows.
+ *
+ * @param baseMessages  — the full conversation history (prior turns only;
+ *                        does NOT include the turn currently being generated)
+ * @param newMessages   — turns added in this round (assistant + toolResult);
+ *                        empty on the first round
+ */
+function buildMessagesWithCache(baseMessages: Message[], newMessages: Message[]): Message[] {
+  if (baseMessages.length === 0 && newMessages.length === 0) return []
+
+  if (newMessages.length === 0) {
+    // First round: inject a cachePoint on the last block of the last prior message
+    return injectTrailingCachePoint(baseMessages)
+  }
+
+  // Subsequent rounds: prior stable messages keep their cachePoint; new turns
+  // appended without one (they become the "stable prior" next round)
+  return [...injectTrailingCachePoint(baseMessages), ...newMessages]
+}
+
+/**
+ * Return a copy of messages with a cachePoint injected after the last block
+ * of the last message.  The original array is never mutated.
+ */
+function injectTrailingCachePoint(messages: Message[]): Message[] {
+  if (messages.length === 0) return []
+  const last = messages[messages.length - 1]
+  const content = last.content ?? []
+  const withCache = [...content, CACHE_POINT_CONTENT]
+  return [
+    ...messages.slice(0, -1),
+    { ...last, content: withCache },
+  ]
+}
+
 async function* streamOneTurn(
   modelId: string,
   systemPrompt: string,
@@ -66,7 +148,7 @@ async function* streamOneTurn(
 ): AsyncGenerator<StreamChunk, TurnResult> {
   const cmd = new ConverseStreamCommand({
     modelId,
-    system: systemPrompt ? [{ text: systemPrompt }] : undefined,
+    system: buildSystemWithCache(systemPrompt),
     messages,
     ...buildInferenceParams(modelId, settings),
     ...(tools.length > 0 ? { toolConfig: { tools } } : {}),
@@ -77,9 +159,15 @@ async function* streamOneTurn(
 
   let stopReason = 'end_turn'
   let textContent = ''
-  // Accumulate per-block state
-  const blockType: Record<number, 'text' | 'thinking' | 'toolUse'> = {}
-  const toolUseAcc: Record<number, { toolUseId: string; name: string; inputJson: string }> = {}
+  let usage: TokenUsage | undefined
+
+  // Per-block-index accumulator for verbatim ContentBlock reconstruction
+  type BlockAcc =
+    | { kind: 'thinking'; textParts: string[]; signature: string | undefined; redactedContent: Uint8Array | undefined }
+    | { kind: 'text'; textParts: string[] }
+    | { kind: 'toolUse'; toolUseId: string; name: string; inputJson: string }
+
+  const blockAcc: Record<number, BlockAcc> = {}
   const toolUses: Array<{ toolUseId: string; name: string; inputJson: string }> = []
 
   for await (const event of res.stream) {
@@ -88,11 +176,11 @@ async function* streamOneTurn(
       const idx = event.contentBlockStart.contentBlockIndex ?? 0
       const start = event.contentBlockStart.start
       if (start?.toolUse) {
-        blockType[idx] = 'toolUse'
-        toolUseAcc[idx] = { toolUseId: start.toolUse.toolUseId ?? '', name: start.toolUse.name ?? '', inputJson: '' }
+        blockAcc[idx] = { kind: 'toolUse', toolUseId: start.toolUse.toolUseId ?? '', name: start.toolUse.name ?? '', inputJson: '' }
         yield { type: 'tool_call_start', toolUseId: start.toolUse.toolUseId ?? '', name: start.toolUse.name ?? '' }
       } else {
-        blockType[idx] = 'text'
+        // Text block by default; may become thinking on first reasoningContent delta
+        blockAcc[idx] = { kind: 'text', textParts: [] }
       }
     }
 
@@ -102,31 +190,48 @@ async function* streamOneTurn(
       const delta = event.contentBlockDelta.delta
 
       if (delta?.text) {
-        if (blockType[idx] === 'thinking') {
+        const acc = blockAcc[idx]
+        if (acc?.kind === 'thinking') {
           yield { type: 'thinking_delta', text: delta.text }
         } else {
           textContent += delta.text
           yield { type: 'delta', text: delta.text }
+          if (acc?.kind === 'text') acc.textParts.push(delta.text)
         }
-      } else if (delta?.reasoningContent?.text) {
-        // First delta on a reasoning block
-        if (blockType[idx] !== 'thinking') {
-          blockType[idx] = 'thinking'
+      } else if (delta?.reasoningContent) {
+        // Upgrade block to thinking on first reasoning delta
+        let acc = blockAcc[idx]
+        if (acc?.kind !== 'thinking') {
+          acc = { kind: 'thinking', textParts: [], signature: undefined, redactedContent: undefined }
+          blockAcc[idx] = acc
         }
-        yield { type: 'thinking_delta', text: delta.reasoningContent.text }
+        const thinkAcc = acc as Extract<BlockAcc, { kind: 'thinking' }>
+
+        if (delta.reasoningContent.text !== undefined) {
+          thinkAcc.textParts.push(delta.reasoningContent.text)
+          yield { type: 'thinking_delta', text: delta.reasoningContent.text }
+        }
+        if (delta.reasoningContent.signature !== undefined) {
+          thinkAcc.signature = delta.reasoningContent.signature
+        }
+        if (delta.reasoningContent.redactedContent !== undefined) {
+          thinkAcc.redactedContent = delta.reasoningContent.redactedContent as Uint8Array
+        }
       } else if (delta?.toolUse?.input) {
-        if (toolUseAcc[idx]) toolUseAcc[idx].inputJson += delta.toolUse.input
+        const acc = blockAcc[idx]
+        if (acc?.kind === 'toolUse') acc.inputJson += delta.toolUse.input
       }
     }
 
-    // Block stop
+    // Block stop — emit UI events + finalise the block in blockAcc
     if (event.contentBlockStop) {
       const idx = event.contentBlockStop.contentBlockIndex ?? 0
-      if (blockType[idx] === 'thinking') {
+      const acc = blockAcc[idx]
+      if (acc?.kind === 'thinking') {
         yield { type: 'thinking_done' }
       }
-      if (blockType[idx] === 'toolUse' && toolUseAcc[idx]) {
-        const tu = toolUseAcc[idx]
+      if (acc?.kind === 'toolUse') {
+        const tu = { toolUseId: acc.toolUseId, name: acc.name, inputJson: acc.inputJson }
         toolUses.push(tu)
         yield { type: 'tool_call', toolUseId: tu.toolUseId, name: tu.name, input: tu.inputJson }
       }
@@ -136,9 +241,53 @@ async function* streamOneTurn(
     if (event.messageStop) {
       stopReason = event.messageStop.stopReason ?? 'end_turn'
     }
+
+    // Usage metadata — emit a usage chunk
+    if (event.metadata?.usage) {
+      const u = event.metadata.usage
+      usage = {
+        inputTokens: u.inputTokens ?? 0,
+        outputTokens: u.outputTokens ?? 0,
+        ...(u.cacheReadInputTokens !== undefined ? { cacheReadInputTokens: u.cacheReadInputTokens } : {}),
+        ...(u.cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens: u.cacheWriteInputTokens } : {}),
+      }
+      yield { type: 'usage', usage }
+    }
   }
 
-  return { stopReason, textContent, toolUses }
+  // Build verbatim content[] by block index order
+  const content: ContentBlock[] = []
+  const blockIndices = Object.keys(blockAcc).map(Number).sort((a, b) => a - b)
+  for (const idx of blockIndices) {
+    const acc = blockAcc[idx]
+    if (acc.kind === 'thinking') {
+      if (acc.redactedContent !== undefined) {
+        content.push({ reasoningContent: { redactedContent: acc.redactedContent } })
+      } else {
+        content.push({
+          reasoningContent: {
+            reasoningText: {
+              text: acc.textParts.join(''),
+              signature: acc.signature ?? '',
+            },
+          },
+        })
+      }
+    } else if (acc.kind === 'text') {
+      const text = acc.textParts.join('')
+      if (text) content.push({ text })
+    } else if (acc.kind === 'toolUse') {
+      content.push({
+        toolUse: {
+          toolUseId: acc.toolUseId,
+          name: acc.name,
+          input: (() => { try { return JSON.parse(acc.inputJson) } catch { return {} } })(),
+        },
+      })
+    }
+  }
+
+  return { stopReason, textContent, toolUses, content, usage }
 }
 
 // ── Public: full agentic streaming loop with tool use ────────────────────────
@@ -149,66 +298,78 @@ export async function* converseStream(
   messages: Message[],
   settings: ModelSettings = {},
 ): AsyncGenerator<StreamChunk> {
-  const tools = WEB_TOOLS
-  const conversation: Message[] = [...messages]
+  const tools = buildToolsWithCache()
+  // Base messages are the incoming history (verbatim blocks replayed as-is)
+  const baseMessages: Message[] = [...messages]
+  // New messages added this session (grows with each tool-use round)
+  const newMessages: Message[] = []
+
+  let turnIndex = 0
 
   // Safety cap: max 5 tool-use rounds before forcing a final answer
   for (let round = 0; round < 5; round++) {
-    const gen = streamOneTurn(modelId, systemPrompt, conversation, tools, settings)
+    const builtMessages = buildMessagesWithCache(baseMessages, newMessages)
+    const gen = streamOneTurn(modelId, systemPrompt, builtMessages, tools, settings)
     let result: TurnResult | undefined
 
-    // Drain the generator, forwarding chunks to caller
+    // Drain the generator, forwarding UI chunks to caller
     while (true) {
       const { value, done } = await gen.next()
       if (done) {
         result = value as TurnResult
         break
       }
-      yield value as StreamChunk
+      const chunk = value as StreamChunk
+      // Forward all UI chunks except 'turn' and 'usage' (we re-emit usage below)
+      if (chunk.type !== 'turn' && chunk.type !== 'usage') {
+        yield chunk
+      }
     }
 
     if (!result) break
+
+    // Yield the verbatim assistant turn for persistence
+    yield { type: 'turn', role: 'assistant', content: result.content, turnIndex }
+    // Yield the usage chunk for live display
+    if (result.usage) yield { type: 'usage', usage: result.usage }
+    turnIndex++
 
     if (result.stopReason !== 'tool_use' || result.toolUses.length === 0) {
       yield { type: 'stop', stopReason: result.stopReason }
       return
     }
 
-    // Build the assistant content block for this turn (text + tool use blocks)
-    const assistantContent: ContentBlock[] = []
-    if (result.textContent) assistantContent.push({ text: result.textContent })
-    for (const tu of result.toolUses) {
-      assistantContent.push({
-        toolUse: {
-          toolUseId: tu.toolUseId,
-          name: tu.name,
-          input: (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })(),
-        },
-      })
-    }
-    conversation.push({ role: 'assistant', content: assistantContent })
+    // Build the assistant message for this round (verbatim content from turn)
+    newMessages.push({ role: 'assistant', content: result.content })
 
-    // Execute tools and build tool result message
+    // Execute tools, apply cap helper, build tool-result message
     const toolResults: ContentBlock[] = []
     for (const tu of result.toolUses) {
       const input = (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })()
       const toolResult = await executeTool(tu.name, input)
-      const resultContent = toolResult.content?.[0] && 'text' in toolResult.content[0]
+      const rawContent = toolResult.content?.[0] && 'text' in toolResult.content[0]
         ? (toolResult.content[0].text ?? '')
         : ''
+      // Cap BEFORE storing (so stored == sent → cache-safe, no replay drift)
+      const cappedContent = capToolResultText(rawContent)
       const isError = toolResult.status === 'error'
 
-      yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: resultContent, isError }
+      yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedContent, isError }
 
       toolResults.push({
         toolResult: {
           toolUseId: tu.toolUseId,
-          content: [{ text: resultContent }],
+          content: [{ text: cappedContent }],
           status: toolResult.status,
         },
       })
     }
-    conversation.push({ role: 'user', content: toolResults })
+
+    // Yield the user tool-result turn for persistence
+    yield { type: 'turn', role: 'user', content: toolResults, turnIndex }
+    turnIndex++
+
+    newMessages.push({ role: 'user', content: toolResults })
     // Loop → next turn with tool results injected
   }
 
