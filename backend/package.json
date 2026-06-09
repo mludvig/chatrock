@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "test": "jest --passWithNoTests",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:wipe": "node scripts/db-wipe.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3",
