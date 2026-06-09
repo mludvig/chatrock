@@ -24,7 +24,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   const {
     chats, messages, streamingMsg,
-    setMessages, appendDelta, appendThinkingDelta, markThinkingDone,
+    setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream,
     renameChat, sending, setSending, updateChatSystemPrompt,
   } = useChatStore()
@@ -100,15 +100,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     })
   }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream, renameChat, setSending])
 
-  // Load messages when navigating to an existing chat — skip during active send to
-  // avoid wiping optimistic messages before they're persisted to DynamoDB.
+  // Load messages when navigating to an existing chat.
+  // Use a cancelled flag so a stale in-flight fetch can't overwrite optimistic state.
   useEffect(() => {
     if (isNew || !chatId) {
       setMessages([])
       return
     }
     if (sending) return
-    api.listMessages(chatId).then(r => setMessages(r.messages))
+    let cancelled = false
+    api.listMessages(chatId).then(r => { if (!cancelled) setMessages(r.messages) })
+    return () => { cancelled = true }
   }, [chatId, isNew, setMessages, sending])
 
   // Auto-scroll
@@ -131,6 +133,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setMessages([
         { msgId: crypto.randomUUID(), role: 'user', content, model: '', createdAt: new Date().toISOString() },
       ])
+      startStream()
       streamBuf.current = ''
 
       try {
@@ -161,12 +164,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // Existing chat
     if (!activeChat) return
     setSending(true)
-    streamBuf.current = ''
-
     setMessages([
       ...messages,
       { msgId: crypto.randomUUID(), role: 'user', content, model: '', createdAt: new Date().toISOString() },
     ])
+    startStream()
+    streamBuf.current = ''
 
     try {
       await ensureConnected(accessToken)
