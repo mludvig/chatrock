@@ -1,5 +1,5 @@
 import { ENV } from '../env'
-import type { ModelSettings } from './http'
+import type { ModelSettings, TokenUsage } from './http'
 
 export type WSEvent =
   | { type: 'delta';          text: string }
@@ -8,6 +8,7 @@ export type WSEvent =
   | { type: 'tool_call_start'; toolUseId: string; name: string }
   | { type: 'tool_call';      toolUseId: string; name: string; input: string }
   | { type: 'tool_result';    toolUseId: string; name: string; isError: boolean; content?: string }
+  | { type: 'usage';          usage: TokenUsage }
   | { type: 'done';           stopReason: string }
   | { type: 'titleUpdated';   chatId: string; title: string }
   | { type: 'error';          message: string }

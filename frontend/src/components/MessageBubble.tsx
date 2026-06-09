@@ -6,8 +6,9 @@ import {
   faChevronDown, faChevronRight, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain,
 } from '@fortawesome/free-solid-svg-icons'
-import type { Message } from '../api/http'
-import type { StreamingMsg, ToolCall, SearchResult } from '../store/chatStore'
+import type { Message, Step, TokenUsage } from '../api/http'
+import type { StreamingMsg } from '../store/chatStore'
+import type { SearchResult } from '../lib/toolResults'
 
 // ── Search result cards ───────────────────────────────────────────────────────
 
@@ -29,17 +30,17 @@ function SearchResultCard({ r, index }: { r: SearchResult; index: number }) {
 
 // ── Tool call display ─────────────────────────────────────────────────────────
 
-function ToolCallPill({ tc }: { tc: ToolCall }) {
+function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streaming?: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const pending = tc.result === undefined
-  const hasResults = !!tc.searchResults?.length
-  const icon = pending ? faSpinner : tc.isError ? faCircleXmark : faCircleCheck
-  const label = tc.name === 'web_search' ? `Search: ${safeInput(tc.input, 'query')}`
-              : tc.name === 'web_fetch'  ? `Fetch: ${safeInput(tc.input, 'url')}`
-              : tc.name
+  const pending = step.result === undefined
+  const hasResults = !!step.searchResults?.length
+  const icon = pending ? faSpinner : step.isError ? faCircleXmark : faCircleCheck
+  const label = step.name === 'web_search' ? `Search: ${safeInput(step.input, 'query')}`
+              : step.name === 'web_fetch'  ? `Fetch: ${safeInput(step.input, 'url')}`
+              : step.name
 
   return (
-    <div className={`tool-pill${tc.isError ? ' error' : pending ? ' pending' : ''}`}>
+    <div className={`tool-pill${step.isError ? ' error' : pending ? ' pending' : ''}`}>
       <button className="tool-pill-header" onClick={() => !pending && setExpanded(e => !e)}>
         <FontAwesomeIcon icon={faGlobe} className="tool-icon" />
         <span className="tool-label">{label}</span>
@@ -48,16 +49,16 @@ function ToolCallPill({ tc }: { tc: ToolCall }) {
           <FontAwesomeIcon icon={expanded ? faChevronDown : faChevronRight} className="tool-chevron" />
         )}
       </button>
-      {expanded && tc.result !== undefined && (
+      {expanded && step.result !== undefined && (
         <div className="tool-result-body">
           {hasResults ? (
             <div className="search-results">
-              {tc.searchResults!.map((r, i) => (
+              {step.searchResults!.map((r: SearchResult, i: number) => (
                 <SearchResultCard key={r.url} r={r} index={i} />
               ))}
             </div>
           ) : (
-            <pre>{tc.result.slice(0, 3000)}{tc.result.length > 3000 ? '\n[...]' : ''}</pre>
+            <pre>{step.result.slice(0, 3000)}{step.result.length > 3000 ? '\n[...]' : ''}</pre>
           )}
         </div>
       )}
@@ -97,53 +98,108 @@ function ThinkingBlock({ text, done, streaming }: { text: string; done: boolean;
   )
 }
 
+// ── Usage stats footer ────────────────────────────────────────────────────────
+
+export function UsageStats({ usage, label }: { usage: TokenUsage; label?: string }) {
+  const parts: string[] = []
+  parts.push(`↑${usage.inputTokens} ↓${usage.outputTokens}`)
+  if (usage.cacheReadInputTokens) parts.push(`cache hit ${usage.cacheReadInputTokens}`)
+  if (usage.cacheWriteInputTokens) parts.push(`cache write ${usage.cacheWriteInputTokens}`)
+  return (
+    <div className="usage-stats">
+      {label && <span className="usage-label">{label}</span>}
+      <span className="usage-tokens">{parts.join(' · ')}</span>
+    </div>
+  )
+}
+
 // ── Main bubble ───────────────────────────────────────────────────────────────
 
 interface Props {
   message: Message | StreamingMsg
 }
 
+/**
+ * Renders a chat bubble.  For StreamingMsg, steps may be in progress (last
+ * thinking/text step still accumulating, tool result pending).  For Message,
+ * all steps are final.
+ *
+ * Steps are rendered in arrival order — exactly as they appear in steps[].
+ * This preserves the think → search → think → answer interleaved structure.
+ */
 export default function MessageBubble({ message }: Props) {
   const isAssistant = message.role === 'assistant'
-  const streaming = 'streaming' in message && message.streaming
+  const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
+  const steps: Step[] = message.steps ?? []
 
-  const thinking = message.thinking
-  const thinkingDone = 'thinkingDone' in message ? (message.thinkingDone ?? false) : true
-  const toolCalls = message.toolCalls
+  // For a streaming message, the last step is "open" (still accumulating).
+  // A thinking step is done when the next non-thinking step exists after it.
+  function isThinkingDone(stepIndex: number): boolean {
+    if (!isStreaming) return true
+    // If there's any step after this one, the thinking is done
+    return stepIndex < steps.length - 1
+  }
+
+  function isLastTextStep(stepIndex: number): boolean {
+    return isStreaming && stepIndex === steps.length - 1 && steps[stepIndex].kind === 'text'
+  }
 
   return (
     <div className={`message ${message.role}`}>
       <div className="message-content">
-        {/* Waiting indicator */}
-        {isAssistant && waiting && (
+        {/* Waiting indicator — shown before any steps arrive */}
+        {isAssistant && waiting && steps.length === 0 && (
           <span className="waiting-indicator">
             <FontAwesomeIcon icon={faSpinner} spin />
             <span>Processing…</span>
           </span>
         )}
 
-        {/* Thinking block */}
-        {isAssistant && !waiting && thinking && thinking.length > 0 && (
-          <ThinkingBlock text={thinking} done={thinkingDone} streaming={!!streaming} />
+        {/* Render steps in order */}
+        {steps.map((step, i) => {
+          // Strip internal _done sentinel from display
+          const cleanStep = step as Step & { _done?: boolean }
+
+          if (cleanStep.kind === 'thinking') {
+            return (
+              <ThinkingBlock
+                key={i}
+                text={cleanStep.text}
+                done={isThinkingDone(i)}
+                streaming={isStreaming}
+              />
+            )
+          }
+          if (cleanStep.kind === 'tool') {
+            return (
+              <ToolCallPill
+                key={cleanStep.toolUseId}
+                step={cleanStep}
+                streaming={isStreaming}
+              />
+            )
+          }
+          if (cleanStep.kind === 'text') {
+            if (!isAssistant) {
+              return <span key={i}>{cleanStep.text}</span>
+            }
+            return (
+              <div key={i} className="md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {cleanStep.text || ''}
+                </ReactMarkdown>
+                {isLastTextStep(i) && <span className="cursor">▋</span>}
+              </div>
+            )
+          }
+          return null
+        })}
+
+        {/* Usage stats footer — shown on finalized assistant bubbles */}
+        {isAssistant && !isStreaming && 'usage' in message && message.usage && (
+          <UsageStats usage={message.usage} />
         )}
-
-        {/* Tool call pills */}
-        {!waiting && toolCalls && toolCalls.map(tc => (
-          <ToolCallPill key={tc.toolUseId} tc={tc} />
-        ))}
-
-        {/* Message text */}
-        {isAssistant && !waiting ? (
-          <div className="md">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content || ''}
-            </ReactMarkdown>
-            {streaming && <span className="cursor">▋</span>}
-          </div>
-        ) : !isAssistant ? (
-          <span>{message.content}</span>
-        ) : null}
       </div>
     </div>
   )

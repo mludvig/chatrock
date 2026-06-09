@@ -32,17 +32,31 @@ export interface Chat {
   updatedAt: string
 }
 
+// ── Display types returned by GET /messages (format C) ───────────────────────
+
+export interface TokenUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens?: number
+  cacheWriteInputTokens?: number
+}
+
+export type Step =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }> }
+
 export interface Message {
   msgId: string
   role: 'user' | 'assistant'
-  content: string
+  // Format C: steps[] is the canonical shape
+  steps: Step[]
   model: string
   createdAt: string
-  // thinking and toolCalls are persisted to DynamoDB; searchResults is derived
-  // client-side from toolCalls[].result (not stored, re-parsed on load)
-  toolCalls?: Array<{ toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }> }>
-  thinking?: string
-  thinkingDone?: boolean
+  usage?: TokenUsage
+  // Convenience: a text step's content for the legacy Message.content access pattern
+  // (kept so callers that only need the text can still work; derived from steps on load)
+  content?: string
 }
 
 export interface ModelCapabilities {
@@ -95,7 +109,7 @@ export const api = {
   updateModel: (chatId: string, model: string) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { model }),
   deleteChat: (chatId: string)         => req<void>('DELETE', `/api/chats/${chatId}`),
-  listMessages: (chatId: string)       => req<{ messages: Message[] }>('GET', `/api/chats/${chatId}/messages`),
+  listMessages: (chatId: string)       => req<{ bubbles: Message[]; conversationUsage: TokenUsage }>('GET', `/api/chats/${chatId}/messages`),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
 }
