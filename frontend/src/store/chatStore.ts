@@ -2,11 +2,18 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model } from '../api/http'
 
+export interface SearchResult {
+  title: string
+  url: string
+  description: string
+}
+
 export interface ToolCall {
   toolUseId: string
   name: string
   input: string
   result?: string
+  searchResults?: SearchResult[]  // parsed from result JSON for web_search
   isError?: boolean
 }
 
@@ -126,16 +133,34 @@ export const useChatStore = create<ChatState>()(
       resolveToolCall: (toolUseId, result, isError) => set((s) => ({
         streamingMsg: s.streamingMsg ? {
           ...s.streamingMsg,
-          toolCalls: (s.streamingMsg.toolCalls ?? []).map(tc =>
-            tc.toolUseId === toolUseId ? { ...tc, result, isError } : tc
-          ),
+          toolCalls: (s.streamingMsg.toolCalls ?? []).map(tc => {
+            if (tc.toolUseId !== toolUseId) return tc
+            let searchResults: SearchResult[] | undefined
+            if (tc.name === 'web_search' && result && !isError) {
+              try {
+                const parsed = JSON.parse(result) as { results?: SearchResult[] }
+                searchResults = parsed.results
+              } catch { /* not JSON, leave undefined */ }
+            }
+            return { ...tc, result, isError, searchResults }
+          }),
         } : null,
       })),
 
       finalizeStream: (content) => set((s) => ({
         messages: [
           ...s.messages,
-          { msgId: crypto.randomUUID(), role: 'assistant', content, model: '', createdAt: new Date().toISOString() },
+          {
+            msgId: crypto.randomUUID(),
+            role: 'assistant',
+            content,
+            model: '',
+            createdAt: new Date().toISOString(),
+            // Preserve tool calls and thinking so the finalized bubble shows them
+            toolCalls: s.streamingMsg?.toolCalls,
+            thinking: s.streamingMsg?.thinking,
+            thinkingDone: true,
+          },
         ],
         streamingMsg: null,
       })),

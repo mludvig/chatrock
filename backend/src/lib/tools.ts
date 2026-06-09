@@ -55,24 +55,35 @@ export async function executeTool(name: string, input: Record<string, string>): 
   }
 }
 
+export interface SearchResult {
+  title: string
+  url: string
+  description: string
+}
+
 async function jinaSearch(query: string): Promise<string> {
   const url = `https://s.jina.ai/${encodeURIComponent(query)}`
-  const headers: Record<string, string> = {
-    'Accept': 'application/json',
-    'X-Return-Format': 'text',
-  }
+  const headers: Record<string, string> = { 'Accept': 'application/json' }
   if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`
 
   const res = await fetch(url, { headers })
   if (!res.ok) throw new Error(`Jina search failed: ${res.status} ${await res.text()}`)
 
   const json = await res.json() as { data?: Array<{ title: string; url: string; description: string }> }
-  const results = json.data ?? []
-  if (results.length === 0) return 'No results found.'
+  const results = (json.data ?? []).slice(0, 5).map(r => ({
+    title: r.title ?? '',
+    url: r.url ?? '',
+    description: r.description ?? '',
+  }))
 
-  return results.slice(0, 5).map((r, i) =>
-    `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.description ?? ''}`
+  if (results.length === 0) return JSON.stringify({ results: [], text: 'No results found.' })
+
+  // Also provide a plain-text version the model can cite from
+  const text = results.map((r, i) =>
+    `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.description}`
   ).join('\n\n')
+
+  return JSON.stringify({ results, text })
 }
 
 async function jinaFetch(url: string): Promise<string> {
