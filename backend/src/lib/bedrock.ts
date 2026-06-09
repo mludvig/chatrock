@@ -190,13 +190,20 @@ async function* streamOneTurn(
       const delta = event.contentBlockDelta.delta
 
       if (delta?.text) {
+        // Defensive: Bedrock may not always fire contentBlockStart before the
+        // first delta for a plain text block.  Create the accumulator on-the-fly
+        // so text is captured in the persisted `turn` chunk's content[].
+        if (!blockAcc[idx]) {
+          blockAcc[idx] = { kind: 'text', textParts: [] }
+        }
         const acc = blockAcc[idx]
-        if (acc?.kind === 'thinking') {
+        if (acc.kind === 'thinking') {
           yield { type: 'thinking_delta', text: delta.text }
-        } else {
+          acc.textParts.push(delta.text)
+        } else if (acc.kind === 'text') {
           textContent += delta.text
           yield { type: 'delta', text: delta.text }
-          if (acc?.kind === 'text') acc.textParts.push(delta.text)
+          acc.textParts.push(delta.text)
         }
       } else if (delta?.reasoningContent) {
         // Upgrade block to thinking on first reasoning delta
