@@ -5,17 +5,17 @@ import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 
-const CORS = { 'Access-Control-Allow-Origin': '*' }
+const corsHeader = () => ({ 'Access-Control-Allow-Origin': `https://${process.env.DOMAIN_NAME}` })
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...CORS },
+  headers: { 'Content-Type': 'application/json', ...corsHeader() },
   body: JSON.stringify(body),
 })
 
 const err = (status: number, message: string): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...CORS },
+  headers: { 'Content-Type': 'application/json', ...corsHeader() },
   body: JSON.stringify({ message }),
 })
 
@@ -70,7 +70,7 @@ export const handler = async (
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
     await deleteChat(sub, chatId)
-    return { statusCode: 204, headers: CORS, body: '' }
+    return { statusCode: 204, headers: corsHeader(), body: '' }
   }
 
   if (route === 'POST /api/chats/{chatId}/retitle') {
