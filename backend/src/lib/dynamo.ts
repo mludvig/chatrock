@@ -23,6 +23,21 @@ export const buildMsgKey = (chatId: string, ts: string, msgId: string) => ({
   SK: `MSG#${ts}#${msgId}`,
 })
 
+/**
+ * Key for a per-Converse-turn record (format C).
+ *
+ * SK: MSG#<responseStartTs>#<seqPadded4>#<msgId>
+ *
+ * Zero-padded seq ensures lexical sort == turn order even when multiple turns
+ * share the same millisecond timestamp.  All turns of one response share the
+ * same `ts` (captured once at response start), so they sort together and in
+ * order, before any later response.
+ */
+export const buildTurnKey = (chatId: string, ts: string, seq: number, msgId: string) => ({
+  PK: `CHAT#${chatId}`,
+  SK: `MSG#${ts}#${String(seq).padStart(4, '0')}#${msgId}`,
+})
+
 export const buildConnKey = (connId: string) => ({
   PK: `CONN#${connId}`,
   SK: `CONN#${connId}`,
