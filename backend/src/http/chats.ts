@@ -60,6 +60,7 @@ export const handler = async (
       createdAt: now,
       updatedAt: now,
     })
+    console.log(JSON.stringify({ event: 'chat_created', sub, chatId, model }))
     return ok({ chatId }, 201)
   }
 
@@ -78,15 +79,22 @@ export const handler = async (
     }
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
+    const updatedFields: string[] = []
     if (body.title !== undefined) {
       if (typeof body.title !== 'string') return err(400, 'title must be a string')
       await updateChatTitle(sub, chatId, body.title)
+      updatedFields.push('title')
     }
-    if (body.systemPrompt !== undefined) await updateChatSystemPrompt(sub, chatId, body.systemPrompt as string)
+    if (body.systemPrompt !== undefined) {
+      await updateChatSystemPrompt(sub, chatId, body.systemPrompt as string)
+      updatedFields.push('systemPrompt')
+    }
     if (body.model !== undefined) {
       if (typeof body.model !== 'string' || !isValidModelId(body.model)) return err(400, 'Invalid model')
       await updateChatModel(sub, chatId, body.model)
+      updatedFields.push('model')
     }
+    console.log(JSON.stringify({ event: 'chat_updated', sub, chatId, fields: updatedFields }))
     return ok({ ok: true })
   }
 
@@ -94,6 +102,7 @@ export const handler = async (
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
     await deleteChat(sub, chatId)
+    console.log(JSON.stringify({ event: 'chat_deleted', sub, chatId }))
     return { statusCode: 204, headers: corsHeader(), body: '' }
   }
 

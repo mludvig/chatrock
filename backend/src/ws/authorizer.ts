@@ -11,7 +11,10 @@ export const handler = async (
   event: APIGatewayRequestAuthorizerEvent,
 ): Promise<APIGatewayAuthorizerResult> => {
   const token = event.queryStringParameters?.token
-  if (!token) return deny(event.methodArn)
+  if (!token) {
+    console.warn(JSON.stringify({ event: 'ws_auth_failed', reason: 'missing_token' }))
+    return deny(event.methodArn)
+  }
 
   try {
     const payload = await verifier.verify(token)
@@ -23,7 +26,8 @@ export const handler = async (
       },
       context: { sub: payload.sub },
     }
-  } catch {
+  } catch (e) {
+    console.warn(JSON.stringify({ event: 'ws_auth_failed', reason: 'token_verification_failed', error: String(e) }))
     return deny(event.methodArn)
   }
 }

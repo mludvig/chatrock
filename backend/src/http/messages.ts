@@ -214,6 +214,7 @@ export const handler = async (
   const chat = await getChat(sub, chatId)
   if (!chat) return err(404, 'Not found')
 
+  console.log(JSON.stringify({ event: 'messages_accessed', sub, chatId }))
   const items = await listMessages(chatId)
   const rows = items as unknown as TurnRow[]
   const response = groupTurnsToBubbles(rows)
