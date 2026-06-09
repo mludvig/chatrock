@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGear, faPaperPlane, faXmark, faCheck } from '@fortawesome/free-solid-svg-icons'
+import { faGear, faPaperPlane, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings } from '../api/http'
 import type { Model, ModelSettings, ModelCapabilities } from '../api/http'
 import { sendMessage, ensureConnected, setWSHandlers } from '../api/ws'
@@ -33,8 +33,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const [newModel, setNewModel] = useState(defaultModel)
   const [newSystemPrompt, setNewSystemPrompt] = useState('')
 
-  // For existing chats
-  const [editingSystemPrompt, setEditingSystemPrompt] = useState('')
   const [showSettings, setShowSettings] = useState(false)
 
   // Per-session model settings — derived from selected model's capabilities
@@ -100,18 +98,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     })
   }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream, renameChat, setSending])
 
-  // Load messages when navigating to an existing chat.
-  // Use a cancelled flag so a stale in-flight fetch can't overwrite optimistic state.
+  // Load messages when chatId changes. Never re-run when sending changes — that would
+  // overwrite in-progress optimistic state with stale DynamoDB records.
   useEffect(() => {
     if (isNew || !chatId) {
       setMessages([])
       return
     }
-    if (sending) return
     let cancelled = false
     api.listMessages(chatId).then(r => { if (!cancelled) setMessages(r.messages) })
     return () => { cancelled = true }
-  }, [chatId, isNew, setMessages, sending])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, isNew])
 
   // Auto-scroll
   useEffect(() => {
@@ -202,11 +200,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }))
   }
 
-  async function saveSystemPrompt() {
-    if (!chatId || isNew) return
-    await api.updateSystemPrompt(chatId, editingSystemPrompt)
-    updateChatSystemPrompt(chatId, editingSystemPrompt)
-    setShowSettings(false)
+  function handleSystemPromptChange(value: string) {
+    if (isNew) {
+      setNewSystemPrompt(value)
+    } else if (chatId) {
+      updateChatSystemPrompt(chatId, value)
+      api.updateSystemPrompt(chatId, value)
+    }
   }
 
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
@@ -228,10 +228,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </select>
           <button
             className={`btn-icon${showSettings ? ' active' : ''}`}
-            onClick={() => {
-              if (!isNew) setEditingSystemPrompt(activeChat?.systemPrompt ?? '')
-              setShowSettings(s => !s)
-            }}
+            onClick={() => setShowSettings(s => !s)}
             title="Chat settings"
           >
             <FontAwesomeIcon icon={faGear} />
@@ -239,7 +236,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         </div>
       </div>
 
-      {/* Settings panel — shown for both new and existing chats */}
+      {/* Settings panel — shown for both new and existing chats, live-apply */}
       {showSettings && (
         <div className={`settings-panel${isNew ? ' new-chat-settings' : ''}`}>
           <label>System prompt{isNew && <span className="hint"> (optional)</span>}</label>
@@ -247,28 +244,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             className="system-prompt-input"
             rows={isNew ? 2 : 4}
             placeholder="You are a helpful assistant…"
-            value={isNew ? newSystemPrompt : editingSystemPrompt}
-            onChange={e => isNew ? setNewSystemPrompt(e.target.value) : setEditingSystemPrompt(e.target.value)}
+            value={isNew ? newSystemPrompt : (activeChat?.systemPrompt ?? '')}
+            onChange={e => handleSystemPromptChange(e.target.value)}
           />
-
           <ModelSettingsPanel
             caps={currentCaps}
             settings={modelSettings}
             onChange={setModelSettings}
           />
-
-          {!isNew && (
-            <div className="settings-actions">
-              <button className="btn-icon" onClick={() => setShowSettings(false)} title="Cancel">
-                <FontAwesomeIcon icon={faXmark} />
-                <span>Cancel</span>
-              </button>
-              <button className="btn-primary btn-sm" onClick={saveSystemPrompt}>
-                <FontAwesomeIcon icon={faCheck} />
-                <span>Save</span>
-              </button>
-            </div>
-          )}
         </div>
       )}
 
