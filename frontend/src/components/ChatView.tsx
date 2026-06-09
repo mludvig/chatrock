@@ -98,15 +98,21 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     })
   }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream, renameChat, setSending])
 
-  // Load messages when chatId changes. Never re-run when sending changes — that would
-  // overwrite in-progress optimistic state with stale DynamoDB records.
+  // Load messages when chatId changes.
+  // Guard against two races:
+  //   1. Effect re-runs (chatId changed): cancelled flag drops stale result
+  //   2. User sends while fetch is in flight: check sending via getState() at
+  //      resolve time (not the captured closure value) so we don't overwrite
+  //      the optimistic user+assistant messages with stale DB records.
   useEffect(() => {
     if (isNew || !chatId) {
       setMessages([])
       return
     }
     let cancelled = false
-    api.listMessages(chatId).then(r => { if (!cancelled) setMessages(r.messages) })
+    api.listMessages(chatId).then(r => {
+      if (!cancelled && !useChatStore.getState().sending) setMessages(r.messages)
+    })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
