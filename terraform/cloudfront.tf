@@ -13,6 +13,12 @@ resource "aws_cloudfront_distribution" "chatrock" {
   web_acl_id          = aws_wafv2_web_acl.chatrock.arn
   price_class         = "PriceClass_100"
 
+  logging_config {
+    bucket          = aws_s3_bucket.logs.bucket_regional_domain_name
+    prefix          = "cloudfront/"
+    include_cookies = false
+  }
+
   # ── Origins ──────────────────────────────────────────────────────────────
   origin {
     domain_name              = aws_s3_bucket.spa.bucket_regional_domain_name
