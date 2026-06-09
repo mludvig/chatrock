@@ -1,9 +1,18 @@
 {
   "name": "chatrock",
   "private": true,
-  "workspaces": ["backend", "frontend"],
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
     "build:backend": "npm run build --workspace=backend",
-    "build:frontend": "npm run build --workspace=frontend"
+    "build:frontend": "npm run build --workspace=frontend",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "dotenv": "^17.4.2"
   }
 }
