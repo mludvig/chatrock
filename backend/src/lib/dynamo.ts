@@ -11,7 +11,7 @@ import {
 export const TABLE = process.env.DYNAMO_TABLE ?? 'chatrock'
 
 const raw = new DynamoDBClient({})
-export const ddb = DynamoDBDocumentClient.from(raw)
+export const ddb = DynamoDBDocumentClient.from(raw, { marshallOptions: { removeUndefinedValues: true } })
 
 export const buildChatKey = (sub: string, chatId: string) => ({
   PK: `USER#${sub}`,
