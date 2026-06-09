@@ -19,8 +19,8 @@ resource "aws_cloudfront_origin_access_control" "spa" {
 }
 
 resource "aws_s3_bucket_policy" "spa" {
-  bucket = aws_s3_bucket.spa.id
-  policy = data.aws_iam_policy_document.spa_bucket.json
+  bucket     = aws_s3_bucket.spa.id
+  policy     = data.aws_iam_policy_document.spa_bucket.json
   depends_on = [aws_s3_bucket_public_access_block.spa]
 }
 
