@@ -10,17 +10,28 @@ import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
 import type { SearchResult } from '../lib/toolResults'
 
+// ── URL sanitizer — blocks javascript: and data: URIs ────────────────────────
+
+export function sanitizeUrl(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? url : '#'
+  } catch {
+    return '#'
+  }
+}
+
 // ── Search result cards ───────────────────────────────────────────────────────
 
 function SearchResultCard({ r, index }: { r: SearchResult; index: number }) {
   return (
-    <a className="search-result-card" href={r.url} target="_blank" rel="noopener noreferrer">
+    <a className="search-result-card" href={sanitizeUrl(r.url)} target="_blank" rel="noopener noreferrer">
       <span className="src-index">{index + 1}</span>
       <span className="src-body">
         <span className="src-title">{r.title || r.url}</span>
         <span className="src-url">
           <FontAwesomeIcon icon={faLink} />
-          {new URL(r.url).hostname}
+          {sanitizeUrl(r.url) !== '#' ? new URL(r.url).hostname : r.url}
         </span>
         {r.description && <span className="src-desc">{r.description}</span>}
       </span>
