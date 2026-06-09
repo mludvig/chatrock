@@ -56,6 +56,10 @@ export function getCapabilities(modelId: string): ModelCapabilities {
     ?? { temperature: true, topP: true, topK: false, thinking: 'none' }
 }
 
+export function isValidModelId(modelId: string): boolean {
+  return MODELS.some(m => m.id === modelId)
+}
+
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   return {
     ...(caps.thinking !== 'none' ? { thinkingEffort: 'off' as const } : {}),

@@ -6,6 +6,7 @@ import {
   QueryCommand,
   UpdateCommand,
   DeleteCommand,
+  BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb'
 
 export const TABLE = process.env.DYNAMO_TABLE ?? 'chatrock'
@@ -94,6 +95,22 @@ export async function updateChatModel(sub: string, chatId: string, model: string
 }
 
 export async function deleteChat(sub: string, chatId: string) {
+  // Delete all messages for this chat first (cascade)
+  const msgs = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `CHAT#${chatId}`, ':prefix': 'MSG#' },
+    ProjectionExpression: 'PK, SK',
+  }))
+  const items = msgs.Items ?? []
+  for (let i = 0; i < items.length; i += 25) {
+    const chunk = items.slice(i, i + 25)
+    await ddb.send(new BatchWriteCommand({
+      RequestItems: {
+        [TABLE]: chunk.map(item => ({ DeleteRequest: { Key: { PK: item.PK, SK: item.SK } } })),
+      },
+    }))
+  }
   await ddb.send(new DeleteCommand({
     TableName: TABLE,
     Key: buildChatKey(sub, chatId),

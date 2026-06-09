@@ -19,6 +19,29 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# Allow API Gateway to write access logs to CloudWatch
+resource "aws_iam_role" "apigw_cloudwatch" {
+  name = "chatrock-apigw-cloudwatch-${var.env}"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "apigateway.amazonaws.com" }
+    }]
+  })
+  tags = { Env = var.env }
+}
+
+resource "aws_iam_role_policy_attachment" "apigw_cloudwatch" {
+  role       = aws_iam_role.apigw_cloudwatch.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_api_gateway_account" "chatrock" {
+  cloudwatch_role_arn = aws_iam_role.apigw_cloudwatch.arn
+}
+
 data "aws_iam_policy_document" "lambda_policy" {
   statement {
     actions = [

@@ -2,20 +2,20 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 }
 import { v4 as uuidv4 } from 'uuid'
 import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, buildChatKey, listMessages } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
-import { TITLE_MODEL } from '../config/models'
+import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 
-const CORS = { 'Access-Control-Allow-Origin': '*' }
+const corsHeader = () => ({ 'Access-Control-Allow-Origin': `https://${process.env.DOMAIN_NAME}` })
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...CORS },
+  headers: { 'Content-Type': 'application/json', ...corsHeader() },
   body: JSON.stringify(body),
 })
 
 const err = (status: number, message: string): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...CORS },
+  headers: { 'Content-Type': 'application/json', ...corsHeader() },
   body: JSON.stringify({ message }),
 })
 
@@ -39,17 +39,28 @@ export const handler = async (
   }
 
   if (route === 'POST /api/chats') {
-    const body = JSON.parse(event.body ?? '{}')
+    let body: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(event.body ?? '{}')
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>
+      }
+    } catch {
+      return err(400, 'Invalid JSON body')
+    }
+    const model = (body.model as string | undefined) ?? process.env.DEFAULT_MODEL ?? ''
+    if (body.model !== undefined && !isValidModelId(model)) return err(400, 'Invalid model')
     const chatId = uuidv4()
     const now = new Date().toISOString()
     await putChat({
       ...buildChatKey(sub, chatId),
       title: 'New Chat',
-      model: body.model ?? process.env.DEFAULT_MODEL,
-      systemPrompt: body.systemPrompt ?? '',
+      model,
+      systemPrompt: (body.systemPrompt as string | undefined) ?? '',
       createdAt: now,
       updatedAt: now,
     })
+    console.log(JSON.stringify({ event: 'chat_created', sub, chatId, model }))
     return ok({ chatId }, 201)
   }
 
@@ -57,12 +68,33 @@ export const handler = async (
   if (!chatId) return err(400, 'Missing chatId')
 
   if (route === 'PATCH /api/chats/{chatId}') {
-    const body = JSON.parse(event.body ?? '{}')
+    let body: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(event.body ?? '{}')
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>
+      }
+    } catch {
+      return err(400, 'Invalid JSON body')
+    }
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
-    if (body.title !== undefined) await updateChatTitle(sub, chatId, body.title)
-    if (body.systemPrompt !== undefined) await updateChatSystemPrompt(sub, chatId, body.systemPrompt)
-    if (body.model !== undefined) await updateChatModel(sub, chatId, body.model)
+    const updatedFields: string[] = []
+    if (body.title !== undefined) {
+      if (typeof body.title !== 'string') return err(400, 'title must be a string')
+      await updateChatTitle(sub, chatId, body.title)
+      updatedFields.push('title')
+    }
+    if (body.systemPrompt !== undefined) {
+      await updateChatSystemPrompt(sub, chatId, body.systemPrompt as string)
+      updatedFields.push('systemPrompt')
+    }
+    if (body.model !== undefined) {
+      if (typeof body.model !== 'string' || !isValidModelId(body.model)) return err(400, 'Invalid model')
+      await updateChatModel(sub, chatId, body.model)
+      updatedFields.push('model')
+    }
+    console.log(JSON.stringify({ event: 'chat_updated', sub, chatId, fields: updatedFields }))
     return ok({ ok: true })
   }
 
@@ -70,7 +102,8 @@ export const handler = async (
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
     await deleteChat(sub, chatId)
-    return { statusCode: 204, headers: CORS, body: '' }
+    console.log(JSON.stringify({ event: 'chat_deleted', sub, chatId }))
+    return { statusCode: 204, headers: corsHeader(), body: '' }
   }
 
   if (route === 'POST /api/chats/{chatId}/retitle') {
