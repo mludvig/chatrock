@@ -1,27 +1,20 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Chat, Message, Model } from '../api/http'
+import type { Chat, Message, Model, Step, TokenUsage } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
-import type { SearchResult } from '../lib/toolResults'
-export type { SearchResult } from '../lib/toolResults'
+export type { Step, TokenUsage } from '../api/http'
 
-export interface ToolCall {
-  toolUseId: string
-  name: string
-  input: string
-  result?: string
-  searchResults?: SearchResult[]  // parsed from result JSON for web_search
-  isError?: boolean
-}
+// A tool step that may be in progress (no result yet)
+export type ToolStep = Extract<Step, { kind: 'tool' }>
 
+// StreamingMsg is the live assembly area during an active response.
+// steps[] is ordered in arrival order — exactly the same order as DisplayBubble.steps.
 export interface StreamingMsg {
   role: 'assistant'
-  content: string
-  thinking?: string       // accumulated thinking text
-  thinkingDone?: boolean
-  toolCalls?: ToolCall[]
+  steps: Step[]
+  usage?: TokenUsage
   streaming: true
-  waiting?: boolean       // true until first content event arrives
+  waiting?: boolean  // true until first content event arrives
 }
 
 interface ChatState {
@@ -42,19 +35,66 @@ interface ChatState {
   setActiveChat: (chatId: string | null) => void
   setMessages: (messages: Message[]) => void
   startStream: () => void
+  /** Append text to the last text step; create a new text step if needed */
   appendDelta: (text: string) => void
+  /** Append text to the last thinking step; create a new thinking step if needed */
   appendThinkingDelta: (text: string) => void
+  /** Mark the current thinking step as done (subsequent deltas start a new step) */
   markThinkingDone: () => void
-  addToolCall: (tc: ToolCall) => void
+  /** Push a new pending tool step */
+  addToolCall: (tc: { toolUseId: string; name: string; input: string }) => void
+  /** Set the JSON input on a tool step */
   updateToolCallInput: (toolUseId: string, input: string) => void
+  /** Attach tool result to the matching tool step */
   resolveToolCall: (toolUseId: string, result: string, isError: boolean) => void
-  finalizeStream: (content: string) => void
+  /** Set live usage stats from the 'usage' WS event */
+  setStreamUsage: (usage: TokenUsage) => void
+  /** Move streamingMsg to messages[] as a DisplayBubble */
+  finalizeStream: () => void
   clearStream: () => void
   setModels: (models: Model[]) => void
   setLoading: (v: boolean) => void
   setSending: (v: boolean) => void
   setLastModel: (modelId: string) => void
 }
+
+// ── Internal step-mutation helpers (pure, no React state) ─────────────────────
+
+// Returns the last step if it matches the given kind and is "open" (modifiable)
+function lastOpenStep<K extends Step['kind']>(steps: Step[], kind: K): (Extract<Step, { kind: K }> & { _open?: true }) | null {
+  if (steps.length === 0) return null
+  const last = steps[steps.length - 1]
+  if (last.kind !== kind) return null
+  // A tool step is never "open" for text appending after it's been pushed
+  if (kind === 'tool') return null
+  return last as Extract<Step, { kind: K }> & { _open?: true }
+}
+
+function appendToLastThinking(steps: Step[], text: string): Step[] {
+  if (steps.length > 0) {
+    const last = steps[steps.length - 1] as Step & { _done?: boolean }
+    if (last.kind === 'thinking' && !last._done) {
+      return [
+        ...steps.slice(0, -1),
+        { ...last, text: last.text + text },
+      ]
+    }
+  }
+  return [...steps, { kind: 'thinking', text }]
+}
+
+function appendToLastText(steps: Step[], text: string): Step[] {
+  const last = lastOpenStep(steps, 'text')
+  if (last) {
+    return [
+      ...steps.slice(0, -1),
+      { ...last, text: last.text + text },
+    ]
+  }
+  return [...steps, { kind: 'text', text }]
+}
+
+// ── Store ─────────────────────────────────────────────────────────────────────
 
 export const useChatStore = create<ChatState>()(
   persist(
@@ -85,76 +125,118 @@ export const useChatStore = create<ChatState>()(
       setMessages: (messages) => set({ messages }),
 
       startStream: () => set({
-        streamingMsg: { role: 'assistant', streaming: true, content: '', waiting: true },
+        streamingMsg: { role: 'assistant', streaming: true, steps: [], waiting: true },
       }),
 
-      appendDelta: (text) => set((s) => ({
-        streamingMsg: {
-          ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
-          content: (s.streamingMsg?.content ?? '') + text,
-          waiting: false,
-        } as StreamingMsg,
-      })),
+      appendDelta: (text) => set((s) => {
+        const sm = s.streamingMsg ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
+        return {
+          streamingMsg: {
+            ...sm,
+            steps: appendToLastText(sm.steps, text),
+            waiting: false,
+          } as StreamingMsg,
+        }
+      }),
 
-      appendThinkingDelta: (text) => set((s) => ({
-        streamingMsg: {
-          ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
-          thinking: (s.streamingMsg?.thinking ?? '') + text,
-          waiting: false,
-        } as StreamingMsg,
-      })),
+      appendThinkingDelta: (text) => set((s) => {
+        const sm = s.streamingMsg ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
+        return {
+          streamingMsg: {
+            ...sm,
+            steps: appendToLastThinking(sm.steps, text),
+            waiting: false,
+          } as StreamingMsg,
+        }
+      }),
 
-      markThinkingDone: () => set((s) => ({
+      markThinkingDone: () => set((s) => {
+        if (!s.streamingMsg) return {}
+        const steps = s.streamingMsg.steps
+        if (steps.length === 0 || steps[steps.length - 1].kind !== 'thinking') return {}
+        // Mark the last thinking step as done so subsequent thinking_delta events
+        // start a new thinking step (appendToLastThinking checks _done).
+        const lastStep = steps[steps.length - 1] as Step & { _done?: boolean }
+        return {
+          streamingMsg: {
+            ...s.streamingMsg,
+            steps: [
+              ...steps.slice(0, -1),
+              { ...lastStep, _done: true },
+            ],
+          } as StreamingMsg,
+        }
+      }),
+
+      addToolCall: (tc) => set((s) => {
+        const sm = s.streamingMsg ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
+        const toolStep: Step = { kind: 'tool', toolUseId: tc.toolUseId, name: tc.name, input: tc.input }
+        return {
+          streamingMsg: {
+            ...sm,
+            steps: [...sm.steps, toolStep],
+            waiting: false,
+          } as StreamingMsg,
+        }
+      }),
+
+      updateToolCallInput: (toolUseId, input) => set((s) => {
+        if (!s.streamingMsg) return {}
+        return {
+          streamingMsg: {
+            ...s.streamingMsg,
+            steps: s.streamingMsg.steps.map(step =>
+              step.kind === 'tool' && step.toolUseId === toolUseId
+                ? { ...step, input }
+                : step
+            ),
+          } as StreamingMsg,
+        }
+      }),
+
+      resolveToolCall: (toolUseId, result, isError) => set((s) => {
+        if (!s.streamingMsg) return {}
+        return {
+          streamingMsg: {
+            ...s.streamingMsg,
+            steps: s.streamingMsg.steps.map(step => {
+              if (step.kind !== 'tool' || step.toolUseId !== toolUseId) return step
+              const searchResults = parseSearchResults(step.name, result, isError)
+              return { ...step, result, isError, searchResults }
+            }),
+          } as StreamingMsg,
+        }
+      }),
+
+      setStreamUsage: (usage) => set((s) => ({
         streamingMsg: s.streamingMsg
-          ? { ...s.streamingMsg, thinkingDone: true }
+          ? { ...s.streamingMsg, usage }
           : null,
       })),
 
-      addToolCall: (tc) => set((s) => ({
-        streamingMsg: {
-          ...(s.streamingMsg ?? { role: 'assistant', streaming: true, content: '' }),
-          toolCalls: [...(s.streamingMsg?.toolCalls ?? []), tc],
-          waiting: false,
-        } as StreamingMsg,
-      })),
-
-      updateToolCallInput: (toolUseId, input) => set((s) => ({
-        streamingMsg: s.streamingMsg ? {
-          ...s.streamingMsg,
-          toolCalls: (s.streamingMsg.toolCalls ?? []).map(tc =>
-            tc.toolUseId === toolUseId ? { ...tc, input } : tc
-          ),
-        } : null,
-      })),
-
-      resolveToolCall: (toolUseId, result, isError) => set((s) => ({
-        streamingMsg: s.streamingMsg ? {
-          ...s.streamingMsg,
-          toolCalls: (s.streamingMsg.toolCalls ?? []).map(tc => {
-            if (tc.toolUseId !== toolUseId) return tc
-            const searchResults = parseSearchResults(tc.name, result, isError)
-            return { ...tc, result, isError, searchResults }
-          }),
-        } : null,
-      })),
-
-      finalizeStream: (content) => set((s) => ({
-        messages: [
-          ...s.messages,
-          {
-            msgId: crypto.randomUUID(),
-            role: 'assistant',
-            content,
-            model: '',
-            createdAt: new Date().toISOString(),
-            // Preserve tool calls and thinking so the finalized bubble shows them
-            toolCalls: s.streamingMsg?.toolCalls,
-            thinking: s.streamingMsg?.thinking,
-            thinkingDone: true,
-          },
-        ],
-        streamingMsg: null,
-      })),
+      finalizeStream: () => set((s) => {
+        if (!s.streamingMsg) return {}
+        // Strip internal `_done` sentinels from steps before persisting
+        const cleanSteps = s.streamingMsg.steps.map(step => {
+          const { _done, ...rest } = step as Step & { _done?: boolean }
+          void _done
+          return rest as Step
+        })
+        return {
+          messages: [
+            ...s.messages,
+            {
+              msgId: crypto.randomUUID(),
+              role: 'assistant' as const,
+              steps: cleanSteps,
+              model: '',
+              createdAt: new Date().toISOString(),
+              usage: s.streamingMsg.usage,
+            } satisfies Message,
+          ],
+          streamingMsg: null,
+        }
+      }),
 
       clearStream: () => set({ streamingMsg: null }),
       setModels: (models) => set({ models }),
