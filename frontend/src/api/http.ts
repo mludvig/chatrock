@@ -38,7 +38,8 @@ export interface Message {
   content: string
   model: string
   createdAt: string
-  // Client-side only — populated from streaming, not persisted to DynamoDB
+  // thinking and toolCalls are persisted to DynamoDB; searchResults is derived
+  // client-side from toolCalls[].result (not stored, re-parsed on load)
   toolCalls?: Array<{ toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }> }>
   thinking?: string
   thinkingDone?: boolean

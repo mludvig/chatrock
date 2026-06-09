@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGear, faPaperPlane, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings } from '../api/http'
+import { parseSearchResults } from '../lib/toolResults'
 import type { Model, ModelSettings, ModelCapabilities } from '../api/http'
 import { sendMessage, ensureConnected, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
@@ -111,7 +112,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
     let cancelled = false
     api.listMessages(chatId).then(r => {
-      if (!cancelled && !useChatStore.getState().sending) setMessages(r.messages)
+      if (cancelled || useChatStore.getState().sending) return
+      // Enrich loaded toolCalls with searchResults (not persisted, derived on load)
+      const enriched = r.messages.map(msg => {
+        if (!msg.toolCalls?.length) return msg
+        return {
+          ...msg,
+          toolCalls: msg.toolCalls.map(tc => ({
+            ...tc,
+            searchResults: parseSearchResults(tc.name, tc.result, tc.isError),
+          })),
+        }
+      })
+      setMessages(enriched)
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
