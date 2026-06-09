@@ -39,7 +39,15 @@ export const handler = async (
   }
 
   if (route === 'POST /api/chats') {
-    const body = JSON.parse(event.body ?? '{}')
+    let body: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(event.body ?? '{}')
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>
+      }
+    } catch {
+      return err(400, 'Invalid JSON body')
+    }
     const chatId = uuidv4()
     const now = new Date().toISOString()
     await putChat({
@@ -57,12 +65,23 @@ export const handler = async (
   if (!chatId) return err(400, 'Missing chatId')
 
   if (route === 'PATCH /api/chats/{chatId}') {
-    const body = JSON.parse(event.body ?? '{}')
+    let body: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(event.body ?? '{}')
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>
+      }
+    } catch {
+      return err(400, 'Invalid JSON body')
+    }
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
-    if (body.title !== undefined) await updateChatTitle(sub, chatId, body.title)
-    if (body.systemPrompt !== undefined) await updateChatSystemPrompt(sub, chatId, body.systemPrompt)
-    if (body.model !== undefined) await updateChatModel(sub, chatId, body.model)
+    if (body.title !== undefined) {
+      if (typeof body.title !== 'string') return err(400, 'title must be a string')
+      await updateChatTitle(sub, chatId, body.title)
+    }
+    if (body.systemPrompt !== undefined) await updateChatSystemPrompt(sub, chatId, body.systemPrompt as string)
+    if (body.model !== undefined) await updateChatModel(sub, chatId, body.model as string)
     return ok({ ok: true })
   }
 

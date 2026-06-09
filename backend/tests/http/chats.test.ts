@@ -81,3 +81,67 @@ test('GET /api/chats returns domain-specific CORS header', async () => {
   expect((res.headers as Record<string, string>)['Access-Control-Allow-Origin'])
     .toBe('https://chatrock.ccxdemo.dev')
 })
+
+// ── Input validation: POST /api/chats ─────────────────────────────────────────
+
+test('POST /api/chats with non-JSON body returns 400', async () => {
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'POST /api/chats',
+    pathParameters: {},
+    body: 'not json',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid JSON body' })
+})
+
+test('POST /api/chats with template-injection body returns 400', async () => {
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'POST /api/chats',
+    pathParameters: {},
+    body: '{{7*7}}',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+})
+
+// ── Input validation: PATCH /api/chats/{chatId} ───────────────────────────────
+
+test('PATCH /api/chats/{chatId} with numeric title returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'PATCH /api/chats/{chatId}',
+    pathParameters: { chatId: 'c1' },
+    // Use raw JSON string to avoid JS number precision loss while still testing the type guard
+    body: '{"title":99999999999999999999999999}',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'title must be a string' })
+})
+
+test('PATCH /api/chats/{chatId} with array title returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'PATCH /api/chats/{chatId}',
+    pathParameters: { chatId: 'c1' },
+    body: JSON.stringify({ title: [1, 2, 3] }),
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+})
+
+test('PATCH /api/chats/{chatId} with non-JSON body returns 400', async () => {
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'PATCH /api/chats/{chatId}',
+    pathParameters: { chatId: 'c1' },
+    body: 'not json at all',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+})
