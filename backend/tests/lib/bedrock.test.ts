@@ -220,6 +220,42 @@ test('yields a user turn chunk for tool results', async () => {
   })
 })
 
+// ── Test 6: contentBlockStart may not fire before contentBlockDelta for text ──
+//
+// Defensive: if Bedrock skips contentBlockStart for a plain text block (seen in
+// practice), the delta handler must create the block accumulator on the fly so
+// the text ends up in the persisted `turn` chunk's content[].
+
+test('handles missing contentBlockStart for a text block (creates acc on-the-fly)', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    // No contentBlockStart for block 0 — delta arrives cold
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Hello ' } } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'world' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 5, outputTokens: 3 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {})) {
+    chunks.push(chunk)
+  }
+
+  // UI chunks must still flow
+  const deltaTexts = chunks
+    .filter(c => (c as { type: string }).type === 'delta')
+    .map(c => (c as { type: string; text: string }).text)
+  expect(deltaTexts.join('')).toBe('Hello world')
+
+  // The assistant turn chunk must contain the text (not empty blocks[])
+  const assistantTurn = (chunks as Array<{ type: string; role: string; content: unknown[] }>)
+    .find(c => (c as { type: string }).type === 'turn' && (c as { role: string }).role === 'assistant')
+  expect(assistantTurn).toBeDefined()
+  const content = assistantTurn!.content as Array<Record<string, unknown>>
+  expect(content).toHaveLength(1)
+  expect(content[0]).toMatchObject({ text: 'Hello world' })
+})
+
 // ── Test 5: existing UI chunks still flow through ────────────────────────────
 
 test('still emits thinking_delta, thinking_done, delta, tool_call_start, tool_call, tool_result, stop', async () => {
