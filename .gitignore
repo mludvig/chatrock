@@ -12,3 +12,6 @@ frontend/.deploy*
 .env*
 .screenshots/
 .playwright-mcp/
+ignored
+TODO*.md
+*.swp

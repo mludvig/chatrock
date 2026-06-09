@@ -6,6 +6,7 @@ import {
   type Tool,
   type ContentBlock,
 } from '@aws-sdk/client-bedrock-runtime'
+import type { DocumentType } from '@smithy/types'
 import { executeTool, WEB_TOOLS } from './tools'
 import { getCapabilities, type ModelSettings } from '../config/models'
 
@@ -43,16 +44,16 @@ function buildInferenceParams(modelId: string, settings: ModelSettings) {
     if (caps.topP && settings.topP !== undefined) inferenceConfig.topP = settings.topP
   }
 
-  const additionalFields: Record<string, unknown> = {}
-  if (caps.topK && settings.topK !== undefined) additionalFields.top_k = settings.topK
+  const additionalFields: DocumentType = {}
+  if (caps.topK && settings.topK !== undefined) (additionalFields as Record<string, DocumentType>).top_k = settings.topK
   if (thinkingActive && caps.thinking === 'adaptive') {
-    additionalFields.thinking = { type: 'adaptive' }
-    additionalFields.output_config = { effort: settings.thinkingEffort }
+    (additionalFields as Record<string, DocumentType>).thinking = { type: 'adaptive' } as DocumentType
+    ;(additionalFields as Record<string, DocumentType>).output_config = { effort: settings.thinkingEffort ?? 'low' } as DocumentType
   }
 
   return {
     inferenceConfig,
-    ...(Object.keys(additionalFields).length > 0 ? { additionalModelRequestFields: additionalFields } : {}),
+    ...(Object.keys(additionalFields as object).length > 0 ? { additionalModelRequestFields: additionalFields } : {}),
   }
 }
 
