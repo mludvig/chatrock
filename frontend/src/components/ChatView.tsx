@@ -3,12 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGear, faPaperPlane, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings } from '../api/http'
+import type { Model, ModelSettings, ModelCapabilities, TokenUsage } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
-import type { Model, ModelSettings, ModelCapabilities } from '../api/http'
 import { sendMessage, ensureConnected, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
-import MessageBubble from './MessageBubble'
+import MessageBubble, { UsageStats } from './MessageBubble'
 import ModelSettingsPanel from './ModelSettingsPanel'
 
 interface Props {
@@ -26,7 +26,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const {
     chats, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
-    addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream,
+    addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream,
     renameChat, sending, setSending, updateChatSystemPrompt,
   } = useChatStore()
 
@@ -43,8 +43,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [creatingChat, setCreatingChat] = useState(false)
 
+  // Conversation-level usage (from listMessages on load + updated after each exchange)
+  const [conversationUsage, setConversationUsage] = useState<TokenUsage | null>(null)
+  // Latest-turn usage (from the most recent 'usage' WS event)
+  const [lastTurnUsage, setLastTurnUsage] = useState<TokenUsage | null>(null)
+
   const bottomRef = useRef<HTMLDivElement>(null)
-  const streamBuf = useRef('')
 
   const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
@@ -72,7 +76,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     setWSHandlers((evt: WSEvent) => {
       if (evt.type === 'delta') {
-        streamBuf.current += evt.text
         appendDelta(evt.text)
       } else if (evt.type === 'thinking_delta') {
         appendThinkingDelta(evt.text)
@@ -84,10 +87,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         updateToolCallInput(evt.toolUseId, evt.input)
       } else if (evt.type === 'tool_result') {
         resolveToolCall(evt.toolUseId, evt.content ?? '', evt.isError)
+      } else if (evt.type === 'usage') {
+        setStreamUsage(evt.usage)
+        setLastTurnUsage(evt.usage)
+        // Update conversation total
+        setConversationUsage(prev => prev ? {
+          inputTokens: prev.inputTokens + evt.usage.inputTokens,
+          outputTokens: prev.outputTokens + evt.usage.outputTokens,
+          cacheReadInputTokens: (prev.cacheReadInputTokens ?? 0) + (evt.usage.cacheReadInputTokens ?? 0),
+          cacheWriteInputTokens: (prev.cacheWriteInputTokens ?? 0) + (evt.usage.cacheWriteInputTokens ?? 0),
+        } : { ...evt.usage })
       } else if (evt.type === 'done') {
-        const content = streamBuf.current
-        streamBuf.current = ''
-        finalizeStream(content)
+        finalizeStream()
         setSending(false)
       } else if (evt.type === 'titleUpdated') {
         renameChat(evt.chatId, evt.title)
@@ -97,7 +108,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         setErrorMsg(evt.message)
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, finalizeStream, clearStream, renameChat, setSending])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream, renameChat, setSending])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -108,23 +119,28 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     if (isNew || !chatId) {
       setMessages([])
+      setConversationUsage(null)
       return
     }
     let cancelled = false
     api.listMessages(chatId).then(r => {
       if (cancelled || useChatStore.getState().sending) return
-      // Enrich loaded toolCalls with searchResults (not persisted, derived on load)
-      const enriched = r.messages.map(msg => {
-        if (!msg.toolCalls?.length) return msg
+      // Enrich loaded tool steps with searchResults (not stored, derived on load)
+      const enriched = r.bubbles.map(msg => {
+        if (!msg.steps?.some(s => s.kind === 'tool')) return msg
         return {
           ...msg,
-          toolCalls: msg.toolCalls.map(tc => ({
-            ...tc,
-            searchResults: parseSearchResults(tc.name, tc.result, tc.isError),
-          })),
+          steps: msg.steps.map(step => {
+            if (step.kind !== 'tool') return step
+            return {
+              ...step,
+              searchResults: parseSearchResults(step.name, step.result, step.isError),
+            }
+          }),
         }
       })
       setMessages(enriched)
+      setConversationUsage(r.conversationUsage)
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -140,6 +156,16 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (!content || sending || creatingChat) return
     setInput('')
     setErrorMsg(null)
+    setLastTurnUsage(null)
+
+    // Optimistic user bubble (format C: steps-based)
+    const optimisticUser = {
+      msgId: crypto.randomUUID(),
+      role: 'user' as const,
+      steps: [{ kind: 'text' as const, text: content }],
+      model: '',
+      createdAt: new Date().toISOString(),
+    }
 
     if (isNew) {
       setCreatingChat(true)
@@ -147,11 +173,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       const systemPrompt = newSystemPrompt
 
       setSending(true)
-      setMessages([
-        { msgId: crypto.randomUUID(), role: 'user', content, model: '', createdAt: new Date().toISOString() },
-      ])
+      setMessages([optimisticUser])
       startStream()
-      streamBuf.current = ''
 
       try {
         const res = await api.createChat(model, systemPrompt)
@@ -183,10 +206,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setSending(true)
     setMessages([
       ...messages,
-      { msgId: crypto.randomUUID(), role: 'user', content, model: '', createdAt: new Date().toISOString() },
+      optimisticUser,
     ])
     startStream()
-    streamBuf.current = ''
 
     try {
       await ensureConnected(accessToken)
@@ -298,29 +320,43 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         </div>
       )}
 
-      <div className="input-bar">
-        <textarea
-          className="message-input"
-          rows={3}
-          placeholder={isNew ? 'Start the conversation…' : 'Send a message…'}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              handleSend()
-            }
-          }}
-          disabled={sending || creatingChat}
-          autoFocus
-        />
-        <button
-          className="btn-send"
-          onClick={handleSend}
-          disabled={sending || creatingChat || !input.trim()}
-        >
-          <FontAwesomeIcon icon={faPaperPlane} />
-        </button>
+      <div className="input-area">
+        {/* Token stats line — shown when there are any usage stats */}
+        {(lastTurnUsage || conversationUsage) && (
+          <div className="stats-bar">
+            {lastTurnUsage && (
+              <UsageStats usage={lastTurnUsage} label="Last:" />
+            )}
+            {conversationUsage && (
+              <UsageStats usage={conversationUsage} label="Total:" />
+            )}
+          </div>
+        )}
+
+        <div className="input-bar">
+          <textarea
+            className="message-input"
+            rows={3}
+            placeholder={isNew ? 'Start the conversation…' : 'Send a message…'}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            disabled={sending || creatingChat}
+            autoFocus
+          />
+          <button
+            className="btn-send"
+            onClick={handleSend}
+            disabled={sending || creatingChat || !input.trim()}
+          >
+            <FontAwesomeIcon icon={faPaperPlane} />
+          </button>
+        </div>
       </div>
     </div>
   )
