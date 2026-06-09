@@ -60,11 +60,16 @@ export const buildHandler = (postFn: PostFn) => async (
 
   console.log(JSON.stringify({ event: 'stream_start', chatId, model, connId }))
   let fullText = ''
+  let thinking = ''
+  // Accumulate tool calls keyed by toolUseId so multi-round results are merged
+  const toolCalls: Array<{ toolUseId: string; name: string; input: string; result?: string; isError?: boolean }> = []
+  const tcIndex = new Map<string, number>()
 
   try {
     for await (const chunk of converseStream(model, systemPrompt, bedrockMessages, modelSettings)) {
       switch (chunk.type) {
         case 'thinking_delta':
+          thinking += chunk.text
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
           break
         case 'thinking_done':
@@ -74,14 +79,28 @@ export const buildHandler = (postFn: PostFn) => async (
           fullText += chunk.text
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
           break
-        case 'tool_call_start':
+        case 'tool_call_start': {
+          // Create the entry if not already present (guards defensive re-entry)
+          if (!tcIndex.has(chunk.toolUseId)) {
+            tcIndex.set(chunk.toolUseId, toolCalls.length)
+            toolCalls.push({ toolUseId: chunk.toolUseId, name: chunk.name, input: '' })
+          }
           await postFn({ ConnectionId: connId, Data: JSON.stringify({
             type: 'tool_call_start',
             toolUseId: chunk.toolUseId,
             name: chunk.name,
           }) })
           break
-        case 'tool_call':
+        }
+        case 'tool_call': {
+          const idx = tcIndex.get(chunk.toolUseId)
+          if (idx !== undefined) {
+            toolCalls[idx].input = chunk.input
+          } else {
+            // Defensive: provider skipped start event
+            tcIndex.set(chunk.toolUseId, toolCalls.length)
+            toolCalls.push({ toolUseId: chunk.toolUseId, name: chunk.name, input: chunk.input })
+          }
           await postFn({ ConnectionId: connId, Data: JSON.stringify({
             type: 'tool_call',
             toolUseId: chunk.toolUseId,
@@ -89,7 +108,17 @@ export const buildHandler = (postFn: PostFn) => async (
             input: chunk.input,
           }) })
           break
-        case 'tool_result':
+        }
+        case 'tool_result': {
+          const idx = tcIndex.get(chunk.toolUseId)
+          if (idx !== undefined) {
+            toolCalls[idx].result = chunk.content
+            toolCalls[idx].isError = chunk.isError
+          } else {
+            // Defensive: result arrived without a prior start/call
+            tcIndex.set(chunk.toolUseId, toolCalls.length)
+            toolCalls.push({ toolUseId: chunk.toolUseId, name: chunk.name, input: '', result: chunk.content, isError: chunk.isError })
+          }
           await postFn({ ConnectionId: connId, Data: JSON.stringify({
             type: 'tool_result',
             toolUseId: chunk.toolUseId,
@@ -98,6 +127,7 @@ export const buildHandler = (postFn: PostFn) => async (
             content: chunk.content,
           }) })
           break
+        }
         case 'stop':
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
           break
@@ -109,8 +139,8 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // Persist assistant message (text only — tool calls are ephemeral)
-  if (fullText) {
+  // Persist assistant message — include thinking + tool calls when present
+  if (fullText || thinking || toolCalls.length > 0) {
     const assistantNow = new Date().toISOString()
     const assistantMsgId = uuidv4()
     await putMessage({
@@ -119,6 +149,8 @@ export const buildHandler = (postFn: PostFn) => async (
       content: fullText,
       model,
       createdAt: assistantNow,
+      ...(thinking ? { thinking } : {}),
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
     })
   }
 

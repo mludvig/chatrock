@@ -33,6 +33,8 @@ export const handler = async (
     content: i.content,
     model: i.model,
     createdAt: i.createdAt,
+    ...(i.thinking   ? { thinking: i.thinking }   : {}),
+    ...(i.toolCalls  ? { toolCalls: i.toolCalls }  : {}),
   }))
   return ok({ messages })
 }
