@@ -17,9 +17,10 @@ function AuthedApp() {
   const accessToken = auth.user?.access_token ?? ''
   const userName = auth.user?.profile.email ?? auth.user?.profile.sub ?? 'User'
 
-  useEffect(() => {
-    setAccessToken(accessToken)
-  }, [accessToken])
+  // Set synchronously during render so child effects (e.g. ChatView's listMessages)
+  // see the token immediately on first mount.  A useEffect would run after children's
+  // effects — too late on the first render after a page reload.
+  setAccessToken(accessToken)
 
   useEffect(() => {
     if (!auth.isAuthenticated || !accessToken) return

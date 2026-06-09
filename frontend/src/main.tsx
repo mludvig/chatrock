@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from 'react-oidc-context'
+import { WebStorageStateStore } from 'oidc-client-ts'
 import { ENV } from './env'
 import App from './App'
 
@@ -15,6 +16,8 @@ const oidcConfig = {
   redirect_uri: `${ENV.appUrl}/callback`,
   post_logout_redirect_uri: `${ENV.appUrl}/`,
   scope: 'openid email profile',
+  // Store tokens in localStorage so Playwright storageState can capture them
+  userStore: new WebStorageStateStore({ store: window.localStorage }),
   metadata: {
     issuer: `${cognitoIdpBase}/${ENV.cognitoUserPoolId}`,
     authorization_endpoint: `${ENV.cognitoDomain}/oauth2/authorize`,
