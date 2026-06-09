@@ -328,10 +328,10 @@ export async function* converseStream(
 
     if (!result) break
 
+    // Yield usage first (so sendMessage.ts can read lastUsage before processing turn)
+    if (result.usage) yield { type: 'usage', usage: result.usage }
     // Yield the verbatim assistant turn for persistence
     yield { type: 'turn', role: 'assistant', content: result.content, turnIndex }
-    // Yield the usage chunk for live display
-    if (result.usage) yield { type: 'usage', usage: result.usage }
     turnIndex++
 
     if (result.stopReason !== 'tool_use' || result.toolUses.length === 0) {
