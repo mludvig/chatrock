@@ -1,12 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model } from '../api/http'
-
-export interface SearchResult {
-  title: string
-  url: string
-  description: string
-}
+import { parseSearchResults } from '../lib/toolResults'
+import type { SearchResult } from '../lib/toolResults'
+export type { SearchResult } from '../lib/toolResults'
 
 export interface ToolCall {
   toolUseId: string
@@ -135,13 +132,7 @@ export const useChatStore = create<ChatState>()(
           ...s.streamingMsg,
           toolCalls: (s.streamingMsg.toolCalls ?? []).map(tc => {
             if (tc.toolUseId !== toolUseId) return tc
-            let searchResults: SearchResult[] | undefined
-            if (tc.name === 'web_search' && result && !isError) {
-              try {
-                const parsed = JSON.parse(result) as { results?: SearchResult[] }
-                searchResults = parsed.results
-              } catch { /* not JSON, leave undefined */ }
-            }
+            const searchResults = parseSearchResults(tc.name, result, isError)
             return { ...tc, result, isError, searchResults }
           }),
         } : null,
