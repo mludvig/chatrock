@@ -77,6 +77,7 @@ interface Props {
 export default function MessageBubble({ message, isStreaming }: Props) {
   const isAssistant = message.role === 'assistant'
   const streaming = 'streaming' in message && message.streaming
+  const waiting = 'waiting' in message && message.waiting
 
   const thinking = 'thinking' in message ? message.thinking : undefined
   const thinkingDone = 'thinkingDone' in message ? message.thinkingDone : true
@@ -85,28 +86,35 @@ export default function MessageBubble({ message, isStreaming }: Props) {
   return (
     <div className={`message ${message.role}`}>
       <div className="message-content">
+        {/* Waiting indicator — shown until first content event */}
+        {isAssistant && waiting && (
+          <span className="waiting-indicator">
+            <FontAwesomeIcon icon={faSpinner} spin />
+            <span>Thinking…</span>
+          </span>
+        )}
+
         {/* Thinking block — only for assistant */}
-        {isAssistant && thinking !== undefined && thinking.length > 0 && (
+        {isAssistant && !waiting && thinking !== undefined && thinking.length > 0 && (
           <ThinkingBlock text={thinking} done={!!thinkingDone} streaming={!!streaming} />
         )}
 
         {/* Tool call pills */}
-        {toolCalls && toolCalls.map(tc => (
+        {!waiting && toolCalls && toolCalls.map(tc => (
           <ToolCallPill key={tc.toolUseId} tc={tc} />
         ))}
 
         {/* Message text — markdown for assistant, plain for user */}
-        {isAssistant ? (
+        {isAssistant && !waiting ? (
           <div className="md">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {message.content || ''}
             </ReactMarkdown>
-            {streaming && !message.content && <span className="cursor">▋</span>}
-            {streaming && message.content && <span className="cursor">▋</span>}
+            {streaming && <span className="cursor">▋</span>}
           </div>
-        ) : (
+        ) : !isAssistant ? (
           <span>{message.content}</span>
-        )}
+        ) : null}
       </div>
     </div>
   )

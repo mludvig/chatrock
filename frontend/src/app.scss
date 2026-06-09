@@ -682,6 +682,16 @@ body {
   }
 }
 
+// ── Waiting indicator ─────────────────────────────────────────────────────────
+.waiting-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: $muted;
+  font-size: 14px;
+  padding: 2px 0;
+}
+
 // ── Thinking block ────────────────────────────────────────────────────────────
 .thinking-block {
   margin-bottom: 10px;
