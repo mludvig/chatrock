@@ -15,7 +15,6 @@ export type WSEvent =
 type EventHandler = (evt: WSEvent) => void
 
 let socket: WebSocket | null = null
-let pendingToken = ''
 let onEventCb: EventHandler | null = null
 
 export function setWSHandlers(onEvent: EventHandler) {
@@ -24,10 +23,8 @@ export function setWSHandlers(onEvent: EventHandler) {
 
 export function connect(accessToken: string): Promise<void> {
   if (socket && socket.readyState === WebSocket.OPEN) {
-    pendingToken = accessToken
     return Promise.resolve()
   }
-  pendingToken = accessToken
   return new Promise((resolve, reject) => {
     socket = new WebSocket(`${ENV.wsUrl}?token=${encodeURIComponent(accessToken)}`)
     socket.onopen  = () => resolve()

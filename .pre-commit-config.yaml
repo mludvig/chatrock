@@ -1,0 +1,47 @@
+repos:
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.105.0
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+        # Don't attempt to validate the modules
+        exclude: "^modules/.*$"
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      # To update use: detect-secrets scan --baseline .secrets.baseline
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-yaml
+        # Exclude CloudFormation reference files, we want them as provided
+        exclude: "^assets/references/.*$"
+      - id: detect-aws-credentials
+        args: ["--allow-missing-credentials"]
+      - id: mixed-line-ending
+        args: ["--fix", "auto"]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: eslint-frontend
+        name: eslint (frontend)
+        entry: bash -c 'cd frontend && npx eslint src/'
+        language: system
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: false
+      - id: eslint-backend
+        name: eslint (backend)
+        entry: bash -c 'cd backend && npx eslint src/ tests/'
+        language: system
+        files: ^backend/.*\.(ts|js)$
+        pass_filenames: false
