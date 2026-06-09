@@ -2,7 +2,7 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 }
 import { v4 as uuidv4 } from 'uuid'
 import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, buildChatKey, listMessages } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
-import { TITLE_MODEL } from '../config/models'
+import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 
 const corsHeader = () => ({ 'Access-Control-Allow-Origin': `https://${process.env.DOMAIN_NAME}` })
@@ -48,13 +48,15 @@ export const handler = async (
     } catch {
       return err(400, 'Invalid JSON body')
     }
+    const model = (body.model as string | undefined) ?? process.env.DEFAULT_MODEL ?? ''
+    if (body.model !== undefined && !isValidModelId(model)) return err(400, 'Invalid model')
     const chatId = uuidv4()
     const now = new Date().toISOString()
     await putChat({
       ...buildChatKey(sub, chatId),
       title: 'New Chat',
-      model: body.model ?? process.env.DEFAULT_MODEL,
-      systemPrompt: body.systemPrompt ?? '',
+      model,
+      systemPrompt: (body.systemPrompt as string | undefined) ?? '',
       createdAt: now,
       updatedAt: now,
     })
@@ -81,7 +83,10 @@ export const handler = async (
       await updateChatTitle(sub, chatId, body.title)
     }
     if (body.systemPrompt !== undefined) await updateChatSystemPrompt(sub, chatId, body.systemPrompt as string)
-    if (body.model !== undefined) await updateChatModel(sub, chatId, body.model as string)
+    if (body.model !== undefined) {
+      if (typeof body.model !== 'string' || !isValidModelId(body.model)) return err(400, 'Invalid model')
+      await updateChatModel(sub, chatId, body.model)
+    }
     return ok({ ok: true })
   }
 

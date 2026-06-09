@@ -39,12 +39,12 @@ test('GET /api/chats returns chat list', async () => {
 
 test('POST /api/chats creates a chat', async () => {
   mockDynamo.putChat.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'apac.anthropic.claude-sonnet-4-6', systemPrompt: '' }) as any))
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '' }) as any))
   expect(res.statusCode).toBe(201)
   const body = JSON.parse(res.body ?? '{}')
   expect(typeof body.chatId).toBe('string')
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
-    expect.objectContaining({ title: 'New Chat', model: 'apac.anthropic.claude-sonnet-4-6' }),
+    expect.objectContaining({ title: 'New Chat', model: 'global.anthropic.claude-sonnet-4-6' }),
   )
 })
 
@@ -144,4 +144,33 @@ test('PATCH /api/chats/{chatId} with non-JSON body returns 400', async () => {
   }
   const res = result(await handler(event as any))
   expect(res.statusCode).toBe(400)
+})
+
+// ── Model allowlist validation ────────────────────────────────────────────────
+
+test('POST /api/chats with unknown model returns 400', async () => {
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'us.meta.llama3-3-70b-instruct-v1:0' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid model' })
+})
+
+test('POST /api/chats with valid model succeeds', async () => {
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6' }) as any))
+  expect(res.statusCode).toBe(201)
+})
+
+test('PATCH /api/chats/{chatId} with unknown model returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'COMPLETELY_FAKE_MODEL' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid model' })
+})
+
+test('PATCH /api/chats/{chatId} with valid model succeeds', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.updateChatModel.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'global.anthropic.claude-opus-4-8' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
 })
