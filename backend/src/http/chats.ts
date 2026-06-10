@@ -32,6 +32,7 @@ export const handler = async (
       systemPrompt: i.systemPrompt,
       createdAt: i.createdAt,
       updatedAt: i.updatedAt,
+      ...(i.activeLeafId !== undefined ? { activeLeafId: i.activeLeafId } : {}),
     }))
     return ok({ chats })
   }

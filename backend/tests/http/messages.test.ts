@@ -44,13 +44,14 @@ function row(overrides: Record<string, unknown>) {
 
 test('groups assistant reasoning+toolUse turn + toolResult user turn + text turn into ONE bubble with ordered steps', async () => {
   const responseId = 'resp-1'
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
   mockDynamo.listMessages.mockResolvedValue([
     // User prompt
-    row({ SK: `MSG#${TS}#0000#u1`, role: 'user', blocks: [{ text: 'question' }], responseId: 'user-r', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'question' }], responseId: 'user-r', turnIndex: 0 }),
     // Assistant turn 0: reasoning + toolUse
     row({
       SK: `MSG#${TS}#0001#a0`,
+      msgId: 'a0', parentId: 'u1',
       role: 'assistant',
       blocks: [
         { reasoningContent: { reasoningText: { text: 'I think', signature: 'SIG' } } },
@@ -62,7 +63,8 @@ test('groups assistant reasoning+toolUse turn + toolResult user turn + text turn
     }),
     // User turn 1: toolResult
     row({
-      SK: `MSG#${TS}#0002#u1`,
+      SK: `MSG#${TS}#0002#tr1`,
+      msgId: 'tr1', parentId: 'a0',
       role: 'user',
       blocks: [{ toolResult: { toolUseId: 'tu-1', content: [{ text: '{"results":[{"title":"T","url":"https://x.com","description":"D"}]}' }], status: 'success' } }],
       responseId,
@@ -71,6 +73,7 @@ test('groups assistant reasoning+toolUse turn + toolResult user turn + text turn
     // Assistant turn 2: final text
     row({
       SK: `MSG#${TS}#0003#a2`,
+      msgId: 'a2', parentId: 'tr1',
       role: 'assistant',
       blocks: [{ text: 'final answer' }],
       responseId,
@@ -173,10 +176,11 @@ test('raw blocks, signatures, and redactedContent are NOT in the response', asyn
 })
 
 test('conversationUsage sums all assistant turn usages', async () => {
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
   mockDynamo.listMessages.mockResolvedValue([
     row({
       SK: `MSG#${TS}#0000#a1`,
+      msgId: 'a1', parentId: null,
       role: 'assistant',
       blocks: [{ text: 'a1' }],
       responseId: 'r1',
@@ -185,6 +189,7 @@ test('conversationUsage sums all assistant turn usages', async () => {
     }),
     row({
       SK: `MSG#${TS}#0001#a2`,
+      msgId: 'a2', parentId: 'a1',
       role: 'assistant',
       blocks: [{ text: 'a2' }],
       responseId: 'r2',
@@ -214,4 +219,41 @@ test('returns 400 when chatId is missing', async () => {
     requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
   } as unknown as APIGatewayProxyEventV2WithJWTAuthorizer))
   expect(res.statusCode).toBe(400)
+})
+
+// ── Slice 3 (Inc 2): active-path filtering — only the active branch renders ───
+
+test('inc2: linear chat (no siblings) renders the same bubbles as before', async () => {
+  // Single branch: user → assistant, activeLeafId points to assistant turn
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#user-1`, msgId: 'user-1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r1', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'user-1', role: 'assistant', blocks: [{ text: 'a' }], responseId: 'r1', turnIndex: 1 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: unknown[] }
+  expect(body.bubbles).toHaveLength(2)  // user + assistant both rendered
+})
+
+test('inc2: only the active branch renders when siblings exist', async () => {
+  // Tree: user-1 → asst-A (inactive)
+  //             → asst-B (active, pointed to by activeLeafId)
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-B' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#user-1`, msgId: 'user-1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-A`, msgId: 'asst-A', parentId: 'user-1', role: 'assistant', blocks: [{ text: 'answer A' }], responseId: 'r1', turnIndex: 0, usage: { inputTokens: 5, outputTokens: 2 } }),
+    row({ SK: `MSG#${TS}#0002#asst-B`, msgId: 'asst-B', parentId: 'user-1', role: 'assistant', blocks: [{ text: 'answer B' }], responseId: 'r2', turnIndex: 0, usage: { inputTokens: 5, outputTokens: 3 } }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  // Only user + asst-B should render; asst-A is on the inactive branch
+  expect(body.bubbles).toHaveLength(2)
+  const assistantBubble = body.bubbles.find(b => b.role === 'assistant')!
+  const steps = assistantBubble.steps as Array<Record<string, unknown>>
+  expect(steps[0]).toMatchObject({ kind: 'text', text: 'answer B' })
+  // asst-A text must NOT appear
+  const bodyStr = res.body ?? '{}'
+  expect(bodyStr).not.toContain('answer A')
 })

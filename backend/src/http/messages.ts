@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { getChat, listMessages } from '../lib/dynamo'
+import { buildActivePath } from '../lib/tree'
 import { subFromClaims } from '../lib/auth'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import type { TokenUsage } from '../lib/bedrock'
@@ -216,7 +217,10 @@ export const handler = async (
 
   console.log(JSON.stringify({ event: 'messages_accessed', sub, chatId }))
   const items = await listMessages(chatId)
-  const rows = items as unknown as TurnRow[]
-  const response = groupTurnsToBubbles(rows)
+  // Walk the active branch only — for a single-branch chat this is identical to
+  // the flat array; for a branched chat it filters to the active root→leaf path.
+  const activeLeafId = (chat.activeLeafId as string | undefined) ?? null
+  const activePath = buildActivePath(items as unknown as TurnRow[], activeLeafId)
+  const response = groupTurnsToBubbles(activePath)
   return ok(response)
 }

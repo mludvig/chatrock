@@ -5,6 +5,8 @@ import * as dynamo from '../../src/lib/dynamo'
 jest.mock('../../src/lib/dynamo')
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
+beforeEach(() => jest.clearAllMocks())
+
 
 const makeEvent = (
   method: string,
@@ -32,6 +34,17 @@ test('GET /api/chats returns chat list', async () => {
   expect(body.chats).toHaveLength(1)
   expect(body.chats[0].chatId).toBe('c1')
   expect(body.chats[0].title).toBe('Hello')
+})
+
+test('inc2: GET /api/chats includes activeLeafId in each chat', async () => {
+  mockDynamo.listChats.mockResolvedValue([
+    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '', activeLeafId: 'leaf-abc' },
+    { PK: 'USER#user-1', SK: 'CHAT#c2', title: 'T2', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '' },
+  ])
+  const res = result(await handler(makeEvent('GET', '/api/chats') as any))
+  const body = JSON.parse(res.body ?? '{}')
+  expect(body.chats[0].activeLeafId).toBe('leaf-abc')
+  expect(body.chats[1].activeLeafId).toBeUndefined()  // not set on a fresh chat
 })
 
 test('POST /api/chats creates a chat', async () => {
