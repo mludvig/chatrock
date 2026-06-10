@@ -60,3 +60,37 @@ export function buildActivePath(rows: TurnRow[], activeLeafId: string | null): T
   path.reverse()
   return path
 }
+
+/**
+ * Walk *down* from a node to the leaf of its branch.
+ *
+ * At each fork, picks the **last child in row order** (most recently created).
+ * Bounded by row count to guard against cycles.
+ *
+ * If msgId is not found in rows, returns msgId unchanged (caller validates).
+ */
+export function resolveLeaf(rows: TurnRow[], msgId: string): string {
+  if (rows.length === 0) return msgId
+
+  // Build parentId → children[] map, preserving row order
+  const children = new Map<string, string[]>()
+  for (const row of rows) {
+    if (row.parentId != null) {
+      const list = children.get(row.parentId) ?? []
+      list.push(row.msgId)
+      children.set(row.parentId, list)
+    }
+  }
+
+  // Walk down: at each step pick the last child; stop when no children
+  let current = msgId
+  const visited = new Set<string>()
+  for (let i = 0; i < rows.length; i++) {
+    if (visited.has(current)) break
+    visited.add(current)
+    const kids = children.get(current)
+    if (!kids || kids.length === 0) break
+    current = kids[kids.length - 1]
+  }
+  return current
+}
