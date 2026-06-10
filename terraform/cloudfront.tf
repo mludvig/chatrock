@@ -6,6 +6,27 @@ locals {
   ws_api_hostname    = "${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com"
 }
 
+# CloudFront Function: rewrite extensionless paths to /index.html for SPA routing.
+# This replaces the global custom_error_response approach, which would intercept
+# 4xx errors from ALL origins (including the API) and break JSON error responses.
+resource "aws_cloudfront_function" "spa_router" {
+  name    = "chatrock-spa-router-${var.env}"
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite extensionless paths to /index.html for SPA routing"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var request = event.request;
+      var uri = request.uri;
+      // If no file extension in the last path segment, treat as an SPA route
+      if (uri !== '/' && uri.lastIndexOf('.') <= uri.lastIndexOf('/')) {
+        request.uri = '/index.html';
+      }
+      return request;
+    }
+  EOT
+}
+
 resource "aws_cloudfront_distribution" "chatrock" {
   enabled             = true
   default_root_object = "index.html"
@@ -101,27 +122,14 @@ resource "aws_cloudfront_distribution" "chatrock" {
     default_ttl = 3600
     max_ttl     = 86400
     compress    = true
-  }
 
-  # SPA client-side routing fallback
-  custom_error_response {
-    error_code            = 403
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
-  custom_error_response {
-    error_code            = 404
-    response_code         = 200
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
-  }
-
-  custom_error_response {
-    error_code            = 400
-    response_code         = 400
-    response_page_path    = "/index.html"
-    error_caching_min_ttl = 0
+    # Rewrite unknown SPA routes (no file extension) to /index.html before hitting S3.
+    # Using a CloudFront Function avoids the global custom_error_response approach,
+    # which intercepts 4xx errors from ALL origins and corrupts API JSON error responses.
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_router.arn
+    }
   }
 
   restrictions {
