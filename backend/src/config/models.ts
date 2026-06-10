@@ -28,14 +28,19 @@ export interface Model {
 // Verified via: aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED
 export const MODELS: Model[] = [
   {
+    id: 'global.anthropic.claude-fable-5',
+    name: 'Claude Fable 5',
+    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive' },
+  },
+  {
     id: 'global.anthropic.claude-opus-4-8',
     name: 'Claude Opus 4.8',
-    capabilities: { temperature: true, topP: true, topK: true, thinking: 'adaptive' },
+    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive' },
   },
   {
     id: 'global.anthropic.claude-sonnet-4-6',
     name: 'Claude Sonnet 4.6',
-    capabilities: { temperature: true, topP: true, topK: true, thinking: 'adaptive' },
+    capabilities: { temperature: true, topP: true, topK: false, thinking: 'adaptive' },
   },
   {
     id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
