@@ -574,6 +574,174 @@ test('inc3: re-run with unknown parentId sends error and does not stream', async
   expect(mockDynamo.putMessage).not.toHaveBeenCalled()
 })
 
+// ── Increment 5: Edit & recreate a question ─────────────────────────────────
+
+// Fixtures: same two-row tree as re-run tests.
+// u1 is the root user turn (parentId: null), a1 is its assistant answer.
+// An edit of u1 sends { parentId: null, content: 'edited question' } — parentId
+// key is PRESENT (distinguishes from normal send which omits it).
+
+function editEvent(overrides: Record<string, unknown> = {}) {
+  // parentId: null = editing the root user turn u1
+  return makeEvent({ chatId: 'c1', model: MODEL, systemPrompt: '', parentId: null, content: 'edited question', ...overrides })
+}
+
+test('inc5: edit persists a new user turn with edited content and correct parentId', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(editEvent())
+
+  const userPuts = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .filter(r => r.role === 'user')
+  expect(userPuts).toHaveLength(1)
+  expect(userPuts[0].parentId).toBeNull()
+  expect(userPuts[0].blocks).toEqual([{ text: 'edited question' }])
+})
+
+test('inc5: edit new user turn has a different msgId from the original', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(editEvent())
+
+  const userPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'user')!
+  expect(userPut.msgId).not.toBe('u1')
+})
+
+test('inc5: edit assistant turn parentId === new user turn msgId', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(editEvent())
+
+  const userPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'user')!
+  const assistantPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  expect(assistantPut.parentId).toBe(userPut.msgId)
+})
+
+test('inc5: edit updateChatActiveLeaf called once with the new assistant leaf', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(editEvent())
+
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const newLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const assistantPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  expect(newLeaf).toBe(assistantPut.msgId)
+})
+
+test('inc5: edit replay is root→new-user-turn (edited content is last message)', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(editEvent())
+
+  const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
+  // Root edit: only the new user turn in history (no prior ancestor)
+  expect(passedMessages).toHaveLength(1)
+  expect(passedMessages[0].role).toBe('user')
+  expect(passedMessages[0].content).toEqual([{ text: 'edited question' }])
+})
+
+test('inc5: edit does NOT call auto-title when title is "New Chat"', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue(RERUN_PRIOR_ROWS)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(editEvent())
+
+  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
+  expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+})
+
+test('inc5: edit with unknown non-null parentId sends error frame and does not stream', async () => {
+  rerunBase()
+
+  await buildHandler(mockPost)(editEvent({ parentId: 'nonexistent-id', content: 'edited question' }))
+
+  const errEvent = mockPost.mock.calls
+    .map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+    .find(d => d.type === 'error')
+  expect(errEvent).toBeDefined()
+  expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+  expect(mockDynamo.putMessage).not.toHaveBeenCalled()
+})
+
+test('inc5: edit with non-null parentId creates new user turn as sibling under that parent', async () => {
+  // Tree: u1 (root) → a1 → u2 → a2
+  const rows = [
+    { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
+      role: 'user', blocks: [{ text: 'q1' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
+      role: 'assistant', blocks: [{ text: 'a1' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0002#u2', msgId: 'u2', parentId: 'a1',
+      role: 'user', blocks: [{ text: 'q2' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r1' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0003#a2', msgId: 'a2', parentId: 'u2',
+      role: 'assistant', blocks: [{ text: 'a2' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r1' },
+  ]
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'a2' })
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'edited a1' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  // Edit u2: its parentId is 'a1', so the new user sibling also has parentId 'a1'
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', model: MODEL, systemPrompt: '', parentId: 'a1', content: 'mid-convo edit' }))
+
+  const userPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'user')!
+  expect(userPut.parentId).toBe('a1')
+  expect(userPut.blocks).toEqual([{ text: 'mid-convo edit' }])
+  // New user turn is a different node from u2
+  expect(userPut.msgId).not.toBe('u2')
+})
+
 test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat history)', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'asst-prev' })
