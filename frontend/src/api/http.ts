@@ -49,6 +49,7 @@ export type Step =
 
 export interface Message {
   msgId: string
+  parentId?: string | null
   role: 'user' | 'assistant'
   // Format C: steps[] is the canonical shape
   steps: Step[]

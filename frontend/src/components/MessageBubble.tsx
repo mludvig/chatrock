@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faGlobe, faLink, faSpinner,
-  faCircleCheck, faCircleXmark, faBrain,
+  faCircleCheck, faCircleXmark, faBrain, faRotateRight,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
@@ -128,6 +128,7 @@ export function UsageStats({ usage, label }: { usage: TokenUsage; label?: string
 
 interface Props {
   message: Message | StreamingMsg
+  onRerun?: (parentId: string) => void
 }
 
 /**
@@ -138,7 +139,7 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-export default function MessageBubble({ message }: Props) {
+export default function MessageBubble({ message, onRerun }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
@@ -208,6 +209,20 @@ export default function MessageBubble({ message }: Props) {
         })}
 
       </div>
+
+      {/* Hover action-row — only for finalized (non-streaming) assistant bubbles with a parentId */}
+      {isAssistant && !isStreaming && onRerun && 'parentId' in message && message.parentId != null && (
+        <div className="message-actions">
+          <button
+            className="action-btn"
+            title="Re-run this answer"
+            onClick={() => onRerun((message as Message).parentId!)}
+          >
+            <FontAwesomeIcon icon={faRotateRight} />
+          </button>
+        </div>
+      )}
+
     </div>
   )
 }
