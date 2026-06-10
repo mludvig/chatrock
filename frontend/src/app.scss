@@ -391,15 +391,6 @@ body {
   border-bottom-left-radius: 4px;
 }
 
-// Per-bubble usage footer (inside assistant message)
-.message.assistant .usage-stats {
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid $border;
-  font-size: 11px;
-  color: $muted;
-  font-family: monospace;
-}
 
 .cursor {
   display: inline-block;
