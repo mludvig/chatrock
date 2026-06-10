@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useMatch } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faPenToSquare, faTrash, faWandMagicSparkles, faRightFromBracket, faComments } from '@fortawesome/free-solid-svg-icons'
 import type { Chat } from '../api/http'
@@ -15,7 +15,8 @@ interface Props {
 
 export default function Sidebar({ userName, onNewChat, onSignOut, onRenameChat }: Props) {
   const navigate = useNavigate()
-  const { chatId: activeChatId } = useParams<{ chatId?: string }>()
+  const match = useMatch('/c/:chatId')
+  const activeChatId = match?.params.chatId
   const { chats, removeChat } = useChatStore()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
