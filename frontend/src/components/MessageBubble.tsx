@@ -207,10 +207,6 @@ export default function MessageBubble({ message }: Props) {
           return null
         })}
 
-        {/* Usage stats footer — shown on finalized assistant bubbles */}
-        {isAssistant && !isStreaming && 'usage' in message && message.usage && (
-          <UsageStats usage={message.usage} />
-        )}
       </div>
     </div>
   )

@@ -299,6 +299,9 @@ async function* streamOneTurn(
 
 // ── Public: full agentic streaming loop with tool use ────────────────────────
 
+// Maximum number of tool-use rounds before we force a final text answer
+const MAX_TOOL_ROUNDS = 8
+
 export async function* converseStream(
   modelId: string,
   systemPrompt: string,
@@ -313,8 +316,7 @@ export async function* converseStream(
 
   let turnIndex = 0
 
-  // Safety cap: max 5 tool-use rounds before forcing a final answer
-  for (let round = 0; round < 5; round++) {
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const builtMessages = buildMessagesWithCache(baseMessages, newMessages)
     const gen = streamOneTurn(modelId, systemPrompt, builtMessages, tools, settings)
     let result: TurnResult | undefined
@@ -380,8 +382,31 @@ export async function* converseStream(
     // Loop → next turn with tool results injected
   }
 
-  // Fell off the loop (too many rounds) — emit a stop
-  yield { type: 'stop', stopReason: 'max_rounds' }
+  // Exhausted tool-use rounds: make one final call with no tools so the model
+  // must produce a text answer rather than keep requesting tool use.
+  const builtMessages = buildMessagesWithCache(baseMessages, newMessages)
+  const finalGen = streamOneTurn(modelId, systemPrompt, builtMessages, [], settings)
+  let finalResult: TurnResult | undefined
+
+  while (true) {
+    const { value, done } = await finalGen.next()
+    if (done) {
+      finalResult = value as TurnResult
+      break
+    }
+    const chunk = value as StreamChunk
+    if (chunk.type !== 'turn' && chunk.type !== 'usage') {
+      yield chunk
+    }
+  }
+
+  if (finalResult) {
+    if (finalResult.usage) yield { type: 'usage', usage: finalResult.usage }
+    yield { type: 'turn', role: 'assistant', content: finalResult.content, turnIndex }
+    yield { type: 'stop', stopReason: finalResult.stopReason }
+  } else {
+    yield { type: 'stop', stopReason: 'max_rounds' }
+  }
 }
 
 // ── One-shot non-streaming call (used for title generation) ──────────────────
