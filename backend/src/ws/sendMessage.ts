@@ -24,12 +24,15 @@ export const buildHandler = (postFn: PostFn) => async (
   const connId = event.requestContext.connectionId
   const body = JSON.parse(event.body ?? '{}') as {
     chatId: string
-    content: string
+    content?: string
     model: string
     systemPrompt: string
     modelSettings?: ModelSettings
+    parentId?: string
   }
-  const { chatId, content, model, systemPrompt, modelSettings = {} } = body
+  const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId } = body
+  // Re-run: parentId present and no content = regenerate answer as a sibling
+  const isRerun = rerunParentId != null && !content
 
   const conn = await getConnection(connId)
   if (!conn) return { statusCode: 410, body: 'Gone' }
@@ -52,44 +55,64 @@ export const buildHandler = (postFn: PostFn) => async (
   const responseId = uuidv4()
   let seq = 0
 
-  // currentLeafId: the msgId of the chat's current active leaf — becomes the
-  // parentId of the first (user) turn in this response.
-  const currentLeafId: string | null = (chat.activeLeafId as string | undefined) ?? null
-
-  // Load prior turn history BEFORE persisting the new user turn so we can
-  // build the replay path from prior rows + the in-memory user turn (avoids
-  // a second DDB round-trip and works correctly when tests mock listMessages).
+  // Load prior turn history before any writes (avoids a second DDB round-trip
+  // and works correctly when tests mock listMessages).
   const priorRows = await listMessages(chatId)
 
-  // Persist the user prompt as a turn record (format C, tree-aware)
-  const userMsgId = uuidv4()
-  const userTurnRow: TurnRow = {
-    PK: `CHAT#${chatId}`,
-    ...buildTurnKey(chatId, responseStartTs, seq, responseId) as { SK: string },
-    msgId: userMsgId,
-    parentId: currentLeafId,
-    role: 'user',
-    blocks: [{ text: content }] as ContentBlock[],
-    model,
-    createdAt: responseStartTs,
-    turnIndex: 0,
-    responseId,
+  let lastTurnMsgId: string
+  let bedrockMessages: Message[]
+
+  if (isRerun) {
+    // ── Re-run path: generate a sibling answer for the given parentId ──────────
+    // Validate: parentId must resolve to a known row
+    const priorById = new Map((priorRows as unknown as TurnRow[]).map(r => [r.msgId, r]))
+    if (!priorById.has(rerunParentId!)) {
+      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Re-run parentId not found' }) })
+      return { statusCode: 200, body: '' }
+    }
+    // Replay history: root→parentId (user turn that prompted the original answer).
+    // The original answer is NOT included — the new answer is a fresh sibling.
+    const replayPath = buildActivePath(priorRows as unknown as TurnRow[], rerunParentId!)
+    bedrockMessages = replayPath.map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: (m.blocks ?? []) as ContentBlock[],
+    }))
+    // New assistant turns chain from the re-run parent
+    lastTurnMsgId = rerunParentId!
+  } else {
+    // ── Normal send path ──────────────────────────────────────────────────────
+    // currentLeafId: msgId of the chat's current active leaf; becomes the
+    // parentId of the new user turn.
+    const currentLeafId: string | null = (chat.activeLeafId as string | undefined) ?? null
+
+    // Persist the user prompt as a turn record (format C, tree-aware)
+    const userMsgId = uuidv4()
+    const userTurnRow: TurnRow = {
+      PK: `CHAT#${chatId}`,
+      ...buildTurnKey(chatId, responseStartTs, seq, responseId) as { SK: string },
+      msgId: userMsgId,
+      parentId: currentLeafId,
+      role: 'user',
+      blocks: [{ text: content! }] as ContentBlock[],
+      model,
+      createdAt: responseStartTs,
+      turnIndex: 0,
+      responseId,
+    }
+    await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
+
+    // Build Bedrock message history via the active-path tree walk.
+    // Combine prior rows with the just-created user turn, then walk the active path
+    // so only root→activeLeaf blocks are replayed (for a linear chat, all rows in order).
+    // Replay blocks verbatim so reasoning signatures + prompt-caching prefix are preserved.
+    const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
+    const activePath = buildActivePath(allRows, userMsgId)
+    bedrockMessages = activePath.map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: (m.blocks ?? []) as ContentBlock[],
+    }))
+    lastTurnMsgId = userMsgId
   }
-  await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
-
-  // Build Bedrock message history via the active-path tree walk.
-  // Combine prior rows with the just-created user turn, then walk the active path
-  // so only root→activeLeaf blocks are replayed (for a linear chat, all rows in order).
-  // Replay blocks verbatim so reasoning signatures + prompt-caching prefix are preserved.
-  const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
-  const activePath = buildActivePath(allRows, userMsgId)
-  const bedrockMessages: Message[] = activePath.map(m => ({
-    role: m.role as 'user' | 'assistant',
-    content: (m.blocks ?? []) as ContentBlock[],
-  }))
-
-  // Track the msgId of the last persisted turn so we can update activeLeafId after streaming
-  let lastTurnMsgId: string = userMsgId
 
   console.log(JSON.stringify({ event: 'stream_start', chatId, model, connId }))
 
@@ -174,9 +197,9 @@ export const buildHandler = (postFn: PostFn) => async (
     console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
   }
 
-  // Auto-title on first exchange
-  if (chat.title === 'New Chat') {
-    const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content}`
+  // Auto-title on first normal send (not on re-run — no new user content)
+  if (!isRerun && chat.title === 'New Chat') {
+    const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content!}`
     const title = await converseOnce(TITLE_MODEL, '', [
       { role: 'user', content: [{ text: titlePrompt }] },
     ])
