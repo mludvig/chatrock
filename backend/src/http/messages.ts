@@ -55,6 +55,8 @@ interface ConversationResponse {
 interface TurnRow {
   PK: string
   SK: string
+  msgId: string
+  parentId: string | null
   role: 'user' | 'assistant'
   blocks: ContentBlock[]
   model: string
