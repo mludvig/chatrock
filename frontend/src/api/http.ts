@@ -30,6 +30,7 @@ export interface Chat {
   systemPrompt: string
   createdAt: string
   updatedAt: string
+  activeLeafId?: string
 }
 
 // ── Display types returned by GET /messages (format C) ───────────────────────
