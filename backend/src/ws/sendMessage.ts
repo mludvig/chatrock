@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { getConnection, getChat, listMessages, putMessage, updateChatTitle, buildTurnKey } from '../lib/dynamo'
 import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
-import { TITLE_MODEL, type ModelSettings } from '../config/models'
+import { TITLE_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 
 interface WSSendEvent {
   requestContext: {
@@ -33,6 +33,11 @@ export const buildHandler = (postFn: PostFn) => async (
   const conn = await getConnection(connId)
   if (!conn) return { statusCode: 410, body: 'Gone' }
   const sub = conn.userSub as string
+
+  if (!isValidModelId(model)) {
+    await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Invalid model' }) })
+    return { statusCode: 200, body: '' }
+  }
 
   const chat = await getChat(sub, chatId)
   if (!chat) {

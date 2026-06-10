@@ -13,6 +13,12 @@ resource "aws_cloudfront_distribution" "chatrock" {
   web_acl_id          = aws_wafv2_web_acl.chatrock.arn
   price_class         = "PriceClass_100"
 
+  logging_config {
+    bucket          = aws_s3_bucket.logs.bucket_regional_domain_name
+    prefix          = "cloudfront/"
+    include_cookies = false
+  }
+
   # ── Origins ──────────────────────────────────────────────────────────────
   origin {
     domain_name              = aws_s3_bucket.spa.bucket_regional_domain_name
@@ -82,10 +88,11 @@ resource "aws_cloudfront_distribution" "chatrock" {
 
   # Default → S3 SPA assets
   default_cache_behavior {
-    target_origin_id       = local.s3_origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
+    target_origin_id           = local.s3_origin_id
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
     forwarded_values {
       query_string = false
       cookies { forward = "none" }
@@ -110,6 +117,13 @@ resource "aws_cloudfront_distribution" "chatrock" {
     error_caching_min_ttl = 0
   }
 
+  custom_error_response {
+    error_code            = 400
+    response_code         = 400
+    response_page_path    = "/index.html"
+    error_caching_min_ttl = 0
+  }
+
   restrictions {
     geo_restriction { restriction_type = "none" }
   }
@@ -121,4 +135,33 @@ resource "aws_cloudfront_distribution" "chatrock" {
   }
 
   tags = { Env = var.env }
+}
+
+resource "aws_cloudfront_response_headers_policy" "security" {
+  name = "chatrock-security-headers-${var.env}"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = true
+      override                   = true
+    }
+    content_type_options {
+      override = true
+    }
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+    xss_protection {
+      mode_block = true
+      protection = true
+      override   = true
+    }
+  }
 }

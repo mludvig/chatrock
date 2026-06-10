@@ -12,10 +12,30 @@ resource "aws_apigatewayv2_api" "http" {
   tags = { Env = var.env }
 }
 
+resource "aws_cloudwatch_log_group" "apigw_http" {
+  name              = "/aws/apigateway/chatrock-http-${var.env}"
+  retention_in_days = 90
+  tags              = { Env = var.env }
+}
+
 resource "aws_apigatewayv2_stage" "http" {
   api_id      = aws_apigatewayv2_api.http.id
   name        = "$default"
   auto_deploy = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.apigw_http.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      sourceIp       = "$context.identity.sourceIp"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      routeKey       = "$context.routeKey"
+      status         = "$context.status"
+      responseLength = "$context.responseLength"
+      authError      = "$context.authorizer.error"
+    })
+  }
 }
 
 # JWT authorizer (Cognito)

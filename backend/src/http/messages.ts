@@ -4,17 +4,17 @@ import { subFromClaims } from '../lib/auth'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import type { TokenUsage } from '../lib/bedrock'
 
-const CORS = { 'Access-Control-Allow-Origin': '*' }
+const corsHeader = () => ({ 'Access-Control-Allow-Origin': `https://${process.env.DOMAIN_NAME}` })
 
 const ok = (body: unknown): APIGatewayProxyResultV2 => ({
   statusCode: 200,
-  headers: { 'Content-Type': 'application/json', ...CORS },
+  headers: { 'Content-Type': 'application/json', ...corsHeader() },
   body: JSON.stringify(body),
 })
 
 const err = (status: number, msg: string): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...CORS },
+  headers: { 'Content-Type': 'application/json', ...corsHeader() },
   body: JSON.stringify({ message: msg }),
 })
 
@@ -214,6 +214,7 @@ export const handler = async (
   const chat = await getChat(sub, chatId)
   if (!chat) return err(404, 'Not found')
 
+  console.log(JSON.stringify({ event: 'messages_accessed', sub, chatId }))
   const items = await listMessages(chatId)
   const rows = items as unknown as TurnRow[]
   const response = groupTurnsToBubbles(rows)

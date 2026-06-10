@@ -73,3 +73,18 @@ resource "aws_wafv2_web_acl" "chatrock" {
 
   tags = { Env = var.env }
 }
+
+# WAF logging — CloudWatch Logs (no region constraint unlike S3 delivery)
+# Log group name must start with "aws-waf-logs-" per AWS requirement
+resource "aws_cloudwatch_log_group" "waf" {
+  provider          = aws.us_east_1
+  name              = "aws-waf-logs-chatrock-${var.env}"
+  retention_in_days = 90
+  tags              = { Env = var.env }
+}
+
+resource "aws_wafv2_web_acl_logging_configuration" "chatrock" {
+  provider                = aws.us_east_1
+  log_destination_configs = [aws_cloudwatch_log_group.waf.arn]
+  resource_arn            = aws_wafv2_web_acl.chatrock.arn
+}
