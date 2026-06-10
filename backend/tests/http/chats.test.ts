@@ -5,6 +5,10 @@ import * as dynamo from '../../src/lib/dynamo'
 jest.mock('../../src/lib/dynamo')
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
+beforeAll(() => {
+  process.env.DOMAIN_NAME = 'chatrock.ccxdemo.dev'
+})
+
 const makeEvent = (
   method: string,
   path: string,
@@ -35,12 +39,12 @@ test('GET /api/chats returns chat list', async () => {
 
 test('POST /api/chats creates a chat', async () => {
   mockDynamo.putChat.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'apac.anthropic.claude-sonnet-4-6', systemPrompt: '' }) as any))
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '' }) as any))
   expect(res.statusCode).toBe(201)
   const body = JSON.parse(res.body ?? '{}')
   expect(typeof body.chatId).toBe('string')
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
-    expect.objectContaining({ title: 'New Chat', model: 'apac.anthropic.claude-sonnet-4-6' }),
+    expect.objectContaining({ title: 'New Chat', model: 'global.anthropic.claude-sonnet-4-6' }),
   )
 })
 
@@ -69,4 +73,104 @@ test('PATCH /api/chats/{chatId} returns 404 if not owned', async () => {
   mockDynamo.getChat.mockResolvedValue(undefined)
   const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { title: 'X' }, { chatId: 'other' }) as any))
   expect(res.statusCode).toBe(404)
+})
+
+test('GET /api/chats returns domain-specific CORS header', async () => {
+  mockDynamo.listChats.mockResolvedValue([])
+  const res = result(await handler(makeEvent('GET', '/api/chats') as any))
+  expect((res.headers as Record<string, string>)['Access-Control-Allow-Origin'])
+    .toBe('https://chatrock.ccxdemo.dev')
+})
+
+// ── Input validation: POST /api/chats ─────────────────────────────────────────
+
+test('POST /api/chats with non-JSON body returns 400', async () => {
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'POST /api/chats',
+    pathParameters: {},
+    body: 'not json',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid JSON body' })
+})
+
+test('POST /api/chats with template-injection body returns 400', async () => {
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'POST /api/chats',
+    pathParameters: {},
+    body: '{{7*7}}',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+})
+
+// ── Input validation: PATCH /api/chats/{chatId} ───────────────────────────────
+
+test('PATCH /api/chats/{chatId} with numeric title returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'PATCH /api/chats/{chatId}',
+    pathParameters: { chatId: 'c1' },
+    // Use raw JSON string to avoid JS number precision loss while still testing the type guard
+    body: '{"title":99999999999999999999999999}',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'title must be a string' })
+})
+
+test('PATCH /api/chats/{chatId} with array title returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'PATCH /api/chats/{chatId}',
+    pathParameters: { chatId: 'c1' },
+    body: JSON.stringify({ title: [1, 2, 3] }),
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+})
+
+test('PATCH /api/chats/{chatId} with non-JSON body returns 400', async () => {
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'PATCH /api/chats/{chatId}',
+    pathParameters: { chatId: 'c1' },
+    body: 'not json at all',
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(400)
+})
+
+// ── Model allowlist validation ────────────────────────────────────────────────
+
+test('POST /api/chats with unknown model returns 400', async () => {
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'us.meta.llama3-3-70b-instruct-v1:0' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid model' })
+})
+
+test('POST /api/chats with valid model succeeds', async () => {
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6' }) as any))
+  expect(res.statusCode).toBe(201)
+})
+
+test('PATCH /api/chats/{chatId} with unknown model returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'COMPLETELY_FAKE_MODEL' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid model' })
+})
+
+test('PATCH /api/chats/{chatId} with valid model succeeds', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.updateChatModel.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'global.anthropic.claude-opus-4-8' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
 })

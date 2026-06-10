@@ -14,10 +14,29 @@ resource "aws_apigatewayv2_authorizer" "ws_lambda" {
   # TTL caching not supported for WEBSOCKET protocol APIs
 }
 
+resource "aws_cloudwatch_log_group" "apigw_ws" {
+  name              = "/aws/apigateway/chatrock-ws-${var.env}"
+  retention_in_days = 90
+  tags              = { Env = var.env }
+}
+
 resource "aws_apigatewayv2_stage" "ws" {
   api_id      = aws_apigatewayv2_api.ws.id
   name        = "prod"
   auto_deploy = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.apigw_ws.arn
+    format = jsonencode({
+      requestId    = "$context.requestId"
+      sourceIp     = "$context.identity.sourceIp"
+      requestTime  = "$context.requestTime"
+      routeKey     = "$context.routeKey"
+      connectionId = "$context.connectionId"
+      status       = "$context.status"
+      authError    = "$context.authorizer.error"
+    })
+  }
 }
 
 # ── Integrations ────────────────────────────────────────────────────────────
