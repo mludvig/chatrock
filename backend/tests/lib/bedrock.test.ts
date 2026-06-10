@@ -33,6 +33,11 @@ jest.mock('../../src/lib/tools', () => ({
 
 const mockExecuteTool = tools.executeTool as jest.MockedFunction<typeof tools.executeTool>
 
+beforeEach(() => {
+  getMockSend().mockReset()
+  mockExecuteTool.mockReset()
+})
+
 // Helper: get the mocked `send` function from the client
 function getMockSend() {
   return (bedrockClient as unknown as { send: jest.Mock }).send
@@ -254,6 +259,61 @@ test('handles missing contentBlockStart for a text block (creates acc on-the-fly
   const content = assistantTurn!.content as Array<Record<string, unknown>>
   expect(content).toHaveLength(1)
   expect(content[0]).toMatchObject({ text: 'Hello world' })
+})
+
+// ── Test 7: forced final answer after max tool-use rounds ────────────────────
+//
+// When the model keeps returning tool_use without ever producing a text answer,
+// converseStream should exhaust the tool-use loop and then do ONE more call
+// with no tools (forced answer), ensuring a text response always follows.
+
+test('after max tool-use rounds, does one final forced-answer call with no tools', async () => {
+  const MAX = 8 // must match the constant in bedrock.ts
+
+  // Mock MAX rounds of pure tool_use responses
+  for (let i = 0; i < MAX; i++) {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: `tu-${i}`, name: 'web_search' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"x"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({
+      toolUseId: `tu-${i}`,
+      content: [{ text: 'result' }],
+      status: 'success',
+    })
+  }
+
+  // Forced-answer round: returns text (no more tool_use)
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Final forced answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 50, outputTokens: 10 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {})) {
+    chunks.push(chunk)
+  }
+
+  // Verify the forced-answer text delta made it through
+  const deltaChunks = chunks.filter(c => (c as { type: string }).type === 'delta')
+  expect(deltaChunks.length).toBeGreaterThan(0)
+  const text = deltaChunks.map(c => (c as { text: string }).text).join('')
+  expect(text).toBe('Final forced answer')
+
+  // The stop reason should reflect the forced answer, not max_rounds
+  const stopChunk = chunks.find(c => (c as { type: string }).type === 'stop') as
+    { type: string; stopReason: string } | undefined
+  expect(stopChunk).toBeDefined()
+  expect(stopChunk!.stopReason).toBe('end_turn')
+
+  // send() should have been called MAX + 1 times (MAX tool rounds + 1 forced answer)
+  expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
 })
 
 // ── Test 5: existing UI chunks still flow through ────────────────────────────
