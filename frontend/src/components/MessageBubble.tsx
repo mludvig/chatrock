@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
-  faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare,
+  faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare, faPaperPlane,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
@@ -214,19 +214,29 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: 
 
         {/* Inline edit textarea — shown when user clicks Edit on their own bubble */}
         {!isAssistant && editing && (
-          <>
+          <div className="edit-area">
             <textarea
-              className="edit-textarea system-prompt-input"
+              className="edit-textarea"
               value={draft}
               onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }}
+              onKeyDown={e => {
+                if (e.key === 'Escape') setEditing(false)
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  if (draft.trim() && onEdit) {
+                    const msg = message as Message
+                    onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
+                  }
+                  setEditing(false)
+                }
+              }}
               autoFocus
               rows={3}
             />
             <div className="edit-actions">
               <button
-                className="action-btn"
-                title="Save edit"
+                className="edit-send-btn"
+                title="Send edited message"
                 onClick={() => {
                   if (draft.trim() && onEdit) {
                     const msg = message as Message
@@ -235,77 +245,79 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: 
                   setEditing(false)
                 }}
               >
-                Save
+                Send <FontAwesomeIcon icon={faPaperPlane} />
               </button>
-              <button className="action-btn" title="Cancel edit" onClick={() => setEditing(false)}>
+              <button className="edit-cancel-btn" title="Cancel edit (Esc)" onClick={() => setEditing(false)}>
                 Cancel
               </button>
             </div>
-          </>
+          </div>
         )}
       </div>
 
-      {/* Hover action-row — only for finalized (non-streaming) user bubbles with onEdit */}
-      {!isAssistant && !isStreaming && !editing && onEdit && 'msgId' in message && (
-        <div className="message-actions">
-          <button
-            className="action-btn"
-            title="Edit this question"
-            onClick={() => {
-              const text = (message as Message).steps?.find(s => s.kind === 'text')?.text ?? ''
-              setDraft(text)
-              setEditing(true)
-            }}
-          >
-            <FontAwesomeIcon icon={faPenToSquare} />
-          </button>
-        </div>
-      )}
+      {/* Always-visible bottom row: sibling nav first, then action icons */}
+      {!isStreaming && (() => {
+        const hasSiblings = onNavigate && 'siblingCount' in message &&
+          (message as Message).siblingCount != null &&
+          (message as Message).siblingCount! > 1
+        const hasEdit = !isAssistant && !editing && onEdit && 'msgId' in message
+        const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
+        if (!hasSiblings && !hasEdit && !hasRerun) return null
 
-      {/* Hover action-row — only for finalized (non-streaming) assistant bubbles with a parentId */}
-      {isAssistant && !isStreaming && onRerun && 'parentId' in message && message.parentId != null && (
-        <div className="message-actions">
-          <button
-            className="action-btn"
-            title="Re-run this answer"
-            onClick={() => onRerun((message as Message).parentId!)}
-          >
-            <FontAwesomeIcon icon={faRotateRight} />
-          </button>
-        </div>
-      )}
-
-      {/* Sibling navigation — visible on any finalized bubble with siblings */}
-      {!isStreaming && onNavigate && 'siblingCount' in message &&
-        (message as Message).siblingCount != null &&
-        (message as Message).siblingCount! > 1 && (() => {
-          const msg = message as Message
-          const idx = msg.siblingIndex!
-          const count = msg.siblingCount!
-          const siblings = msg.siblings!
-          return (
-            <div className="sibling-nav">
+        const msg = message as Message
+        return (
+          <div className="bubble-row">
+            {hasSiblings && (() => {
+              const idx = msg.siblingIndex!
+              const count = msg.siblingCount!
+              const siblings = msg.siblings!
+              return (
+                <>
+                  <button
+                    className="sibling-btn"
+                    title="Previous variant"
+                    disabled={idx <= 1}
+                    onClick={() => onNavigate!(siblings[idx - 2])}
+                  >
+                    <FontAwesomeIcon icon={faChevronLeft} />
+                  </button>
+                  <span className="sibling-label">{idx}/{count}</span>
+                  <button
+                    className="sibling-btn"
+                    title="Next variant"
+                    disabled={idx >= count}
+                    onClick={() => onNavigate!(siblings[idx])}
+                  >
+                    <FontAwesomeIcon icon={faChevronRight} />
+                  </button>
+                </>
+              )
+            })()}
+            {hasEdit && (
               <button
-                className="sibling-btn"
-                title="Previous variant"
-                disabled={idx <= 1}
-                onClick={() => onNavigate(siblings[idx - 2])}
+                className="action-btn"
+                title="Edit this question"
+                onClick={() => {
+                  const text = msg.steps?.find(s => s.kind === 'text')?.text ?? ''
+                  setDraft(text)
+                  setEditing(true)
+                }}
               >
-                <FontAwesomeIcon icon={faChevronLeft} />
+                <FontAwesomeIcon icon={faPenToSquare} />
               </button>
-              <span className="sibling-label">{idx}/{count}</span>
+            )}
+            {hasRerun && (
               <button
-                className="sibling-btn"
-                title="Next variant"
-                disabled={idx >= count}
-                onClick={() => onNavigate(siblings[idx])}
+                className="action-btn"
+                title="Re-run this answer"
+                onClick={() => onRerun!(msg.parentId!)}
               >
-                <FontAwesomeIcon icon={faChevronRight} />
+                <FontAwesomeIcon icon={faRotateRight} />
               </button>
-            </div>
-          )
-        })()
-      }
+            )}
+          </div>
+        )
+      })()}
 
     </div>
   )

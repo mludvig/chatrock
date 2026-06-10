@@ -27,7 +27,7 @@ test('edit question creates sibling branch, sibling nav works, persists after re
   const textarea = page.locator('.message.user .edit-textarea')
   await expect(textarea).toBeVisible({ timeout: 5_000 })
   await textarea.fill('Reply with exactly: "Edited answer."')
-  await page.locator('button[title="Save edit"]').click()
+  await page.locator('button[title="Send edited message"]').click()
 
   // Wait for the new stream to start and finish
   await expect(
