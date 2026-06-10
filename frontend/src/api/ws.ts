@@ -51,10 +51,11 @@ export function disconnect() {
 
 export function sendMessage(payload: {
   chatId: string
-  content: string
+  content?: string
   model: string
   systemPrompt: string
   modelSettings?: ModelSettings
+  parentId?: string
 }) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     throw new Error('WebSocket not connected')

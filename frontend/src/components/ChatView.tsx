@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faGear, faPaperPlane, faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -49,12 +49,37 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const [lastTurnUsage, setLastTurnUsage] = useState<TokenUsage | null>(null)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+  // Ref so the WS done-handler can access the current chatId without stale closure
+  const chatIdRef = useRef<string | undefined>(chatId)
 
   const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
     ?? { temperature: true, topP: true, topK: false, thinking: 'none' }
+
+  // Keep ref in sync after each render (must be an effect, not during render)
+  useEffect(() => { chatIdRef.current = chatId })
+
+  // Reload messages for a given chatId, applying tool-result enrichment.
+  // Used both by the load effect and the post-stream done-handler refetch.
+  const reloadMessages = useCallback((id: string) => {
+    api.listMessages(id).then(r => {
+      if (useChatStore.getState().sending) return
+      const enriched = r.bubbles.map(msg => {
+        if (!msg.steps?.some(s => s.kind === 'tool')) return msg
+        return {
+          ...msg,
+          steps: msg.steps.map(step => {
+            if (step.kind !== 'tool') return step
+            return { ...step, searchResults: parseSearchResults(step.name, step.result, step.isError) }
+          }),
+        }
+      })
+      setMessages(enriched)
+      setConversationUsage(r.conversationUsage)
+    }).catch(() => {})
+  }, [setMessages])
 
   // Sync newModel when defaultModel resolves (models loaded async)
   useEffect(() => {
@@ -100,6 +125,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       } else if (evt.type === 'done') {
         finalizeStream()
         setSending(false)
+        // Hydrate real msgId/parentId on the just-streamed answer so every
+        // bubble is immediately re-runnable without a page reload.
+        const currentId = chatIdRef.current
+        if (currentId && currentId !== 'new') {
+          reloadMessages(currentId)
+        }
       } else if (evt.type === 'titleUpdated') {
         renameChat(evt.chatId, evt.title)
       } else if (evt.type === 'error') {
@@ -108,7 +139,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         setErrorMsg(evt.message)
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream, renameChat, setSending])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream, renameChat, setSending, reloadMessages])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -125,17 +156,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     let cancelled = false
     api.listMessages(chatId).then(r => {
       if (cancelled || useChatStore.getState().sending) return
-      // Enrich loaded tool steps with searchResults (not stored, derived on load)
       const enriched = r.bubbles.map(msg => {
         if (!msg.steps?.some(s => s.kind === 'tool')) return msg
         return {
           ...msg,
           steps: msg.steps.map(step => {
             if (step.kind !== 'tool') return step
-            return {
-              ...step,
-              searchResults: parseSearchResults(step.name, step.result, step.isError),
-            }
+            return { ...step, searchResults: parseSearchResults(step.name, step.result, step.isError) }
           }),
         }
       })
@@ -152,6 +179,33 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingMsg])
+
+  async function handleRerun(parentId: string) {
+    if (!activeChat || sending || creatingChat) return
+    setSending(true)
+    setErrorMsg(null)
+    setLastTurnUsage(null)
+
+    // Optimistic truncate: keep everything up to and including the user turn (parentId),
+    // drop the old answer and any later messages from view.
+    const cut = messages.findIndex(m => m.msgId === parentId)
+    if (cut >= 0) setMessages(messages.slice(0, cut + 1))
+    startStream()
+
+    try {
+      await ensureConnected(accessToken)
+      sendMessage({
+        chatId: chatId!,
+        model: activeChat.model,
+        systemPrompt: activeChat.systemPrompt,
+        modelSettings,
+        parentId,
+      })
+    } catch (err) {
+      setSending(false)
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   async function handleSend() {
     const content = input.trim()
@@ -308,6 +362,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           <MessageBubble
             key={'msgId' in m ? m.msgId : `stream-${i}`}
             message={m}
+            onRerun={!isNew ? handleRerun : undefined}
           />
         ))}
         <div ref={bottomRef} />

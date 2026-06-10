@@ -368,9 +368,33 @@ body {
 
 .message {
   display: flex;
+  flex-direction: column;
+  position: relative;
 
   &.user   { align-self: flex-end; }
   &.assistant { align-self: flex-start; }
+
+  .message-actions {
+    display: none;
+    gap: 4px;
+    margin-top: 4px;
+    padding-left: 4px;
+  }
+
+  &:hover .message-actions { display: flex; }
+}
+
+.action-btn {
+  background: none;
+  border: 1px solid $border;
+  border-radius: 6px;
+  color: $muted;
+  cursor: pointer;
+  padding: 3px 7px;
+  font-size: 12px;
+  line-height: 1;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+  &:hover { color: $accent; border-color: $accent; background: rgba($accent, 0.06); }
 }
 
 .message-content {
