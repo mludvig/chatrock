@@ -5,17 +5,15 @@ import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 
-const corsHeader = () => ({ 'Access-Control-Allow-Origin': `https://${process.env.DOMAIN_NAME}` })
-
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...corsHeader() },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 })
 
 const err = (status: number, message: string): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...corsHeader() },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ message }),
 })
 
@@ -103,7 +101,7 @@ export const handler = async (
     if (!chat) return err(404, 'Not found')
     await deleteChat(sub, chatId)
     console.log(JSON.stringify({ event: 'chat_deleted', sub, chatId }))
-    return { statusCode: 204, headers: corsHeader(), body: '' }
+    return { statusCode: 204, body: '' }
   }
 
   if (route === 'POST /api/chats/{chatId}/retitle') {

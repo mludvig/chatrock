@@ -7,7 +7,6 @@ export const handler = async (
   statusCode: 200,
   headers: {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': `https://${process.env.DOMAIN_NAME}`,
   },
   body: JSON.stringify({ models: MODELS }),
 })

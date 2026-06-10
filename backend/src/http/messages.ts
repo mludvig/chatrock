@@ -4,17 +4,15 @@ import { subFromClaims } from '../lib/auth'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import type { TokenUsage } from '../lib/bedrock'
 
-const corsHeader = () => ({ 'Access-Control-Allow-Origin': `https://${process.env.DOMAIN_NAME}` })
-
 const ok = (body: unknown): APIGatewayProxyResultV2 => ({
   statusCode: 200,
-  headers: { 'Content-Type': 'application/json', ...corsHeader() },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 })
 
 const err = (status: number, msg: string): APIGatewayProxyResultV2 => ({
   statusCode: status,
-  headers: { 'Content-Type': 'application/json', ...corsHeader() },
+  headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ message: msg }),
 })
 
