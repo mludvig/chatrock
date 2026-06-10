@@ -2,8 +2,9 @@ import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import { getConnection, getChat, listMessages, putMessage, updateChatTitle, buildTurnKey } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey } from '../lib/dynamo'
 import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
+import { buildActivePath, type TurnRow } from '../lib/tree'
 import { TITLE_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 
 interface WSSendEvent {
@@ -51,27 +52,44 @@ export const buildHandler = (postFn: PostFn) => async (
   const responseId = uuidv4()
   let seq = 0
 
-  // Persist the user prompt as a turn record (format C)
+  // currentLeafId: the msgId of the chat's current active leaf — becomes the
+  // parentId of the first (user) turn in this response.
+  const currentLeafId: string | null = (chat.activeLeafId as string | undefined) ?? null
+
+  // Load prior turn history BEFORE persisting the new user turn so we can
+  // build the replay path from prior rows + the in-memory user turn (avoids
+  // a second DDB round-trip and works correctly when tests mock listMessages).
+  const priorRows = await listMessages(chatId)
+
+  // Persist the user prompt as a turn record (format C, tree-aware)
   const userMsgId = uuidv4()
-  await putMessage({
-    ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId),
+  const userTurnRow: TurnRow = {
+    PK: `CHAT#${chatId}`,
+    ...buildTurnKey(chatId, responseStartTs, seq, responseId) as { SK: string },
+    msgId: userMsgId,
+    parentId: currentLeafId,
     role: 'user',
     blocks: [{ text: content }] as ContentBlock[],
     model,
     createdAt: responseStartTs,
     turnIndex: 0,
     responseId,
-  })
+  }
+  await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
 
-  // Build Bedrock message history from verbatim blocks (format-C records).
-  // Each row has a `blocks: ContentBlock[]` field — replay verbatim so that:
-  //  - reasoning signatures are preserved (required by Bedrock)
-  //  - the byte-stable prefix enables prompt caching
-  const history = await listMessages(chatId)
-  const bedrockMessages: Message[] = history.map(m => ({
+  // Build Bedrock message history via the active-path tree walk.
+  // Combine prior rows with the just-created user turn, then walk the active path
+  // so only root→activeLeaf blocks are replayed (for a linear chat, all rows in order).
+  // Replay blocks verbatim so reasoning signatures + prompt-caching prefix are preserved.
+  const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
+  const activePath = buildActivePath(allRows, userMsgId)
+  const bedrockMessages: Message[] = activePath.map(m => ({
     role: m.role as 'user' | 'assistant',
     content: (m.blocks ?? []) as ContentBlock[],
   }))
+
+  // Track the msgId of the last persisted turn so we can update activeLeafId after streaming
+  let lastTurnMsgId: string = userMsgId
 
   console.log(JSON.stringify({ event: 'stream_start', chatId, model, connId }))
 
@@ -115,11 +133,13 @@ export const buildHandler = (postFn: PostFn) => async (
           }) })
           break
         case 'turn': {
-          // Backend-only: persist one record per Converse turn (format C)
+          // Backend-only: persist one record per Converse turn (format C, tree-aware)
           const turnMsgId = uuidv4()
           const turnTs = new Date().toISOString()
           await putMessage({
             ...buildTurnKey(chatId, responseStartTs, seq++, turnMsgId),
+            msgId: turnMsgId,
+            parentId: lastTurnMsgId,  // chains: user → asst → tool-result → asst …
             role: chunk.role,
             blocks: chunk.content,
             model,
@@ -128,6 +148,7 @@ export const buildHandler = (postFn: PostFn) => async (
             responseId,
             ...(chunk.role === 'assistant' && lastUsage ? { usage: lastUsage } : {}),
           })
+          lastTurnMsgId = turnMsgId
           break
         }
         case 'usage':
@@ -144,6 +165,13 @@ export const buildHandler = (postFn: PostFn) => async (
     console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: String(err) }))
     await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: String(err) }) })
     return { statusCode: 200, body: '' }
+  }
+
+  // Update the chat's active leaf to the final persisted turn
+  try {
+    await updateChatActiveLeaf(sub, chatId, lastTurnMsgId)
+  } catch (e) {
+    console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
   }
 
   // Auto-title on first exchange

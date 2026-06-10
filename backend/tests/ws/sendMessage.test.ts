@@ -10,6 +10,7 @@ jest.mock('../../src/lib/dynamo', () => ({
   listMessages: jest.fn(),
   putMessage: jest.fn(),
   updateChatTitle: jest.fn(),
+  updateChatActiveLeaf: jest.fn(),
 }))
 jest.mock('../../src/lib/bedrock')
 
@@ -178,21 +179,25 @@ test('replays history as verbatim blocks (not flat text)', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing' })
 
-  // History with format-C records (blocks field)
+  // History with format-C records (blocks field + tree fields)
   mockDynamo.listMessages.mockResolvedValue([
     {
-      PK: 'CHAT#c1', SK: 'MSG#t1#0000#u1', role: 'user',
+      PK: 'CHAT#c1', SK: 'MSG#t1#0000#u1', msgId: 'u1', parentId: null, role: 'user',
       blocks: [{ text: 'previous question' }], model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', createdAt: 't1',
+      turnIndex: 0, responseId: 'r0',
     },
     {
-      PK: 'CHAT#c1', SK: 'MSG#t1#0001#a1', role: 'assistant',
+      PK: 'CHAT#c1', SK: 'MSG#t1#0001#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
       blocks: [
         { reasoningContent: { reasoningText: { text: 'I thought', signature: 'MOCKED_SIG' } } },
         { text: 'previous answer' },
       ],
       model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', createdAt: 't1',
+      turnIndex: 1, responseId: 'r0',
     },
   ])
+  // getChat must return activeLeafId = last prior row's msgId so the user turn chains correctly
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing', activeLeafId: 'a1' })
   mockDynamo.putMessage.mockResolvedValue(undefined)
 
   async function* fakeStream() {
@@ -204,9 +209,9 @@ test('replays history as verbatim blocks (not flat text)', async () => {
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'follow-up', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
-  // converseStream was called with the verbatim blocks from history
+  // converseStream was called with prior history + the new user turn
   const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
-  expect(passedMessages).toHaveLength(2)
+  expect(passedMessages).toHaveLength(3)
   // First message content verbatim
   expect(passedMessages[0].content).toEqual([{ text: 'previous question' }])
   // Second message content verbatim (including reasoningContent with signature)
@@ -214,6 +219,8 @@ test('replays history as verbatim blocks (not flat text)', async () => {
     { reasoningContent: { reasoningText: { text: 'I thought', signature: 'MOCKED_SIG' } } },
     { text: 'previous answer' },
   ])
+  // Third message is the new user follow-up
+  expect(passedMessages[2].content).toEqual([{ text: 'follow-up' }])
 })
 
 test('streams UI chunks and persists without persisting them on WS', async () => {
@@ -318,4 +325,164 @@ test('sends error event for COMPLETELY_FAKE_EXPENSIVE_MODEL', async () => {
 
   const errEvent = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>).find(d => d.type === 'error')
   expect(errEvent).toMatchObject({ type: 'error', message: 'Invalid model' })
+})
+
+// ── Slice 2 (Inc 2): tree data model — msgId / parentId / activeLeafId ────────
+
+const MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+
+test('inc2: each persisted turn carries a top-level msgId and parentId', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: null })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: MODEL, systemPrompt: '' }))
+
+  const calls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  for (const call of calls) {
+    expect(typeof call.msgId).toBe('string')
+    expect(call.msgId).toHaveLength(36) // uuid v4
+    expect('parentId' in call).toBe(true)
+  }
+})
+
+test('inc2: user prompt parentId = chat.activeLeafId (null for a fresh chat)', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  // Fresh chat: no activeLeafId
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.updateChatTitle.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+  mockBedrock.converseOnce.mockResolvedValue('Title')
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: MODEL, systemPrompt: '' }))
+
+  const userRecord = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'user')!
+  expect(userRecord.parentId).toBeNull()
+})
+
+test('inc2: user prompt parentId = existing chat.activeLeafId', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'prev-leaf-id' })
+  mockDynamo.listMessages.mockResolvedValue([
+    { PK: 'CHAT#c1', SK: 'MSG#t#0000#prev-leaf-id', msgId: 'prev-leaf-id', parentId: null,
+      role: 'assistant', blocks: [{ text: 'previous' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+  ])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Follow-up', model: MODEL, systemPrompt: '' }))
+
+  const userRecord = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'user')!
+  expect(userRecord.parentId).toBe('prev-leaf-id')
+})
+
+test('inc2: response turns chain parentId from user turn through each assistant/tool turn', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  // Two turns: assistant + user-toolResult + assistant-final
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' as const } }], turnIndex: 1 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'done' }], turnIndex: 2 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const calls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  // calls: [userPrompt, asst0, userTool1, asst2]
+  const [userPrompt, asst0, userTool1, asst2] = calls
+
+  // Each turn's parentId = previous turn's msgId
+  expect(asst0.parentId).toBe(userPrompt.msgId)
+  expect(userTool1.parentId).toBe(asst0.msgId)
+  expect(asst2.parentId).toBe(userTool1.msgId)
+})
+
+test('inc2: updateChatActiveLeaf called once after stream with the final turn msgId', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'final' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  // The activeLeafId passed should be the final assistant turn's msgId
+  const lastActiveLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const assistantRecord = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  expect(lastActiveLeaf).toBe(assistantRecord.msgId)
+})
+
+test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat history)', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'asst-prev' })
+
+  // Two prior rows — a linear chain (user → assistant)
+  const priorRows = [
+    { PK: 'CHAT#c1', SK: 'MSG#t#0000#user-prev', msgId: 'user-prev', parentId: null,
+      role: 'user', blocks: [{ text: 'prior question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0001#asst-prev', msgId: 'asst-prev', parentId: 'user-prev',
+      role: 'assistant', blocks: [{ text: 'prior answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+  ]
+  mockDynamo.listMessages.mockResolvedValue(priorRows)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Follow-up', model: MODEL, systemPrompt: '' }))
+
+  // converseStream receives messages: [prior rows... + new user turn]
+  // For a linear chat the active-path walk produces the same order as the flat array
+  const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
+  // First two messages are the prior rows (verbatim blocks)
+  expect(passedMessages[0].content).toEqual([{ text: 'prior question' }])
+  expect(passedMessages[1].content).toEqual([{ text: 'prior answer' }])
+  // Third message is the newly persisted user turn
+  expect(passedMessages[2].content).toEqual([{ text: 'Follow-up' }])
 })
