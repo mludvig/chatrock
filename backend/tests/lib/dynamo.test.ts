@@ -1,4 +1,12 @@
-import { buildChatKey, buildMsgKey, buildConnKey, buildTurnKey } from '../../src/lib/dynamo'
+const mockSend = jest.fn()
+jest.mock('../../src/lib/dynamo', () => jest.requireActual('../../src/lib/dynamo'))
+import { buildChatKey, buildMsgKey, buildConnKey, buildTurnKey, ddb, listMessages } from '../../src/lib/dynamo'
+
+beforeEach(() => {
+  jest.clearAllMocks()
+  jest.spyOn(ddb, 'send').mockImplementation(mockSend)
+})
+afterEach(() => jest.restoreAllMocks())
 
 test('buildChatKey returns correct PK/SK', () => {
   const k = buildChatKey('sub1', 'chat1')
@@ -47,4 +55,41 @@ test('buildTurnKey seq=0 produces 0000 padding', () => {
 test('buildTurnKey seq=9999 at boundary', () => {
   const k = buildTurnKey('chat1', '2025-01-01T00:00:00.000Z', 9999, 'x')
   expect(k.SK).toContain('#9999#')
+})
+
+// ── listMessages pagination ────────────────────────────────────────────────────
+
+test('listMessages paginates via LastEvaluatedKey until exhausted', async () => {
+  const page1 = { PK: 'CHAT#c1', SK: 'MSG#ts#0000#msg-1' }
+  const page2 = { PK: 'CHAT#c1', SK: 'MSG#ts#0001#msg-2' }
+
+  mockSend
+    .mockResolvedValueOnce({ Items: [page1], LastEvaluatedKey: { PK: 'CHAT#c1', SK: page1.SK } })
+    .mockResolvedValueOnce({ Items: [page2] })  // no LastEvaluatedKey → done
+
+  const result = await listMessages('c1')
+
+  expect(result).toHaveLength(2)
+  expect((result[0] as typeof page1).SK).toBe(page1.SK)
+  expect((result[1] as typeof page2).SK).toBe(page2.SK)
+
+  expect(mockSend).toHaveBeenCalledTimes(2)
+  // Second call must include ExclusiveStartKey
+  const secondCall = mockSend.mock.calls[1][0]
+  expect(secondCall.input.ExclusiveStartKey).toEqual({ PK: 'CHAT#c1', SK: page1.SK })
+})
+
+test('listMessages returns all items when no pagination needed', async () => {
+  const item = { PK: 'CHAT#c2', SK: 'MSG#ts#0000#msg-only' }
+  mockSend.mockResolvedValueOnce({ Items: [item] })
+
+  const result = await listMessages('c2')
+  expect(result).toHaveLength(1)
+  expect(mockSend).toHaveBeenCalledTimes(1)
+})
+
+test('listMessages returns [] for empty table', async () => {
+  mockSend.mockResolvedValueOnce({ Items: [] })
+  const result = await listMessages('empty-chat')
+  expect(result).toHaveLength(0)
 })

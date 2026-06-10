@@ -84,6 +84,15 @@ export async function updateChatSystemPrompt(sub: string, chatId: string, system
   }))
 }
 
+export async function updateChatActiveLeaf(sub: string, chatId: string, activeLeafId: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET activeLeafId = :a, updatedAt = :u',
+    ExpressionAttributeValues: { ':a': activeLeafId, ':u': new Date().toISOString() },
+  }))
+}
+
 export async function updateChatModel(sub: string, chatId: string, model: string) {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
@@ -118,13 +127,22 @@ export async function deleteChat(sub: string, chatId: string) {
 }
 
 export async function listMessages(chatId: string) {
-  const res = await ddb.send(new QueryCommand({
-    TableName: TABLE,
-    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
-    ExpressionAttributeValues: { ':pk': `CHAT#${chatId}`, ':prefix': 'MSG#' },
-    ScanIndexForward: true,
-  }))
-  return res.Items ?? []
+  const items: Record<string, unknown>[] = []
+  let lastKey: Record<string, unknown> | undefined
+
+  do {
+    const res = await ddb.send(new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+      ExpressionAttributeValues: { ':pk': `CHAT#${chatId}`, ':prefix': 'MSG#' },
+      ScanIndexForward: true,
+      ...(lastKey ? { ExclusiveStartKey: lastKey } : {}),
+    }))
+    for (const item of res.Items ?? []) items.push(item as Record<string, unknown>)
+    lastKey = res.LastEvaluatedKey as Record<string, unknown> | undefined
+  } while (lastKey)
+
+  return items
 }
 
 export async function putMessage(item: Record<string, unknown>) {
