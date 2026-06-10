@@ -59,6 +59,10 @@ export interface Message {
   // Convenience: a text step's content for the legacy Message.content access pattern
   // (kept so callers that only need the text can still work; derived from steps on load)
   content?: string
+  // Sibling navigation metadata (Inc 4)
+  siblingIndex?: number
+  siblingCount?: number
+  siblings?: string[]
 }
 
 export interface ModelCapabilities {
@@ -112,6 +116,7 @@ export const api = {
     req<void>('PATCH', `/api/chats/${chatId}`, { model }),
   deleteChat: (chatId: string)         => req<void>('DELETE', `/api/chats/${chatId}`),
   listMessages: (chatId: string)       => req<{ bubbles: Message[]; conversationUsage: TokenUsage }>('GET', `/api/chats/${chatId}/messages`),
+  setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
 }

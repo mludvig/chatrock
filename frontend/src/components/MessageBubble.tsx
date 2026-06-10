@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faChevronDown, faChevronRight, faGlobe, faLink, faSpinner,
+  faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faRotateRight,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
@@ -129,6 +129,7 @@ export function UsageStats({ usage, label }: { usage: TokenUsage; label?: string
 interface Props {
   message: Message | StreamingMsg
   onRerun?: (parentId: string) => void
+  onNavigate?: (targetMsgId: string) => void
 }
 
 /**
@@ -139,7 +140,7 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-export default function MessageBubble({ message, onRerun }: Props) {
+export default function MessageBubble({ message, onRerun, onNavigate }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
@@ -222,6 +223,38 @@ export default function MessageBubble({ message, onRerun }: Props) {
           </button>
         </div>
       )}
+
+      {/* Sibling navigation — visible on any finalized bubble with siblings */}
+      {!isStreaming && onNavigate && 'siblingCount' in message &&
+        (message as Message).siblingCount != null &&
+        (message as Message).siblingCount! > 1 && (() => {
+          const msg = message as Message
+          const idx = msg.siblingIndex!
+          const count = msg.siblingCount!
+          const siblings = msg.siblings!
+          return (
+            <div className="sibling-nav">
+              <button
+                className="sibling-btn"
+                title="Previous variant"
+                disabled={idx <= 1}
+                onClick={() => onNavigate(siblings[idx - 2])}
+              >
+                <FontAwesomeIcon icon={faChevronLeft} />
+              </button>
+              <span className="sibling-label">{idx}/{count}</span>
+              <button
+                className="sibling-btn"
+                title="Next variant"
+                disabled={idx >= count}
+                onClick={() => onNavigate(siblings[idx])}
+              >
+                <FontAwesomeIcon icon={faChevronRight} />
+              </button>
+            </div>
+          )
+        })()
+      }
 
     </div>
   )

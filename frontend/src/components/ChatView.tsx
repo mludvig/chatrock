@@ -180,6 +180,16 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingMsg])
 
+  async function handleNavigate(targetMsgId: string) {
+    if (!chatId || isNew || sending) return
+    try {
+      await api.setActiveLeaf(chatId, targetMsgId)
+      reloadMessages(chatId)
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function handleRerun(parentId: string) {
     if (!activeChat || sending || creatingChat) return
     setSending(true)
@@ -363,6 +373,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             key={'msgId' in m ? m.msgId : `stream-${i}`}
             message={m}
             onRerun={!isNew ? handleRerun : undefined}
+            onNavigate={!isNew ? handleNavigate : undefined}
           />
         ))}
         <div ref={bottomRef} />
