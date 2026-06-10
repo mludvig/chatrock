@@ -39,6 +39,8 @@ interface ToolStep {
 type Step = ThinkingStep | TextStep | ToolStep
 
 interface DisplayBubble {
+  msgId: string
+  parentId: string | null
   role: 'user' | 'assistant'
   steps: Step[]
   model: string
@@ -111,6 +113,8 @@ function groupTurnsToBubbles(rows: TurnRow[]): ConversationResponse {
       if (currentResponseId !== row.responseId) {
         flushAssistantBubble()
         currentBubble = {
+          msgId: row.msgId,
+          parentId: row.parentId,
           role: 'assistant',
           steps: [],
           model: row.model,
@@ -190,6 +194,8 @@ function groupTurnsToBubbles(rows: TurnRow[]): ConversationResponse {
         }
       }
       bubbles.push({
+        msgId: row.msgId,
+        parentId: row.parentId,
         role: 'user',
         steps,
         model: row.model,

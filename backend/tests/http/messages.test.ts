@@ -257,3 +257,42 @@ test('inc2: only the active branch renders when siblings exist', async () => {
   const bodyStr = res.body ?? '{}'
   expect(bodyStr).not.toContain('answer A')
 })
+
+// ── Slice 2 (Inc 3): msgId + parentId on every bubble ────────────────────────
+
+test('inc3: user bubble carries its row msgId and parentId', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'a' }], responseId: 'r1', turnIndex: 1 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  const userBubble = body.bubbles.find(b => b.role === 'user')!
+  expect(userBubble.msgId).toBe('u1')
+  expect(userBubble.parentId).toBeNull()
+})
+
+test('inc3: assistant bubble carries first-turn msgId and parentId', async () => {
+  // Multi-turn response: assistant turn 0 + user-toolResult + assistant turn 2 (same responseId)
+  const responseId = 'resp-1'
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a0`, msgId: 'a0', parentId: 'u1', role: 'assistant',
+      blocks: [{ toolUse: { toolUseId: 'tu1', name: 'web_search', input: {} } }], responseId, turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0002#tr1`, msgId: 'tr1', parentId: 'a0', role: 'user',
+      blocks: [{ toolResult: { toolUseId: 'tu1', content: [{ text: 'res' }], status: 'success' } }], responseId, turnIndex: 1 }),
+    row({ SK: `MSG#${TS}#0003#a2`, msgId: 'a2', parentId: 'tr1', role: 'assistant',
+      blocks: [{ text: 'done' }], responseId, turnIndex: 2 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  const assistantBubble = body.bubbles.find(b => b.role === 'assistant')!
+  // First turn of the group: a0
+  expect(assistantBubble.msgId).toBe('a0')
+  // parentId of first turn: u1 (the user turn that prompted this response)
+  expect(assistantBubble.parentId).toBe('u1')
+})
