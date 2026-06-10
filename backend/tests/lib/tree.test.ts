@@ -4,7 +4,7 @@
  * buildActivePath(rows, activeLeafId) walks leaf→root via parentId, reverses
  * to root→leaf order, and returns only the active branch's rows.
  */
-import { buildActivePath } from '../../src/lib/tree'
+import { buildActivePath, resolveLeaf } from '../../src/lib/tree'
 
 import type { TurnRow } from '../../src/lib/tree'
 
@@ -127,4 +127,65 @@ test('unresolvable activeLeafId: falls back to full array (last row as leaf)', (
   const result = buildActivePath(rows, 'nonexistent')
   // Falls back to last-row leaf walk → same as linear chain
   expect(result.map(r => r.msgId)).toEqual(['msg-1', 'msg-2'])
+})
+
+// ── resolveLeaf ───────────────────────────────────────────────────────────────
+
+test('inc4: resolveLeaf — linear chain returns deepest node', () => {
+  const rows = [
+    makeRow('a', null),
+    makeRow('b', 'a'),
+    makeRow('c', 'b'),
+  ]
+  expect(resolveLeaf(rows, 'a')).toBe('c')
+  expect(resolveLeaf(rows, 'b')).toBe('c')
+})
+
+test('inc4: resolveLeaf — leaf node returns itself', () => {
+  const rows = [
+    makeRow('a', null),
+    makeRow('b', 'a'),
+  ]
+  expect(resolveLeaf(rows, 'b')).toBe('b')
+})
+
+test('inc4: resolveLeaf — multiple children picks last child in row order', () => {
+  // user → asst-A (first), asst-B (second, last in array)
+  const rows = [
+    makeRow('user', null),
+    makeRow('asst-A', 'user'),
+    makeRow('asst-B', 'user'),
+  ]
+  expect(resolveLeaf(rows, 'user')).toBe('asst-B')
+})
+
+test('inc4: resolveLeaf — unknown msgId returns the input unchanged', () => {
+  const rows = [makeRow('a', null)]
+  expect(resolveLeaf(rows, 'nonexistent')).toBe('nonexistent')
+})
+
+test('inc4: resolveLeaf — cycle-safe, does not infinite loop', () => {
+  const rows = [
+    makeRow('x', 'y'),
+    makeRow('y', 'x'),
+  ]
+  expect(() => resolveLeaf(rows, 'x')).not.toThrow()
+})
+
+test('inc4: resolveLeaf — deeper fork follows last child at each level', () => {
+  // user → asst-A → userA → asstA2
+  //      → asst-B → userB → asstB2  (last at each fork → active path down)
+  const rows = [
+    makeRow('user', null),
+    makeRow('asst-A', 'user'),
+    makeRow('asst-B', 'user'),
+    makeRow('userA', 'asst-A'),
+    makeRow('userB', 'asst-B'),
+    makeRow('asstA2', 'userA'),
+    makeRow('asstB2', 'userB'),
+  ]
+  // From 'user': last child is asst-B, then last child is userB, then last is asstB2
+  expect(resolveLeaf(rows, 'user')).toBe('asstB2')
+  // From 'asst-A': last child is userA, then asstA2
+  expect(resolveLeaf(rows, 'asst-A')).toBe('asstA2')
 })
