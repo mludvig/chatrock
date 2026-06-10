@@ -296,3 +296,69 @@ test('inc3: assistant bubble carries first-turn msgId and parentId', async () =>
   // parentId of first turn: u1 (the user turn that prompted this response)
   expect(assistantBubble.parentId).toBe('u1')
 })
+
+// ── Slice 2 (Inc 4): sibling metadata on bubbles ──────────────────────────────
+
+test('inc4: single-child bubble has siblingCount 1 and siblingIndex 1', async () => {
+  // Linear chat: no siblings anywhere
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'a' }], responseId: 'r1', turnIndex: 0 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  for (const b of body.bubbles) {
+    expect(b.siblingCount).toBe(1)
+    expect(b.siblingIndex).toBe(1)
+    expect(b.siblings).toHaveLength(1)
+  }
+})
+
+test('inc4: three sibling assistant bubbles get correct siblingIndex and siblingCount', async () => {
+  // Tree: user-1 → asst-A (1st), asst-B (2nd), asst-C (3rd, active)
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-C' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-A`, msgId: 'asst-A', parentId: 'u1', role: 'assistant', blocks: [{ text: 'answer A' }], responseId: 'rA', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0002#asst-B`, msgId: 'asst-B', parentId: 'u1', role: 'assistant', blocks: [{ text: 'answer B' }], responseId: 'rB', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0003#asst-C`, msgId: 'asst-C', parentId: 'u1', role: 'assistant', blocks: [{ text: 'answer C' }], responseId: 'rC', turnIndex: 0 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  // Only 2 bubbles: user-1 + asst-C (active branch)
+  expect(body.bubbles).toHaveLength(2)
+  const assistantBubble = body.bubbles.find(b => b.role === 'assistant')!
+  expect(assistantBubble.siblingCount).toBe(3)
+  expect(assistantBubble.siblingIndex).toBe(3)  // asst-C is 3rd
+  expect(assistantBubble.siblings).toEqual(['asst-A', 'asst-B', 'asst-C'])
+  // User turn has no siblings (only one under null parent)
+  const userBubble = body.bubbles.find(b => b.role === 'user')!
+  expect(userBubble.siblingCount).toBe(1)
+})
+
+test('inc4: multi-turn tool response does not inflate sibling count', async () => {
+  // One assistant bubble with tool-continuation turns; toolResult rows must NOT be counted as siblings
+  const responseId = 'resp-1'
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a0`, msgId: 'a0', parentId: 'u1', role: 'assistant',
+      blocks: [{ toolUse: { toolUseId: 'tu1', name: 'web_search', input: {} } }], responseId, turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0002#tr1`, msgId: 'tr1', parentId: 'a0', role: 'user',
+      blocks: [{ toolResult: { toolUseId: 'tu1', content: [{ text: 'res' }], status: 'success' } }], responseId, turnIndex: 1 }),
+    row({ SK: `MSG#${TS}#0003#a2`, msgId: 'a2', parentId: 'tr1', role: 'assistant',
+      blocks: [{ text: 'done' }], responseId, turnIndex: 2 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  // Only 2 display bubbles: user + merged assistant (tool continuation folds in)
+  expect(body.bubbles).toHaveLength(2)
+  const assistantBubble = body.bubbles.find(b => b.role === 'assistant')!
+  // The assistant bubble is the only child of user-1 (toolResult rows are folded, not siblings)
+  expect(assistantBubble.siblingCount).toBe(1)
+  expect(assistantBubble.siblingIndex).toBe(1)
+})

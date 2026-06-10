@@ -1,9 +1,10 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
-import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, buildChatKey, listMessages } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, buildChatKey, listMessages } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
+import { resolveLeaf, type TurnRow } from '../lib/tree'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -92,6 +93,15 @@ export const handler = async (
       if (typeof body.model !== 'string' || !isValidModelId(body.model)) return err(400, 'Invalid model')
       await updateChatModel(sub, chatId, body.model)
       updatedFields.push('model')
+    }
+    if (body.activeLeafId !== undefined) {
+      if (typeof body.activeLeafId !== 'string') return err(400, 'activeLeafId must be a string')
+      const rows = await listMessages(chatId)
+      const rowSet = rows as unknown as TurnRow[]
+      if (!rowSet.some(r => r.msgId === body.activeLeafId as string)) return err(400, 'Unknown activeLeafId')
+      const leaf = resolveLeaf(rowSet, body.activeLeafId as string)
+      await updateChatActiveLeaf(sub, chatId, leaf)
+      updatedFields.push('activeLeafId')
     }
     console.log(JSON.stringify({ event: 'chat_updated', sub, chatId, fields: updatedFields }))
     return ok({ ok: true })
