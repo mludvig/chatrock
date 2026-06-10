@@ -454,6 +454,126 @@ test('inc2: updateChatActiveLeaf called once after stream with the final turn ms
   expect(lastActiveLeaf).toBe(assistantRecord.msgId)
 })
 
+// ── Slice 1 (Inc 3): re-run an answer ────────────────────────────────────────
+
+const RERUN_PRIOR_ROWS = [
+  { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
+    role: 'user', blocks: [{ text: 'original question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+  { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
+    role: 'assistant', blocks: [{ text: 'original answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+]
+
+function rerunEvent(overrides: Record<string, unknown> = {}) {
+  return makeEvent({ chatId: 'c1', model: MODEL, systemPrompt: '', parentId: 'u1', ...overrides })
+}
+
+function rerunBase() {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue(RERUN_PRIOR_ROWS)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+}
+
+test('inc3: re-run does NOT persist a new user turn', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(rerunEvent())
+
+  const userPuts = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .filter(r => r.role === 'user')
+  expect(userPuts).toHaveLength(0)
+})
+
+test('inc3: re-run new assistant turn parentId === given parentId', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(rerunEvent())
+
+  const assistantPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  expect(assistantPut.parentId).toBe('u1')
+})
+
+test('inc3: re-run updateChatActiveLeaf called with new leaf msgId', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(rerunEvent())
+
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const newLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const assistantPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  expect(newLeaf).toBe(assistantPut.msgId)
+})
+
+test('inc3: re-run replay ends at the user turn — original answer NOT included', async () => {
+  rerunBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(rerunEvent())
+
+  const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
+  // Only the user turn (root→u1), NOT the original answer (a1)
+  expect(passedMessages).toHaveLength(1)
+  expect(passedMessages[0].content).toEqual([{ text: 'original question' }])
+  expect(passedMessages[0].role).toBe('user')
+})
+
+test('inc3: re-run does NOT call auto-title even when title is "New Chat"', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue(RERUN_PRIOR_ROWS)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(rerunEvent())
+
+  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
+  expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+})
+
+test('inc3: re-run with unknown parentId sends error and does not stream', async () => {
+  rerunBase()
+
+  await buildHandler(mockPost)(rerunEvent({ parentId: 'nonexistent-id' }))
+
+  const errEvent = mockPost.mock.calls
+    .map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+    .find(d => d.type === 'error')
+  expect(errEvent).toBeDefined()
+  expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+  expect(mockDynamo.putMessage).not.toHaveBeenCalled()
+})
+
 test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat history)', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'asst-prev' })
