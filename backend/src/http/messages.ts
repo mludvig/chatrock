@@ -38,7 +38,8 @@ interface ToolStep {
 
 type Step = ThinkingStep | TextStep | ToolStep
 
-interface DisplayBubble {
+// Internal shape returned by groupTurnsToBubbles (no sibling metadata yet)
+interface RawBubble {
   msgId: string
   parentId: string | null
   role: 'user' | 'assistant'
@@ -48,8 +49,15 @@ interface DisplayBubble {
   usage?: TokenUsage
 }
 
-interface ConversationResponse {
-  bubbles: DisplayBubble[]
+// External shape sent to the client (includes sibling metadata)
+interface DisplayBubble extends RawBubble {
+  siblingIndex: number
+  siblingCount: number
+  siblings: string[]
+}
+
+interface RawConversationResponse {
+  bubbles: RawBubble[]
   conversationUsage: TokenUsage
 }
 
@@ -82,13 +90,13 @@ interface TurnRow {
  *
  * Raw blocks, signatures, and redactedContent are never included in output.
  */
-function groupTurnsToBubbles(rows: TurnRow[]): ConversationResponse {
-  const bubbles: DisplayBubble[] = []
+function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
+  const bubbles: RawBubble[] = []
   const conversationUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
 
   // Accumulate a tool-step map for the current assistant bubble
   // keyed by toolUseId so toolResult rows can fold their results in
-  let currentBubble: DisplayBubble | null = null
+  let currentBubble: RawBubble | null = null
   let currentToolSteps: Map<string, ToolStep> | null = null
   let currentResponseId: string | null = null
 
@@ -227,6 +235,25 @@ export const handler = async (
   // the flat array; for a branched chat it filters to the active root→leaf path.
   const activeLeafId = (chat.activeLeafId as string | undefined) ?? null
   const activePath = buildActivePath(items as unknown as TurnRow[], activeLeafId)
-  const response = groupTurnsToBubbles(activePath)
-  return ok(response)
+  const rawResponse = groupTurnsToBubbles(activePath)
+
+  // Compute sibling metadata by grouping ALL bubbles (full row set) by parentId.
+  // Reusing groupTurnsToBubbles ensures only true bubble-start nodes are counted —
+  // toolResult rows fold into their assistant bubble and never appear as siblings.
+  const allBubbles = groupTurnsToBubbles(items as unknown as TurnRow[]).bubbles
+  const siblingsByParent = new Map<string | null, string[]>()
+  for (const b of allBubbles) {
+    const key = b.parentId ?? null
+    const list = siblingsByParent.get(key) ?? []
+    list.push(b.msgId)
+    siblingsByParent.set(key, list)
+  }
+
+  const enrichedBubbles: DisplayBubble[] = rawResponse.bubbles.map(b => {
+    const siblings = siblingsByParent.get(b.parentId ?? null) ?? [b.msgId]
+    const siblingIndex = siblings.indexOf(b.msgId) + 1  // 1-based
+    return { ...b, siblings, siblingIndex, siblingCount: siblings.length }
+  })
+
+  return ok({ ...rawResponse, bubbles: enrichedBubbles })
 }

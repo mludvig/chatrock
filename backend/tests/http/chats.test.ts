@@ -5,6 +5,13 @@ import * as dynamo from '../../src/lib/dynamo'
 jest.mock('../../src/lib/dynamo')
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
+// Helper: build a minimal turn row mock for listMessages responses
+const makeRow = (msgId: string, parentId: string | null) => ({
+  PK: 'CHAT#c1', SK: `MSG#2025-01-01T00:00:00.000Z#0000#${msgId}`,
+  msgId, parentId, role: 'user', blocks: [{ text: 'x' }],
+  model: 'm', createdAt: '2025-01-01T00:00:00.000Z', turnIndex: 0, responseId: 'r1',
+})
+
 beforeEach(() => jest.clearAllMocks())
 
 
@@ -182,4 +189,52 @@ test('PATCH /api/chats/{chatId} with valid model succeeds', async () => {
   mockDynamo.updateChatModel.mockResolvedValue(undefined)
   const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'global.anthropic.claude-opus-4-8' }, { chatId: 'c1' }) as any))
   expect(res.statusCode).toBe(200)
+})
+
+// ── Slice 3 (Inc 4): PATCH activeLeafId ──────────────────────────────────────
+
+test('inc4: PATCH activeLeafId resolves leaf and updates chat', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    makeRow('u1', null),
+    makeRow('asst-1', 'u1'),
+  ])
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { activeLeafId: 'asst-1' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  // resolveLeaf('asst-1') on a linear chain → 'asst-1' (it's already the leaf)
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledWith('user-1', 'c1', 'asst-1')
+})
+
+test('inc4: PATCH activeLeafId resolves to deepest leaf when given an intermediate node', async () => {
+  // Tree: u1 → asst-1 → u2 → asst-2; client sends asst-1 → server resolves to asst-2
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    makeRow('u1', null),
+    makeRow('asst-1', 'u1'),
+    makeRow('u2', 'asst-1'),
+    makeRow('asst-2', 'u2'),
+  ])
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { activeLeafId: 'asst-1' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledWith('user-1', 'c1', 'asst-2')
+})
+
+test('inc4: PATCH activeLeafId with unknown msgId returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.listMessages.mockResolvedValue([makeRow('u1', null)])
+
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { activeLeafId: 'nonexistent' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Unknown activeLeafId' })
+})
+
+test('inc4: PATCH activeLeafId with non-string value returns 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { activeLeafId: 99 }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
 })
