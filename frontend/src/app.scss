@@ -100,10 +100,15 @@ body {
   &:hover { background: $surface2; }
 
   &.active {
-    background: $accent-light;
+    background: rgba($accent, 0.13);
     color: $accent;
+    border-left: 3px solid $accent;
+    padding-left: 9px; // compensate for the 3px border (12px - 3px)
+    font-weight: 600;
 
     .chat-actions { opacity: 1; }
+
+    &:hover { background: rgba($accent, 0.18); }
   }
 
   &:hover .chat-actions { opacity: 1; }
