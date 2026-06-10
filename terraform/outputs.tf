@@ -19,8 +19,7 @@ output "s3_bucket" {
 }
 
 output "ws_api_endpoint" {
-  # Direct API GW endpoint (not via CloudFront) — CF cannot rewrite /ws/prod → /prod
-  value = "wss://${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com/prod"
+  value = "wss://${var.domain_name}/ws"
 }
 
 output "cognito_user_pool_id" {

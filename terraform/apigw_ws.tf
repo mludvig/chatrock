@@ -22,7 +22,7 @@ resource "aws_cloudwatch_log_group" "apigw_ws" {
 
 resource "aws_apigatewayv2_stage" "ws" {
   api_id      = aws_apigatewayv2_api.ws.id
-  name        = "prod"
+  name        = "ws"
   auto_deploy = true
 
   access_log_settings {
