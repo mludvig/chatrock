@@ -52,13 +52,6 @@ resource "aws_apigatewayv2_authorizer" "jwt" {
 }
 
 # ── Integrations ────────────────────────────────────────────────────────────
-resource "aws_apigatewayv2_integration" "http_hello" {
-  api_id                 = aws_apigatewayv2_api.http.id
-  integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.http_hello.invoke_arn
-  payload_format_version = "2.0"
-}
-
 resource "aws_apigatewayv2_integration" "http_chats" {
   api_id                 = aws_apigatewayv2_api.http.id
   integration_type       = "AWS_PROXY"
@@ -81,13 +74,6 @@ resource "aws_apigatewayv2_integration" "http_models" {
 }
 
 # ── Routes ──────────────────────────────────────────────────────────────────
-
-# Smoke-test (unauthenticated)
-resource "aws_apigatewayv2_route" "hello" {
-  api_id    = aws_apigatewayv2_api.http.id
-  route_key = "GET /api/hello"
-  target    = "integrations/${aws_apigatewayv2_integration.http_hello.id}"
-}
 
 # Authenticated CRUD routes
 resource "aws_apigatewayv2_route" "chats_list" {
