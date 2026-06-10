@@ -140,7 +140,7 @@ if [ "$SKIP_FRONTEND" = false ]; then
   # env-var changes even when source files haven't changed.
   DEPLOY_ENV="$ROOT_DIR/frontend/.deploy-env"
   printf '%s\n' \
-    "VITE_API_BASE_URL=$HTTP_API_ENDPOINT" \
+    "VITE_API_BASE_URL=$APP_URL" \
     "VITE_WS_URL=$WS_API_ENDPOINT" \
     "VITE_COGNITO_USER_POOL_ID=$COGNITO_USER_POOL_ID" \
     "VITE_COGNITO_CLIENT_ID=$COGNITO_CLIENT_ID" \
@@ -157,7 +157,7 @@ if [ "$SKIP_FRONTEND" = false ]; then
        "$DEPLOY_ENV"; then
     echo "▶ Building frontend..."
     npm --prefix "$ROOT_DIR/frontend" install --silent
-    VITE_API_BASE_URL="$HTTP_API_ENDPOINT" \
+    VITE_API_BASE_URL="$APP_URL" \
     VITE_WS_URL="$WS_API_ENDPOINT" \
     VITE_COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" \
     VITE_COGNITO_CLIENT_ID="$COGNITO_CLIENT_ID" \
