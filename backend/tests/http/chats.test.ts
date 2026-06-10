@@ -5,9 +5,6 @@ import * as dynamo from '../../src/lib/dynamo'
 jest.mock('../../src/lib/dynamo')
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
-beforeAll(() => {
-  process.env.DOMAIN_NAME = 'chatrock.ccxdemo.dev'
-})
 
 const makeEvent = (
   method: string,
@@ -75,11 +72,10 @@ test('PATCH /api/chats/{chatId} returns 404 if not owned', async () => {
   expect(res.statusCode).toBe(404)
 })
 
-test('GET /api/chats returns domain-specific CORS header', async () => {
+test('GET /api/chats does not include CORS header (handled by API GW/CloudFront)', async () => {
   mockDynamo.listChats.mockResolvedValue([])
   const res = result(await handler(makeEvent('GET', '/api/chats') as any))
-  expect((res.headers as Record<string, string>)['Access-Control-Allow-Origin'])
-    .toBe('https://chatrock.ccxdemo.dev')
+  expect((res.headers as Record<string, string>)['Access-Control-Allow-Origin']).toBeUndefined()
 })
 
 // ── Input validation: POST /api/chats ─────────────────────────────────────────
