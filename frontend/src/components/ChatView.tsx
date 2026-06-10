@@ -141,6 +141,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       })
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
+    }).catch(() => {
+      if (!cancelled) navigate('/c/new', { replace: true })
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
