@@ -403,6 +403,95 @@ test('inc6: fork returns 400 on unknown fromMsgId', async () => {
   expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Unknown fromMsgId' })
 })
 
+// ── Inc 7: DELETE /api/chats/{chatId}/messages/{msgId} ───────────────────────
+
+test('inc7: delete branch removes node and all descendants; 204', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
+  // u1 → a1 → u2 → a2; delete a1 → removes a1, u2, a2
+  const rows = [
+    makeRow('u1', null),
+    makeRow('a1', 'u1'),
+    makeRow('u2', 'a1'),
+    makeRow('a2', 'u2'),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.batchDeleteMessages.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'a1' }) as any))
+  expect(res.statusCode).toBe(204)
+
+  const deletedKeys = mockDynamo.batchDeleteMessages.mock.calls[0][0] as {PK: string; SK: string}[]
+  const deletedSKs = deletedKeys.map(k => k.SK)
+  // a1, u2, a2 must be deleted
+  expect(deletedSKs.some(sk => sk.includes('a1'))).toBe(true)
+  expect(deletedSKs.some(sk => sk.includes('u2'))).toBe(true)
+  expect(deletedSKs.some(sk => sk.includes('a2'))).toBe(true)
+  // u1 must NOT be deleted
+  expect(deletedSKs.some(sk => sk.includes('u1'))).toBe(false)
+})
+
+test('inc7: delete branch resets activeLeafId to parentId when active leaf is in subtree', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
+  // u1 → a1 → u2 → a2; delete a1; activeLeafId=a2 is in subtree → reset to u1
+  const rows = [
+    makeRow('u1', null),
+    makeRow('a1', 'u1'),
+    makeRow('u2', 'a1'),
+    makeRow('a2', 'u2'),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.batchDeleteMessages.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'a1' }) as any)
+
+  // activeLeafId should be reset to a1's parentId = u1
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledWith('user-1', 'c1', 'u1')
+})
+
+test('inc7: delete branch leaves activeLeafId alone when active branch survives', async () => {
+  // Two siblings: a1 (active) and a1b (to be deleted); activeLeafId=a1 is NOT in deleted subtree
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1' })
+  const rows = [
+    makeRow('u1', null),
+    makeRow('a1', 'u1'),
+    makeRow('a1b', 'u1'),   // sibling, will be deleted
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.batchDeleteMessages.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'a1b' }) as any)
+
+  expect(mockDynamo.updateChatActiveLeaf).not.toHaveBeenCalled()
+})
+
+test('inc7: delete branch returns 400 when deleting root (no parentId)', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const rows = [makeRow('u1', null)]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'u1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.batchDeleteMessages).not.toHaveBeenCalled()
+})
+
+test('inc7: delete branch returns 404 when chat not found', async () => {
+  mockDynamo.getChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'a1' }) as any))
+  expect(res.statusCode).toBe(404)
+})
+
+test('inc7: delete branch returns 404 when msgId not in chat', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const rows = [makeRow('u1', null), makeRow('a1', 'u1')]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'nonexistent' }) as any))
+  expect(res.statusCode).toBe(404)
+})
+
 test('inc6: original chat rows are not modified (no writes to original CHAT#c1 partition)', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',

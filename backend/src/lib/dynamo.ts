@@ -160,6 +160,17 @@ export async function batchPutMessages(items: Record<string, unknown>[]): Promis
   }
 }
 
+export async function batchDeleteMessages(keys: { PK: string; SK: string }[]): Promise<void> {
+  for (let i = 0; i < keys.length; i += 25) {
+    const chunk = keys.slice(i, i + 25)
+    await ddb.send(new BatchWriteCommand({
+      RequestItems: {
+        [TABLE]: chunk.map(k => ({ DeleteRequest: { Key: { PK: k.PK, SK: k.SK } } })),
+      },
+    }))
+  }
+}
+
 export async function putConnection(item: Record<string, unknown>) {
   await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
 }

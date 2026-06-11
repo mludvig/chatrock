@@ -200,6 +200,16 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }
 
+  async function handleDeleteBranch(msgId: string) {
+    if (!chatId || isNew || sending) return
+    try {
+      await api.deleteBranch(chatId, msgId)
+      reloadMessages(chatId)
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function handleForkToHere(fromMsgId: string, role: 'user' | 'assistant', text: string) {
     if (!chatId || isNew || !activeChat) return
     try {
@@ -442,6 +452,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             onNavigate={!isNew ? handleNavigate : undefined}
             onEdit={!isNew ? handleEditSubmit : undefined}
             onForkToHere={!isNew ? handleForkToHere : undefined}
+            onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
           />
         ))}
         <div ref={bottomRef} />

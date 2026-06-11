@@ -103,6 +103,39 @@ export function resolveResponseLeaf(rows: TurnRow[], msgId: string): string {
 }
 
 /**
+ * Collect all msgIds in the subtree rooted at msgId (BFS over parentId children).
+ * Always includes msgId itself, even if not found in rows (allows callers to delete
+ * by msgId even when rows are stale).
+ */
+export function subtreeMsgIds(rows: TurnRow[], msgId: string): string[] {
+  if (rows.length === 0) return [msgId]
+
+  // Build parentId → children[] map
+  const children = new Map<string, string[]>()
+  for (const row of rows) {
+    if (row.parentId != null) {
+      const list = children.get(row.parentId) ?? []
+      list.push(row.msgId)
+      children.set(row.parentId, list)
+    }
+  }
+
+  // BFS from msgId
+  const result: string[] = []
+  const queue: string[] = [msgId]
+  const visited = new Set<string>()
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    if (visited.has(current)) continue
+    visited.add(current)
+    result.push(current)
+    const kids = children.get(current)
+    if (kids) queue.push(...kids)
+  }
+  return result
+}
+
+/**
  * Walk *down* from a node to the leaf of its branch.
  *
  * At each fork, picks the **last child in row order** (most recently created).
