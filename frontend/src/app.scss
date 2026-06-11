@@ -374,6 +374,14 @@ body {
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
+.messages-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;
@@ -381,6 +389,43 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.scroll-fabs {
+  position: absolute;
+  bottom: 12px;
+  right: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.scroll-fab {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid $border;
+  background: $surface;
+  color: $muted;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  transition: background 0.15s, color 0.15s, opacity 0.2s;
+  opacity: 0.75;
+
+  &:hover { background: $surface2; color: $text; opacity: 1; }
+
+  &--down {
+    opacity: 0;
+    pointer-events: none;
+    &.visible { opacity: 0.75; pointer-events: all; }
+    &.visible:hover { opacity: 1; }
+  }
 }
 
 .message {
