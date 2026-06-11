@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGear, faPaperPlane, faSpinner, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faGear, faPaperPlane, faSpinner, faXmark, faChevronUp, faChevronDown } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings } from '../api/http'
 import type { Model, ModelSettings, ModelCapabilities, TokenUsage } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
@@ -50,6 +50,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const [lastTurnUsage, setLastTurnUsage] = useState<TokenUsage | null>(null)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
+  const stickToBottom = useRef(true)
+  // bubble DOM refs for prev/next stepping (C3)
+  const bubbleRefsRef = useRef<HTMLDivElement[]>([])
+  const bubbleIdxRef = useRef(-1)
+  const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
 
@@ -193,10 +199,48 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
 
-  // Auto-scroll
+  // Auto-scroll — only when stuck to bottom
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (stickToBottom.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages, streamingMsg])
+
+  // Reset stick + bubble refs when chat changes
+  useEffect(() => {
+    stickToBottom.current = true
+    setShowScrollDown(false)
+    bubbleRefsRef.current = []
+    bubbleIdxRef.current = -1
+  }, [chatId])
+
+  function handleMessagesScroll() {
+    const el = messagesRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    stickToBottom.current = atBottom
+    setShowScrollDown(!atBottom)
+  }
+
+  function scrollToBottom() {
+    stickToBottom.current = true
+    setShowScrollDown(false)
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  function scrollToTop() {
+    const el = messagesRef.current
+    if (!el) return
+    el.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function stepBubble(dir: 1 | -1) {
+    const refs = bubbleRefsRef.current.filter(Boolean)
+    if (refs.length === 0) return
+    const next = Math.max(0, Math.min(refs.length - 1, bubbleIdxRef.current + dir))
+    bubbleIdxRef.current = next
+    refs[next]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   async function handleNavigate(targetMsgId: string) {
     if (!chatId || isNew || sending) return
@@ -447,30 +491,53 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         </div>
       )}
 
-      <div className="messages">
-        {loadingMessages && (
-          <div className="messages-loading">
-            <FontAwesomeIcon icon={faSpinner} spin />
-            <span>Loading…</span>
-          </div>
-        )}
-        {allMessages.length === 0 && isNew && (
-          <div className="chat-empty">
-            <p>Type a message below to start the conversation.</p>
-          </div>
-        )}
-        {allMessages.map((m, i) => (
-          <MessageBubble
-            key={'msgId' in m ? m.msgId : `stream-${i}`}
-            message={m}
-            onRerun={!isNew ? handleRerun : undefined}
-            onNavigate={!isNew ? handleNavigate : undefined}
-            onEdit={!isNew ? handleEditSubmit : undefined}
-            onForkToHere={!isNew ? handleForkToHere : undefined}
-            onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
-          />
-        ))}
-        <div ref={bottomRef} />
+      <div className="messages-wrap">
+        <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
+          {loadingMessages && (
+            <div className="messages-loading">
+              <FontAwesomeIcon icon={faSpinner} spin />
+              <span>Loading…</span>
+            </div>
+          )}
+          {allMessages.length === 0 && isNew && (
+            <div className="chat-empty">
+              <p>Type a message below to start the conversation.</p>
+            </div>
+          )}
+          {allMessages.map((m, i) => (
+            <div key={'msgId' in m ? m.msgId : `stream-${i}`} ref={el => { if (el) bubbleRefsRef.current[i] = el }}>
+              <MessageBubble
+                message={m}
+                onRerun={!isNew ? handleRerun : undefined}
+                onNavigate={!isNew ? handleNavigate : undefined}
+                onEdit={!isNew ? handleEditSubmit : undefined}
+                onForkToHere={!isNew ? handleForkToHere : undefined}
+                onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
+              />
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Scroll FABs (C2) + prev/next message nav (C3) */}
+        <div className="scroll-fabs">
+          <button className="scroll-fab" title="Scroll to top" onClick={scrollToTop}>
+            <FontAwesomeIcon icon={faChevronUp} />
+          </button>
+          <button
+            className={`scroll-fab scroll-fab--down${showScrollDown ? ' visible' : ''}`}
+            title="Scroll to latest"
+            onClick={scrollToBottom}
+          >
+            <FontAwesomeIcon icon={faChevronDown} />
+          </button>
+          <button className="scroll-fab" title="Previous message" onClick={() => stepBubble(-1)}>
+            ‹
+          </button>
+          <button className="scroll-fab" title="Next message" onClick={() => stepBubble(1)}>
+            ›
+          </button>
+        </div>
       </div>
 
       {errorMsg && (
