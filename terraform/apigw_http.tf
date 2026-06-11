@@ -124,6 +124,14 @@ resource "aws_apigatewayv2_route" "chats_fork" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
+resource "aws_apigatewayv2_route" "messages_delete_branch" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "DELETE /api/chats/{chatId}/messages/{msgId}"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
 resource "aws_apigatewayv2_route" "messages_list" {
   api_id             = aws_apigatewayv2_api.http.id
   route_key          = "GET /api/chats/{chatId}/messages"

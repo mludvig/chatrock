@@ -5,7 +5,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare, faPaperPlane,
-  faCodeBranch, faCopy, faCheck,
+  faCodeBranch, faCopy, faCheck, faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
@@ -133,6 +133,7 @@ interface Props {
   onNavigate?: (targetMsgId: string) => void
   onEdit?: (msgId: string, parentId: string | null, content: string) => void
   onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
+  onDeleteBranch?: (msgId: string) => void
 }
 
 /**
@@ -143,7 +144,7 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-export default function MessageBubble({ message, onRerun, onNavigate, onEdit, onForkToHere }: Props) {
+export default function MessageBubble({ message, onRerun, onNavigate, onEdit, onForkToHere, onDeleteBranch }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
@@ -267,7 +268,8 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit, on
         const hasEdit = !isAssistant && !editing && onEdit && 'msgId' in message
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
         const hasForkCopy = 'msgId' in message
-        if (!hasSiblings && !hasEdit && !hasRerun && !hasForkCopy) return null
+        const hasDelete = onDeleteBranch && 'msgId' in message && (message as Message).parentId != null
+        if (!hasSiblings && !hasEdit && !hasRerun && !hasForkCopy && !hasDelete) return null
 
         const msg = message as Message
         // Concatenate text steps for copy/fork
@@ -344,6 +346,19 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit, on
                 }}
               >
                 <FontAwesomeIcon icon={copied ? faCheck : faCopy} />
+              </button>
+            )}
+            {hasDelete && (
+              <button
+                className="action-btn action-btn--danger"
+                title="Delete this branch"
+                onClick={() => {
+                  if (window.confirm('Delete this message and all replies? This cannot be undone.')) {
+                    onDeleteBranch!(msg.msgId)
+                  }
+                }}
+              >
+                <FontAwesomeIcon icon={faTrash} />
               </button>
             )}
           </div>

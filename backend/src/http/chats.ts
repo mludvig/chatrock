@@ -1,10 +1,10 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
-import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, buildChatKey, buildTurnKey, listMessages, batchPutMessages } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
-import { resolveLeaf, resolveResponseLeaf, buildActivePath, type TurnRow } from '../lib/tree'
+import { resolveLeaf, resolveResponseLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -199,6 +199,44 @@ export const handler = async (
 
     console.log(JSON.stringify({ event: 'chat_forked', sub, chatId, newChatId, fromMsgId, clonedCount: cloned.length }))
     return ok({ chatId: newChatId }, 201)
+  }
+
+  if (route === 'DELETE /api/chats/{chatId}/messages/{msgId}') {
+    const msgId = event.pathParameters?.msgId
+    if (!msgId) return err(400, 'Missing msgId')
+
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+
+    const rows = (await listMessages(chatId)) as unknown as TurnRow[]
+    const targetRow = rows.find(r => r.msgId === msgId)
+    if (!targetRow) return err(404, 'Message not found')
+
+    // Refuse to delete the root (no parent to reset activeLeafId to)
+    if (targetRow.parentId === null) return err(400, 'Cannot delete the root message')
+
+    const toDelete = subtreeMsgIds(rows, msgId)
+    const toDeleteSet = new Set(toDelete)
+
+    // Build PK+SK pairs for batch delete by looking up full keys in rows
+    const keys = rows
+      .filter(r => toDeleteSet.has(r.msgId))
+      .map(r => ({ PK: r.PK, SK: r.SK }))
+
+    await batchDeleteMessages(keys)
+
+    // Reset activeLeafId if the active leaf is inside the deleted subtree.
+    // Resolve to the leaf of the surviving branch under the same parent,
+    // so the active path stays on a complete assistant response.
+    const activeLeafId = chat.activeLeafId as string | undefined
+    if (activeLeafId && toDeleteSet.has(activeLeafId)) {
+      const remainingRows = rows.filter(r => !toDeleteSet.has(r.msgId))
+      const newLeaf = resolveLeaf(remainingRows, targetRow.parentId)
+      await updateChatActiveLeaf(sub, chatId, newLeaf)
+    }
+
+    console.log(JSON.stringify({ event: 'branch_deleted', sub, chatId, msgId, deletedCount: toDelete.length }))
+    return { statusCode: 204, body: '' }
   }
 
   return err(404, 'Not found')

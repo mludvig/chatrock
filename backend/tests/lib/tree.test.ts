@@ -211,6 +211,71 @@ test('inc6: resolveResponseLeaf — unknown msgId returns input unchanged', () =
   expect(resolveResponseLeaf(rows, 'nonexistent')).toBe('nonexistent')
 })
 
+// ── subtreeMsgIds ─────────────────────────────────────────────────────────────
+
+import { subtreeMsgIds } from '../../src/lib/tree'
+
+test('inc7: subtreeMsgIds — leaf node returns just itself', () => {
+  const rows = [
+    makeRow('u1', null),
+    makeRow('a1', 'u1'),
+  ]
+  expect(subtreeMsgIds(rows, 'a1')).toEqual(['a1'])
+})
+
+test('inc7: subtreeMsgIds — node with children includes all descendants', () => {
+  // u1 → a1 → u2 → a2
+  const rows = [
+    makeRow('u1', null),
+    makeRow('a1', 'u1'),
+    makeRow('u2', 'a1'),
+    makeRow('a2', 'u2'),
+  ]
+  const result = subtreeMsgIds(rows, 'a1')
+  expect(result.sort()).toEqual(['a1', 'a2', 'u2'].sort())
+})
+
+test('inc7: subtreeMsgIds — siblings of root node are NOT included', () => {
+  // user → asst-A (deleted subtree root)
+  //      → asst-B (sibling, must survive)
+  // asst-A → u2 → a2 (descendants of asst-A)
+  const rows = [
+    makeRow('user', null),
+    makeRow('asst-A', 'user'),
+    makeRow('asst-B', 'user'),
+    makeRow('u2', 'asst-A'),
+    makeRow('a2', 'u2'),
+  ]
+  const result = subtreeMsgIds(rows, 'asst-A')
+  expect(result.sort()).toEqual(['asst-A', 'a2', 'u2'].sort())
+  expect(result).not.toContain('user')
+  expect(result).not.toContain('asst-B')
+})
+
+test('inc7: subtreeMsgIds — wide tree includes all branches under root', () => {
+  // root → A → A1
+  //           → A2
+  //      → B
+  const rows = [
+    makeRow('root', null),
+    makeRow('A', 'root'),
+    makeRow('B', 'root'),
+    makeRow('A1', 'A'),
+    makeRow('A2', 'A'),
+  ]
+  const result = subtreeMsgIds(rows, 'root')
+  expect(result.sort()).toEqual(['root', 'A', 'B', 'A1', 'A2'].sort())
+})
+
+test('inc7: subtreeMsgIds — unknown msgId returns just that id', () => {
+  const rows = [makeRow('a', null)]
+  expect(subtreeMsgIds(rows, 'nonexistent')).toEqual(['nonexistent'])
+})
+
+test('inc7: subtreeMsgIds — empty rows returns just the msgId', () => {
+  expect(subtreeMsgIds([], 'x')).toEqual(['x'])
+})
+
 // ── pre-existing resolveLeaf tests ───────────────────────────────────────────
 
 test('inc4: resolveLeaf — deeper fork follows last child at each level', () => {
