@@ -373,6 +373,9 @@ body {
 
   &.user      { align-self: flex-end; }
   &.assistant { align-self: flex-start; }
+
+  // Hide the blue bubble shell while the edit textarea is open
+  &.editing .message-content { display: none; }
 }
 
 // Always-visible row: sibling nav + action icons
@@ -427,18 +430,21 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-// Edit area: textarea + Send/Cancel, aligned with blue bubble width
+// Edit area: textarea + Send/Cancel, sits below the user bubble
 .edit-area {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  align-self: flex-end;   // right-align under the user bubble
   width: 100%;
+  max-width: 680px;       // match .message-content max-width
+  min-width: 320px;
+  margin-top: 4px;
 }
 
 .edit-textarea {
   width: 100%;
   box-sizing: border-box;
-  min-width: 260px;
   background: $surface;
   border: 2px solid $accent;
   border-radius: 10px;
@@ -475,10 +481,10 @@ body {
 }
 
 .edit-cancel-btn {
-  background: none;
-  border: 1px solid $border;
+  background: $surface;
+  border: 1px solid $muted;
   border-radius: 6px;
-  color: $muted;
+  color: $text;
   font-size: 13px;
   font-family: $font;
   padding: 5px 11px;

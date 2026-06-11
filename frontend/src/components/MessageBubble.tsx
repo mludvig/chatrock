@@ -162,7 +162,7 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: 
   }
 
   return (
-    <div className={`message ${message.role}`}>
+    <div className={`message ${message.role}${editing ? ' editing' : ''}`}>
       <div className="message-content">
         {/* Waiting indicator — shown before any steps arrive */}
         {isAssistant && waiting && steps.length === 0 && (
@@ -212,48 +212,49 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: 
           return null
         })}
 
-        {/* Inline edit textarea — shown when user clicks Edit on their own bubble */}
-        {!isAssistant && editing && (
-          <div className="edit-area">
-            <textarea
-              className="edit-textarea"
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Escape') setEditing(false)
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  if (draft.trim() && onEdit) {
-                    const msg = message as Message
-                    onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
-                  }
-                  setEditing(false)
-                }
-              }}
-              autoFocus
-              rows={3}
-            />
-            <div className="edit-actions">
-              <button
-                className="edit-send-btn"
-                title="Send edited message"
-                onClick={() => {
-                  if (draft.trim() && onEdit) {
-                    const msg = message as Message
-                    onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
-                  }
-                  setEditing(false)
-                }}
-              >
-                Send <FontAwesomeIcon icon={faPaperPlane} />
-              </button>
-              <button className="edit-cancel-btn" title="Cancel edit (Esc)" onClick={() => setEditing(false)}>
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
       </div>
+
+      {/* Edit area — outside the bubble so it gets full message width */}
+      {!isAssistant && editing && (
+        <div className="edit-area">
+          <textarea
+            className="edit-textarea"
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') setEditing(false)
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                if (draft.trim() && onEdit) {
+                  const msg = message as Message
+                  onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
+                }
+                setEditing(false)
+              }
+            }}
+            autoFocus
+            rows={3}
+          />
+          <div className="edit-actions">
+            <button
+              className="edit-send-btn"
+              title="Send edited message"
+              onClick={() => {
+                if (draft.trim() && onEdit) {
+                  const msg = message as Message
+                  onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
+                }
+                setEditing(false)
+              }}
+            >
+              Send <FontAwesomeIcon icon={faPaperPlane} />
+            </button>
+            <button className="edit-cancel-btn" title="Cancel edit (Esc)" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Always-visible bottom row: sibling nav first, then action icons */}
       {!isStreaming && (() => {
