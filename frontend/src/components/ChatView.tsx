@@ -171,6 +171,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setLoadingMessages(false)
       return
     }
+    // Don't clobber the optimistic messages while a stream is in flight
+    // (e.g. new-chat navigate fires this effect with sending=true)
+    if (useChatStore.getState().sending) return
     // Clear messages immediately so stale content doesn't linger while loading
     setMessages([])
     setConversationUsage(null)
