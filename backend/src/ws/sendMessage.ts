@@ -28,11 +28,15 @@ export const buildHandler = (postFn: PostFn) => async (
     model: string
     systemPrompt: string
     modelSettings?: ModelSettings
-    parentId?: string
+    parentId?: string | null
   }
   const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId } = body
-  // Re-run: parentId present and no content = regenerate answer as a sibling
-  const isRerun = rerunParentId != null && !content
+  // Detect edit/re-run by key presence (not value) so parentId: null (root edit) is handled.
+  const hasParentId = 'parentId' in body
+  // Re-run: parentId key present and no content = regenerate answer as a sibling
+  const isRerun = hasParentId && !content
+  // Edit: parentId key present and content present = new user-turn sibling with edited content
+  const isEdit = hasParentId && !!content
 
   const conn = await getConnection(connId)
   if (!conn) return { statusCode: 410, body: 'Gone' }
@@ -79,6 +83,38 @@ export const buildHandler = (postFn: PostFn) => async (
     }))
     // New assistant turns chain from the re-run parent
     lastTurnMsgId = rerunParentId!
+  } else if (isEdit) {
+    // ── Edit path: new user-turn sibling under the given parentId ─────────────
+    // body.parentId is the tree-parent of the message being edited (may be null
+    // for a root-level edit). Validate non-null parentIds exist in priorRows.
+    const editParentId: string | null = rerunParentId ?? null
+    if (editParentId !== null) {
+      const priorById = new Map((priorRows as unknown as TurnRow[]).map(r => [r.msgId, r]))
+      if (!priorById.has(editParentId)) {
+        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Edit parentId not found' }) })
+        return { statusCode: 200, body: '' }
+      }
+    }
+    const userMsgId = uuidv4()
+    const userTurnRow: TurnRow = {
+      PK: `CHAT#${chatId}`,
+      ...buildTurnKey(chatId, responseStartTs, seq, responseId) as { SK: string },
+      msgId: userMsgId,
+      parentId: editParentId,
+      role: 'user',
+      blocks: [{ text: content! }] as ContentBlock[],
+      model,
+      createdAt: responseStartTs,
+      turnIndex: 0,
+      responseId,
+    }
+    await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
+    const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
+    bedrockMessages = buildActivePath(allRows, userMsgId).map(m => ({
+      role: m.role as 'user' | 'assistant',
+      content: (m.blocks ?? []) as ContentBlock[],
+    }))
+    lastTurnMsgId = userMsgId
   } else {
     // ── Normal send path ──────────────────────────────────────────────────────
     // currentLeafId: msgId of the chat's current active leaf; becomes the
@@ -180,6 +216,13 @@ export const buildHandler = (postFn: PostFn) => async (
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'usage', usage: chunk.usage }) })
           break
         case 'stop':
+          // Update activeLeafId before sending 'done' so the client's
+          // reloadMessages() refetch sees the new active path immediately.
+          try {
+            await updateChatActiveLeaf(sub, chatId, lastTurnMsgId)
+          } catch (e) {
+            console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
+          }
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
           break
       }
@@ -190,15 +233,8 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // Update the chat's active leaf to the final persisted turn
-  try {
-    await updateChatActiveLeaf(sub, chatId, lastTurnMsgId)
-  } catch (e) {
-    console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
-  }
-
-  // Auto-title on first normal send (not on re-run — no new user content)
-  if (!isRerun && chat.title === 'New Chat') {
+  // Auto-title on first normal send only (not re-run, not edit)
+  if (!isRerun && !isEdit && chat.title === 'New Chat') {
     const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content!}`
     const title = await converseOnce(TITLE_MODEL, '', [
       { role: 'user', content: [{ text: titlePrompt }] },

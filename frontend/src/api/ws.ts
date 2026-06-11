@@ -55,7 +55,7 @@ export function sendMessage(payload: {
   model: string
   systemPrompt: string
   modelSettings?: ModelSettings
-  parentId?: string
+  parentId?: string | null
 }) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     throw new Error('WebSocket not connected')

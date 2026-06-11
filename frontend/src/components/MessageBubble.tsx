@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
-  faCircleCheck, faCircleXmark, faBrain, faRotateRight,
+  faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
@@ -130,6 +130,7 @@ interface Props {
   message: Message | StreamingMsg
   onRerun?: (parentId: string) => void
   onNavigate?: (targetMsgId: string) => void
+  onEdit?: (msgId: string, parentId: string | null, content: string) => void
 }
 
 /**
@@ -140,11 +141,13 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-export default function MessageBubble({ message, onRerun, onNavigate }: Props) {
+export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
   const steps: Step[] = message.steps ?? []
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
 
   // For a streaming message, the last step is "open" (still accumulating).
   // A thinking step is done when the next non-thinking step exists after it.
@@ -195,7 +198,7 @@ export default function MessageBubble({ message, onRerun, onNavigate }: Props) {
           }
           if (cleanStep.kind === 'text') {
             if (!isAssistant) {
-              return <span key={i}>{cleanStep.text}</span>
+              return editing ? null : <span key={i}>{cleanStep.text}</span>
             }
             return (
               <div key={i} className="md">
@@ -209,7 +212,55 @@ export default function MessageBubble({ message, onRerun, onNavigate }: Props) {
           return null
         })}
 
+        {/* Inline edit textarea — shown when user clicks Edit on their own bubble */}
+        {!isAssistant && editing && (
+          <>
+            <textarea
+              className="edit-textarea system-prompt-input"
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }}
+              autoFocus
+              rows={3}
+            />
+            <div className="edit-actions">
+              <button
+                className="action-btn"
+                title="Save edit"
+                onClick={() => {
+                  if (draft.trim() && onEdit) {
+                    const msg = message as Message
+                    onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
+                  }
+                  setEditing(false)
+                }}
+              >
+                Save
+              </button>
+              <button className="action-btn" title="Cancel edit" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* Hover action-row — only for finalized (non-streaming) user bubbles with onEdit */}
+      {!isAssistant && !isStreaming && !editing && onEdit && 'msgId' in message && (
+        <div className="message-actions">
+          <button
+            className="action-btn"
+            title="Edit this question"
+            onClick={() => {
+              const text = (message as Message).steps?.find(s => s.kind === 'text')?.text ?? ''
+              setDraft(text)
+              setEditing(true)
+            }}
+          >
+            <FontAwesomeIcon icon={faPenToSquare} />
+          </button>
+        </div>
+      )}
 
       {/* Hover action-row — only for finalized (non-streaming) assistant bubbles with a parentId */}
       {isAssistant && !isStreaming && onRerun && 'parentId' in message && message.parentId != null && (

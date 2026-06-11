@@ -190,8 +190,43 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }
 
+  async function handleEditSubmit(msgId: string, parentId: string | null, editedContent: string) {
+    if (!activeChat || useChatStore.getState().sending || creatingChat) return
+    setSending(true)
+    setErrorMsg(null)
+    setLastTurnUsage(null)
+
+    // Optimistic: drop the edited bubble and everything after it, insert new user bubble.
+    const cut = messages.findIndex(m => 'msgId' in m && m.msgId === msgId)
+    const base = cut >= 0 ? messages.slice(0, cut) : []
+    const optimisticUser = {
+      msgId: crypto.randomUUID(),
+      role: 'user' as const,
+      steps: [{ kind: 'text' as const, text: editedContent }],
+      model: '',
+      createdAt: new Date().toISOString(),
+    }
+    setMessages([...base, optimisticUser])
+    startStream()
+
+    try {
+      await ensureConnected(accessToken)
+      sendMessage({
+        chatId: chatId!,
+        content: editedContent,
+        model: activeChat.model,
+        systemPrompt: activeChat.systemPrompt,
+        modelSettings,
+        parentId,
+      })
+    } catch (err) {
+      setSending(false)
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function handleRerun(parentId: string) {
-    if (!activeChat || sending || creatingChat) return
+    if (!activeChat || useChatStore.getState().sending || creatingChat) return
     setSending(true)
     setErrorMsg(null)
     setLastTurnUsage(null)
@@ -374,6 +409,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             message={m}
             onRerun={!isNew ? handleRerun : undefined}
             onNavigate={!isNew ? handleNavigate : undefined}
+            onEdit={!isNew ? handleEditSubmit : undefined}
           />
         ))}
         <div ref={bottomRef} />
