@@ -62,6 +62,47 @@ export function buildActivePath(rows: TurnRow[], activeLeafId: string | null): T
 }
 
 /**
+ * Walk *down* within a single response group (same responseId) from a given
+ * node to the last turn of that group.
+ *
+ * Used by the fork handler to resolve an assistant bubble's msgId (the *first*
+ * turn of its response) to the deepest turn sharing that responseId, so a fork
+ * never ends with a dangling tool_use block.
+ *
+ * If msgId is not found in rows, returns msgId unchanged.
+ */
+export function resolveResponseLeaf(rows: TurnRow[], msgId: string): string {
+  if (rows.length === 0) return msgId
+
+  const startRow = rows.find(r => r.msgId === msgId)
+  if (!startRow) return msgId
+
+  const targetResponseId = startRow.responseId
+
+  // Build parentId → children[] map, preserving row order, filtered to same responseId
+  const children = new Map<string, string[]>()
+  for (const row of rows) {
+    if (row.parentId != null && row.responseId === targetResponseId) {
+      const list = children.get(row.parentId) ?? []
+      list.push(row.msgId)
+      children.set(row.parentId, list)
+    }
+  }
+
+  // Walk down within the response group: pick the last child at each step
+  let current = msgId
+  const visited = new Set<string>()
+  for (let i = 0; i < rows.length; i++) {
+    if (visited.has(current)) break
+    visited.add(current)
+    const kids = children.get(current)
+    if (!kids || kids.length === 0) break
+    current = kids[kids.length - 1]
+  }
+  return current
+}
+
+/**
  * Walk *down* from a node to the leaf of its branch.
  *
  * At each fork, picks the **last child in row order** (most recently created).

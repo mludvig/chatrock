@@ -238,3 +238,189 @@ test('inc4: PATCH activeLeafId with non-string value returns 400', async () => {
   const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { activeLeafId: 99 }, { chatId: 'c1' }) as any))
   expect(res.statusCode).toBe(400)
 })
+
+// ── Inc 6: POST /api/chats/{chatId}/fork ──────────────────────────────────────
+
+// Helper: make a TurnRow with configurable role/responseId for fork tests
+const makeForkRow = (
+  msgId: string, parentId: string | null,
+  overrides: { role?: 'user' | 'assistant'; responseId?: string; blocks?: unknown[] } = {}
+) => ({
+  PK: 'CHAT#c1', SK: `MSG#2025-01-01T00:00:00.000Z#0000#${msgId}`,
+  msgId, parentId,
+  role: overrides.role ?? 'assistant',
+  blocks: overrides.blocks ?? [{ text: 'hello' }],
+  model: 'model-x', createdAt: '2025-01-01T00:00:00.000Z',
+  turnIndex: 0, responseId: overrides.responseId ?? 'r1',
+})
+
+test('inc6: fork on assistant bubble clones root→that bubble; 201 + new chatId', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1',
+    title: 'My Chat', model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: 'sys',
+    createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+  })
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(201)
+  const body = JSON.parse(res.body ?? '{}')
+  expect(typeof body.chatId).toBe('string')
+  expect(body.chatId).not.toBe('c1')
+
+  // putChat called with correct fork metadata
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.objectContaining({ title: 'My Chat (fork)', model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: 'sys' })
+  )
+})
+
+test('inc6: cloned rows have fresh msgIds and internally consistent parentId links', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+    makeForkRow('u2', 'a1', { role: 'user', responseId: 'r3' }),
+    makeForkRow('a2', 'u2', { role: 'assistant', responseId: 'r4' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a2' }, { chatId: 'c1' }) as any)
+
+  const cloned = mockDynamo.batchPutMessages.mock.calls[0][0] as Record<string, unknown>[]
+  expect(cloned).toHaveLength(4)
+
+  // No original msgId survives in the clone
+  const origIds = new Set(['u1', 'a1', 'u2', 'a2'])
+  for (const row of cloned) {
+    expect(origIds.has(row.msgId as string)).toBe(false)
+  }
+
+  // parentId links are internally consistent: each non-root parentId maps to another cloned msgId
+  const clonedIds = new Set(cloned.map(r => r.msgId as string))
+  for (const row of cloned) {
+    if (row.parentId !== null && row.parentId !== undefined) {
+      expect(clonedIds.has(row.parentId as string)).toBe(true)
+    }
+  }
+  // Root row has null parentId
+  expect(cloned[0].parentId).toBeNull()
+})
+
+test('inc6: fork on multi-turn (tool-use) assistant includes whole response group', async () => {
+  // a1(r2) → tr1(r2, toolResult user) → a2(r2) — same responseId, one "bubble"
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+    makeForkRow('tr1', 'a1', { role: 'user', responseId: 'r2' }),    // tool result
+    makeForkRow('a2', 'tr1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any)
+
+  // All 4 rows cloned (full response group included)
+  const cloned = mockDynamo.batchPutMessages.mock.calls[0][0]
+  expect(cloned).toHaveLength(4)
+})
+
+test('inc6: fork on user bubble clones up to its parent (user turn NOT included)', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  // u1 → a1 → u2 → a2 — fork on u2 → should clone u1 + a1 only
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+    makeForkRow('u2', 'a1', { role: 'user', responseId: 'r3' }),
+    makeForkRow('a2', 'u2', { role: 'assistant', responseId: 'r4' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'u2' }, { chatId: 'c1' }) as any)
+
+  const cloned = mockDynamo.batchPutMessages.mock.calls[0][0]
+  expect(cloned).toHaveLength(2)  // u1 + a1 only
+})
+
+test('inc6: fork on root user bubble clones nothing; batchPutMessages not called', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'u1' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(201)
+  expect(mockDynamo.batchPutMessages).not.toHaveBeenCalled()
+  // putChat should not have activeLeafId set
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.not.objectContaining({ activeLeafId: expect.anything() })
+  )
+})
+
+test('inc6: fork returns 404 when chat not found', async () => {
+  mockDynamo.getChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(404)
+})
+
+test('inc6: fork returns 400 on unknown fromMsgId', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  mockDynamo.listMessages.mockResolvedValue([
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+  ])
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'nonexistent' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Unknown fromMsgId' })
+})
+
+test('inc6: original chat rows are not modified (no writes to original CHAT#c1 partition)', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any)
+
+  // All cloned rows must have PK pointing to the NEW chat, not 'CHAT#c1'
+  const cloned = mockDynamo.batchPutMessages.mock.calls[0][0]
+  for (const row of cloned) {
+    expect(row.PK).not.toBe('CHAT#c1')
+  }
+})

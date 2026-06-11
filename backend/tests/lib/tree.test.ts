@@ -4,7 +4,7 @@
  * buildActivePath(rows, activeLeafId) walks leaf→root via parentId, reverses
  * to root→leaf order, and returns only the active branch's rows.
  */
-import { buildActivePath, resolveLeaf } from '../../src/lib/tree'
+import { buildActivePath, resolveLeaf, resolveResponseLeaf } from '../../src/lib/tree'
 
 import type { TurnRow } from '../../src/lib/tree'
 
@@ -171,6 +171,47 @@ test('inc4: resolveLeaf — cycle-safe, does not infinite loop', () => {
   ]
   expect(() => resolveLeaf(rows, 'x')).not.toThrow()
 })
+
+// ── resolveResponseLeaf ───────────────────────────────────────────────────────
+
+test('inc6: resolveResponseLeaf — single-turn response returns itself', () => {
+  const rows = [
+    makeRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  expect(resolveResponseLeaf(rows, 'a1')).toBe('a1')
+})
+
+test('inc6: resolveResponseLeaf — multi-turn group returns the last turn of the same responseId', () => {
+  // a1(asst,r2) → tr1(user toolResult,r2) → a2(asst,r2)  — all same responseId
+  const rows = [
+    makeRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+    makeRow('tr1', 'a1', { role: 'user', responseId: 'r2' }),    // tool-result turn
+    makeRow('a2', 'tr1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  expect(resolveResponseLeaf(rows, 'a1')).toBe('a2')
+})
+
+test('inc6: resolveResponseLeaf — does not cross into the next response group', () => {
+  // a1(r2) → tr1(r2) → a2(r2) → u2(r3) — u2 is a different response group
+  const rows = [
+    makeRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+    makeRow('tr1', 'a1', { role: 'user', responseId: 'r2' }),
+    makeRow('a2', 'tr1', { role: 'assistant', responseId: 'r2' }),
+    makeRow('u2', 'a2', { role: 'user', responseId: 'r3' }),     // next exchange
+    makeRow('a3', 'u2', { role: 'assistant', responseId: 'r4' }),
+  ]
+  expect(resolveResponseLeaf(rows, 'a1')).toBe('a2')  // stops at a2, does not follow to u2/a3
+})
+
+test('inc6: resolveResponseLeaf — unknown msgId returns input unchanged', () => {
+  const rows = [makeRow('a1', null, { role: 'assistant', responseId: 'r1' })]
+  expect(resolveResponseLeaf(rows, 'nonexistent')).toBe('nonexistent')
+})
+
+// ── pre-existing resolveLeaf tests ───────────────────────────────────────────
 
 test('inc4: resolveLeaf — deeper fork follows last child at each level', () => {
   // user → asst-A → userA → asstA2
