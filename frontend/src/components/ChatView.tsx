@@ -505,7 +505,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             </div>
           )}
           {allMessages.map((m, i) => (
-            <div key={'msgId' in m ? m.msgId : `stream-${i}`} ref={el => { if (el) bubbleRefsRef.current[i] = el }}>
+            <div key={'msgId' in m ? m.msgId : `stream-${i}`} ref={el => { if (el) bubbleRefsRef.current[i] = el }} style={{ display: 'contents' }}>
               <MessageBubble
                 message={m}
                 onRerun={!isNew ? handleRerun : undefined}
