@@ -17,6 +17,16 @@ export interface StreamingMsg {
   waiting?: boolean  // true until first content event arrives
 }
 
+export type ToastKind = 'success' | 'error' | 'info'
+
+export interface Toast {
+  id: number
+  kind: ToastKind
+  text: string
+}
+
+let _toastSeq = 0
+
 interface ChatState {
   chats: Chat[]
   activeChatId: string | null
@@ -26,6 +36,7 @@ interface ChatState {
   loading: boolean
   sending: boolean
   lastModel: string
+  toasts: Toast[]
 
   setChats: (chats: Chat[]) => void
   addChat: (chat: Chat) => void
@@ -34,6 +45,8 @@ interface ChatState {
   updateChatSystemPrompt: (chatId: string, systemPrompt: string) => void
   setActiveChat: (chatId: string | null) => void
   setMessages: (messages: Message[]) => void
+  pushToast: (toast: Omit<Toast, 'id'>) => void
+  dismissToast: (id: number) => void
   startStream: () => void
   /** Append text to the last text step; create a new text step if needed */
   appendDelta: (text: string) => void
@@ -107,6 +120,7 @@ export const useChatStore = create<ChatState>()(
       loading: false,
       sending: false,
       lastModel: '',
+      toasts: [],
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -237,6 +251,9 @@ export const useChatStore = create<ChatState>()(
           streamingMsg: null,
         }
       }),
+
+      pushToast: (toast) => set((s) => ({ toasts: [...s.toasts, { ...toast, id: ++_toastSeq }] })),
+      dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter(t => t.id !== id) })),
 
       clearStream: () => set({ streamingMsg: null }),
       setModels: (models) => set({ models }),

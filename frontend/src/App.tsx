@@ -7,6 +7,7 @@ import { api, setAccessToken } from './api/http'
 import { useChatStore } from './store/chatStore'
 import Sidebar from './components/Sidebar'
 import ChatView from './components/ChatView'
+import Toaster from './components/Toaster'
 import './app.scss'
 
 function AuthedApp() {
@@ -100,5 +101,10 @@ export default function App() {
     )
   }
 
-  return <AuthedApp />
+  return (
+    <>
+      <AuthedApp />
+      <Toaster />
+    </>
+  )
 }
