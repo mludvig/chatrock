@@ -50,6 +50,7 @@ data "aws_iam_policy_document" "lambda_policy" {
       "dynamodb:UpdateItem",
       "dynamodb:DeleteItem",
       "dynamodb:Query",
+      "dynamodb:BatchWriteItem",
     ]
     resources = [aws_dynamodb_table.chatrock.arn]
   }

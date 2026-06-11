@@ -119,4 +119,6 @@ export const api = {
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
+  forkChat: (chatId: string, fromMsgId: string) =>
+    req<{ chatId: string }>('POST', `/api/chats/${chatId}/fork`, { fromMsgId }),
 }

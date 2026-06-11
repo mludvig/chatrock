@@ -149,6 +149,17 @@ export async function putMessage(item: Record<string, unknown>) {
   await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
 }
 
+export async function batchPutMessages(items: Record<string, unknown>[]): Promise<void> {
+  for (let i = 0; i < items.length; i += 25) {
+    const chunk = items.slice(i, i + 25)
+    await ddb.send(new BatchWriteCommand({
+      RequestItems: {
+        [TABLE]: chunk.map(item => ({ PutRequest: { Item: item } })),
+      },
+    }))
+  }
+}
+
 export async function putConnection(item: Record<string, unknown>) {
   await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
 }

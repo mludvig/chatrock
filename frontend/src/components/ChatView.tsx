@@ -86,6 +86,16 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (isNew && defaultModel && !newModel) setNewModel(defaultModel)
   }, [defaultModel, isNew, newModel])
 
+  // Pre-fill input with a draft when navigating to the fork (set via pendingDraftRef before navigate)
+  const pendingDraftRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (pendingDraftRef.current) {
+      setInput(pendingDraftRef.current)
+      pendingDraftRef.current = null
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId])
+
   // Initialise modelSettings when the current model's capabilities are first known
   useEffect(() => {
     if (currentModelDef) {
@@ -185,6 +195,27 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     try {
       await api.setActiveLeaf(chatId, targetMsgId)
       reloadMessages(chatId)
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleForkToHere(fromMsgId: string, role: 'user' | 'assistant', text: string) {
+    if (!chatId || isNew || !activeChat) return
+    try {
+      const res = await api.forkChat(chatId, fromMsgId)
+      const now = new Date().toISOString()
+      useChatStore.getState().addChat({
+        chatId: res.chatId,
+        title: `${activeChat.title} (fork)`,
+        model: activeChat.model,
+        systemPrompt: activeChat.systemPrompt,
+        createdAt: now,
+        updatedAt: now,
+      })
+      // For a user bubble: pre-fill its text as a draft in the new chat
+      if (role === 'user') pendingDraftRef.current = text
+      navigate(`/c/${res.chatId}`)
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
@@ -410,6 +441,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             onRerun={!isNew ? handleRerun : undefined}
             onNavigate={!isNew ? handleNavigate : undefined}
             onEdit={!isNew ? handleEditSubmit : undefined}
+            onForkToHere={!isNew ? handleForkToHere : undefined}
           />
         ))}
         <div ref={bottomRef} />
