@@ -374,6 +374,11 @@ body {
   &.user      { align-self: flex-end; }
   &.assistant { align-self: flex-start; }
 
+  // While editing: stretch full column width so edit-area can fill it
+  &.user.editing {
+    align-self: stretch;
+  }
+
   // Hide the blue bubble shell while the edit textarea is open
   &.editing .message-content { display: none; }
 }
