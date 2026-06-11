@@ -39,6 +39,16 @@ npm --prefix frontend run dev       # local dev server (needs VITE_* env vars �
 
 The frontend has no test suite. Type-checking is part of `npm run build` (tsc runs first).
 
+### E2E tests
+
+```bash
+npm run test:e2e                              # all Playwright tests against chat.example.com
+npm run test:e2e -- e2e/fork-chat.spec.ts     # single spec file
+npm run test:e2e:headed                       # with visible browser
+```
+
+Requires `COGNITO_USERNAME` / `COGNITO_PASSWORD` in `.env` (root). Auth state is cached in `.auth/state.json` by the setup project. Tests run against the live deployment — deploy before testing UI changes.
+
 ### Terraform
 
 ```bash
@@ -61,16 +71,36 @@ Browser → CloudFront (single distribution, custom domain)
 ```
 
 - **Auth**: Cognito Hosted UI (OIDC/PKCE). HTTP API uses a Cognito JWT authorizer. WebSocket `$connect` uses a Lambda authorizer that validates the access token from `?token=` query param (browsers can't set WebSocket headers).
-- **Streaming**: client sends `{ action: 'sendMessage', chatId, content, model, systemPrompt, modelSettings }` over WebSocket. `ws/sendMessage.ts` persists the user message, calls Bedrock `ConverseStream` in an agentic loop (up to 5 rounds for tool use), pushes event frames back via `ApiGatewayManagementApi.postToConnection`.
+- **Streaming**: client sends `{ action: 'sendMessage', chatId, content?, model, systemPrompt, modelSettings, parentId? }` over WebSocket. `ws/sendMessage.ts` persists the user message (if `content` present), calls Bedrock `ConverseStream` in an agentic loop (up to 5 rounds for tool use), pushes event frames back via `ApiGatewayManagementApi.postToConnection`. See WS payload contract in the tree model section.
 
 ### DynamoDB single-table
 
 Table `chatrock-prod` with PK/SK:
-- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, createdAt, updatedAt
-- Message: `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<msgId>` — role, content, model, createdAt
+- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, createdAt, updatedAt, **activeLeafId**
+- Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?
 - WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL
 
 Every CRUD handler derives `sub` from the JWT claims — never from client input — so users only ever touch their own partition.
+
+`blocks` is the raw `ContentBlock[]` array from the Bedrock `ConverseStream` response, stored verbatim. It is the canonical source for replay — never synthesize from text.
+
+### Conversation tree model
+
+Each turn record has `msgId` (UUID) + `parentId` (null at root) forming a tree. `activeLeafId` on the chat record tracks the current branch tip. `GET /messages` does a single DynamoDB Query of the full `CHAT#<chatId>` partition, then walks the tree in memory to extract the active path and compute sibling metadata.
+
+Key helpers in `backend/src/lib/tree.ts`:
+- `buildActivePath(rows, leafId)` — leaf→root walk, reversed to root→leaf order
+- `resolveLeaf(rows, msgId)` — walk DOWN to the deepest descendant (last child at each level)
+- `resolveResponseLeaf(rows, msgId)` — same but stays within one `responseId` group (no crossing into the next bubble)
+
+`responseId` groups all turns of a single Bedrock call (the initial assistant text + any tool-use turns + tool-result turns). A display bubble = one `responseId` group collapsed into steps[].
+
+**WS payload contract** (`ws/sendMessage.ts` / `api/ws.ts`):
+- Normal send: `{ chatId, content, model, systemPrompt, modelSettings }` — persists user turn at current leaf, streams answer
+- Re-run: `{ chatId, parentId, model, systemPrompt, modelSettings }` — no `content`; streams new sibling answer under `parentId`
+- Edit: `{ chatId, parentId, content, model, systemPrompt, modelSettings }` — persists new user sibling under `parentId`, streams answer
+
+**Display bubble shape** (from `GET /messages`): each bubble includes `msgId`, `parentId`, `siblingIndex` (1-based), `siblingCount`, `siblings` (ordered msgId array). The client uses these for sibling navigation without extra round trips.
 
 ### Backend structure
 
@@ -78,8 +108,10 @@ Every CRUD handler derives `sub` from the JWT claims — never from client input
 backend/src/
   config/models.ts      — model registry with capabilities (temperature/topP/topK/thinking)
   lib/bedrock.ts        — ConverseStream wrapper + agentic tool-use loop
-  lib/dynamo.ts         — DynamoDB access layer (all table operations)
+  lib/blocks.ts         — block-level helpers: capToolResultText (30 KB cap)
+  lib/dynamo.ts         — DynamoDB access layer: buildTurnKey/buildChatKey, batchPutMessages, all table ops
   lib/tools.ts          — Bedrock tool specs + Jina web_search / web_fetch executor
+  lib/tree.ts           — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf
   http/                 — one file per HTTP API route group (chats, messages, models)
   ws/sendMessage.ts     — the core streaming handler (the most complex file)
   ws/authorizer.ts      — WebSocket Lambda authorizer
@@ -106,6 +138,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `tool_result` | `toolUseId`, `name`, `isError`, `content` |
 | `delta` | `text` |
 | `done` | `stopReason` |
+| `usage` | `usage` (inputTokens, outputTokens, cache*) |
 | `titleUpdated` | `chatId`, `title` |
 | `error` | `message` |
 
@@ -119,7 +152,7 @@ frontend/src/
   components/
     ChatView.tsx         — main chat pane, URL-driven (/c/new or /c/:chatId)
     ModelSettingsPanel.tsx — dynamic settings panel rendered from model capabilities
-    MessageBubble.tsx    — renders thinking blocks, tool call pills, markdown (react-markdown + remark-gfm)
+    MessageBubble.tsx    — renders thinking blocks, tool call pills, markdown; always-visible .bubble-row with sibling nav, re-run, edit, fork, copy actions
     Sidebar.tsx          — chat list with navigate(), retitle wand
   env.ts                — VITE_* env var access
 ```
