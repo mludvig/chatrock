@@ -5,6 +5,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare, faPaperPlane,
+  faCodeBranch, faCopy, faCheck,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
@@ -131,6 +132,7 @@ interface Props {
   onRerun?: (parentId: string) => void
   onNavigate?: (targetMsgId: string) => void
   onEdit?: (msgId: string, parentId: string | null, content: string) => void
+  onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
 }
 
 /**
@@ -141,13 +143,14 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: Props) {
+export default function MessageBubble({ message, onRerun, onNavigate, onEdit, onForkToHere }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
   const steps: Step[] = message.steps ?? []
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const [copied, setCopied] = useState(false)
 
   // For a streaming message, the last step is "open" (still accumulating).
   // A thinking step is done when the next non-thinking step exists after it.
@@ -263,9 +266,13 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: 
           (message as Message).siblingCount! > 1
         const hasEdit = !isAssistant && !editing && onEdit && 'msgId' in message
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
-        if (!hasSiblings && !hasEdit && !hasRerun) return null
+        const hasForkCopy = 'msgId' in message
+        if (!hasSiblings && !hasEdit && !hasRerun && !hasForkCopy) return null
 
         const msg = message as Message
+        // Concatenate text steps for copy/fork
+        const bubbleText = (msg.steps ?? []).filter(s => s.kind === 'text').map(s => s.text).join('\n')
+
         return (
           <div className="bubble-row">
             {hasSiblings && (() => {
@@ -314,6 +321,29 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit }: 
                 onClick={() => onRerun!(msg.parentId!)}
               >
                 <FontAwesomeIcon icon={faRotateRight} />
+              </button>
+            )}
+            {hasForkCopy && onForkToHere && (
+              <button
+                className="action-btn"
+                title="Fork to a new chat (up to here)"
+                onClick={() => onForkToHere(msg.msgId, msg.role, bubbleText)}
+              >
+                <FontAwesomeIcon icon={faCodeBranch} />
+              </button>
+            )}
+            {hasForkCopy && (
+              <button
+                className="action-btn"
+                title="Copy to clipboard"
+                onClick={() => {
+                  navigator.clipboard.writeText(bubbleText).then(() => {
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 2000)
+                  })
+                }}
+              >
+                <FontAwesomeIcon icon={copied ? faCheck : faCopy} />
               </button>
             )}
           </div>
