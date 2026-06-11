@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGear, faPaperPlane, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faGear, faPaperPlane, faSpinner, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings } from '../api/http'
 import type { Model, ModelSettings, ModelCapabilities, TokenUsage } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
@@ -42,6 +42,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const [input, setInput] = useState('')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [creatingChat, setCreatingChat] = useState(false)
+  const [loadingMessages, setLoadingMessages] = useState(false)
 
   // Conversation-level usage (from listMessages on load + updated after each exchange)
   const [conversationUsage, setConversationUsage] = useState<TokenUsage | null>(null)
@@ -161,8 +162,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (isNew || !chatId) {
       setMessages([])
       setConversationUsage(null)
+      setLoadingMessages(false)
       return
     }
+    // Clear messages immediately so stale content doesn't linger while loading
+    setMessages([])
+    setConversationUsage(null)
+    setLoadingMessages(true)
     let cancelled = false
     api.listMessages(chatId).then(r => {
       if (cancelled || useChatStore.getState().sending) return
@@ -180,6 +186,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setConversationUsage(r.conversationUsage)
     }).catch(() => {
       if (!cancelled) navigate('/c/new', { replace: true })
+    }).finally(() => {
+      if (!cancelled) setLoadingMessages(false)
     })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -439,6 +447,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       )}
 
       <div className="messages">
+        {loadingMessages && (
+          <div className="messages-loading">
+            <FontAwesomeIcon icon={faSpinner} spin />
+            <span>Loading…</span>
+          </div>
+        )}
         {allMessages.length === 0 && isNew && (
           <div className="chat-empty">
             <p>Type a message below to start the conversation.</p>

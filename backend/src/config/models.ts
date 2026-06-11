@@ -67,6 +67,6 @@ export function isValidModelId(modelId: string): boolean {
 
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   return {
-    ...(caps.thinking !== 'none' ? { thinkingEffort: 'off' as const } : {}),
+    ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
   }
 }
