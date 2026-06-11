@@ -408,6 +408,7 @@ body {
   font-size: 11px;
   transition: color 0.12s, border-color 0.12s, background 0.12s;
   &:hover { color: $accent; border-color: $accent; background: rgba($accent, 0.06); }
+  &.action-btn--danger:hover { color: #e05252; border-color: #e05252; background: rgba(#e05252, 0.06); }
 }
 
 .sibling-btn {

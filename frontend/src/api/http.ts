@@ -121,4 +121,6 @@ export const api = {
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
   forkChat: (chatId: string, fromMsgId: string) =>
     req<{ chatId: string }>('POST', `/api/chats/${chatId}/fork`, { fromMsgId }),
+  deleteBranch: (chatId: string, msgId: string) =>
+    req<void>('DELETE', `/api/chats/${chatId}/messages/${msgId}`),
 }
