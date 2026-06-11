@@ -27,7 +27,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     chats, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream,
-    renameChat, sending, setSending, updateChatSystemPrompt,
+    renameChat, sending, setSending, updateChatSystemPrompt, pushToast,
   } = useChatStore()
 
   // For /c/new: local model + system prompt state (not yet persisted)
@@ -214,7 +214,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       await api.deleteBranch(chatId, msgId)
       reloadMessages(chatId)
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err))
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
   }
 
@@ -231,11 +231,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         createdAt: now,
         updatedAt: now,
       })
+      pushToast({ kind: 'success', text: 'Forked into a new chat' })
       // For a user bubble: pre-fill its text as a draft in the new chat
       if (role === 'user') pendingDraftRef.current = text
       navigate(`/c/${res.chatId}`)
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err))
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
   }
 

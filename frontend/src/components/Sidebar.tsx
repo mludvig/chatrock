@@ -17,7 +17,7 @@ export default function Sidebar({ userName, onNewChat, onSignOut, onRenameChat }
   const navigate = useNavigate()
   const match = useMatch('/c/:chatId')
   const activeChatId = match?.params.chatId
-  const { chats, removeChat } = useChatStore()
+  const { chats, removeChat, pushToast } = useChatStore()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
   const [retitling, setRetitling] = useState<string | null>(null)
@@ -25,9 +25,13 @@ export default function Sidebar({ userName, onNewChat, onSignOut, onRenameChat }
   async function handleDelete(e: React.MouseEvent, chatId: string) {
     e.stopPropagation()
     if (!confirm('Delete this chat?')) return
-    await api.deleteChat(chatId)
-    removeChat(chatId)
-    if (activeChatId === chatId) navigate('/c/new')
+    try {
+      await api.deleteChat(chatId)
+      removeChat(chatId)
+      if (activeChatId === chatId) navigate('/c/new')
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
   }
 
   function startRename(e: React.MouseEvent, chat: Chat) {
@@ -51,6 +55,8 @@ export default function Sidebar({ userName, onNewChat, onSignOut, onRenameChat }
     try {
       const res = await api.retitleChat(chatId)
       onRenameChat(chatId, res.title)
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     } finally {
       setRetitling(null)
     }
