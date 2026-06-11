@@ -49,6 +49,12 @@ body {
   justify-content: space-between;
   padding: 14px 14px 10px;
   border-bottom: 1px solid $border;
+
+  &--clickable {
+    cursor: pointer;
+    transition: background 0.15s;
+    &:hover { background: $surface2; }
+  }
 }
 
 .sidebar-brand {
@@ -205,6 +211,17 @@ body {
   justify-content: center;
   height: 100%;
   color: $muted;
+}
+
+.messages-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 40px 0;
+  color: $muted;
+  font-size: 14px;
+  align-self: center;
 }
 
 .chat-empty-state {
