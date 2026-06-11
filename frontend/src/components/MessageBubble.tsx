@@ -112,11 +112,25 @@ function ThinkingBlock({ text, done, streaming }: { text: string; done: boolean;
 
 // ── Usage stats footer ────────────────────────────────────────────────────────
 
+// Format token counts: raw if < 5 000; one-decimal k/M above that.
+// Trims trailing ".0" so "8.0k" → "8k".
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) {
+    const s = (n / 1_000_000).toFixed(1)
+    return (s.endsWith('.0') ? s.slice(0, -2) : s) + 'M'
+  }
+  if (n >= 5000) {
+    const s = (n / 1000).toFixed(1)
+    return (s.endsWith('.0') ? s.slice(0, -2) : s) + 'k'
+  }
+  return String(n)
+}
+
 export function UsageStats({ usage, label }: { usage: TokenUsage; label?: string }) {
   const parts: string[] = []
-  parts.push(`↑${usage.inputTokens} ↓${usage.outputTokens}`)
-  if (usage.cacheReadInputTokens) parts.push(`cache hit ${usage.cacheReadInputTokens}`)
-  if (usage.cacheWriteInputTokens) parts.push(`cache write ${usage.cacheWriteInputTokens}`)
+  parts.push(`↑${fmtTokens(usage.inputTokens)} ↓${fmtTokens(usage.outputTokens)}`)
+  if (usage.cacheReadInputTokens) parts.push(`cache hit ${fmtTokens(usage.cacheReadInputTokens)}`)
+  if (usage.cacheWriteInputTokens) parts.push(`cache write ${fmtTokens(usage.cacheWriteInputTokens)}`)
   return (
     <div className="usage-stats">
       {label && <span className="usage-label">{label}</span>}
@@ -329,7 +343,11 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit, on
               <button
                 className="action-btn"
                 title="Fork to a new chat (up to here)"
-                onClick={() => onForkToHere(msg.msgId, msg.role, bubbleText)}
+                onClick={() => {
+                  if (window.confirm('Fork this conversation into a new chat?')) {
+                    onForkToHere(msg.msgId, msg.role, bubbleText)
+                  }
+                }}
               >
                 <FontAwesomeIcon icon={faCodeBranch} />
               </button>

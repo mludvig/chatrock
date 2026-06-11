@@ -57,10 +57,13 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
 
       {caps.thinking !== 'none' && (
         <div className="model-setting-row">
-          <label className="setting-label">
+          <label
+            className="setting-label"
+            title="This model uses adaptive thinking — 'Off' disables it entirely; Low/Medium/High/Max controls how much effort is spent (token budget). Off → no thinking tokens; Low → minimal reasoning; Max → deep reasoning for hard problems."
+          >
             <FontAwesomeIcon icon={faBrain} />
-            <span>Thinking</span>
-            <span className="setting-value">{effort === 'off' ? 'Off' : effort}</span>
+            <span>Thinking effort</span>
+            <span className="setting-value">{effort === 'off' ? 'Off' : effort.charAt(0).toUpperCase() + effort.slice(1)}</span>
           </label>
           <div className="effort-buttons">
             {THINKING_EFFORTS.map(e => (

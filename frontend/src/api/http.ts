@@ -89,7 +89,7 @@ export const THINKING_EFFORTS = ['off', 'low', 'medium', 'high', 'max'] as const
 
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   return {
-    ...(caps.thinking !== 'none' ? { thinkingEffort: 'off' as const } : {}),
+    ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
   }
 }
 

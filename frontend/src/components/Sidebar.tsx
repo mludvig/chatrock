@@ -62,12 +62,17 @@ export default function Sidebar({ userName, onNewChat, onSignOut, onRenameChat }
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-header">
+      <div className="sidebar-header sidebar-header--clickable" onClick={onNewChat} title="New chat">
         <span className="sidebar-brand">
           <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
           Chatrock
         </span>
-        <button className="btn-new" onClick={onNewChat} title="New chat">
+        <button
+          className="btn-new"
+          onClick={e => { e.stopPropagation(); onNewChat() }}
+          title="New chat"
+          tabIndex={-1}
+        >
           <FontAwesomeIcon icon={faPlus} />
         </button>
       </div>
