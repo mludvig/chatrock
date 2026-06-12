@@ -56,6 +56,9 @@ export interface Message {
   model: string
   createdAt: string
   usage?: TokenUsage
+  // Per-turn inference metadata (F1/F2)
+  thinkingEffort?: string
+  webSearch?: boolean
   // Convenience: a text step's content for the legacy Message.content access pattern
   // (kept so callers that only need the text can still work; derived from steps on load)
   content?: string
@@ -70,6 +73,7 @@ export interface ModelCapabilities {
   topP: boolean
   topK: boolean
   thinking: 'adaptive' | 'none'
+  attachments: boolean
 }
 
 export interface ModelSettings {
@@ -77,6 +81,7 @@ export interface ModelSettings {
   topP?: number
   topK?: number
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
+  webSearch?: boolean
 }
 
 export interface Model {
@@ -90,6 +95,7 @@ export const THINKING_EFFORTS = ['off', 'low', 'medium', 'high', 'max'] as const
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   return {
     ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
+    webSearch: true,
   }
 }
 
@@ -101,6 +107,7 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     ...(caps.topP && prev.topP !== undefined ? { topP: prev.topP } : {}),
     ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
     ...(caps.thinking !== 'none' ? { thinkingEffort: prev.thinkingEffort ?? defaults.thinkingEffort } : {}),
+    webSearch: prev.webSearch ?? true,
   }
 }
 
