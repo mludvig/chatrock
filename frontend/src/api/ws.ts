@@ -10,6 +10,7 @@ export type WSEvent =
   | { type: 'tool_result';    toolUseId: string; name: string; isError: boolean; content?: string }
   | { type: 'usage';          usage: TokenUsage }
   | { type: 'done';           stopReason: string }
+  | { type: 'cancelled' }
   | { type: 'titleUpdated';   chatId: string; title: string }
   | { type: 'error';          message: string }
 
@@ -56,11 +57,22 @@ export function sendMessage(payload: {
   systemPrompt: string
   modelSettings?: ModelSettings
   parentId?: string | null
+  attachments?: Array<{
+    s3Key: string
+    contentType: string
+    filename: string
+    mode?: 'standard' | 'rich'
+  }>
 }) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     throw new Error('WebSocket not connected')
   }
   socket.send(JSON.stringify({ action: 'sendMessage', ...payload }))
+}
+
+export function cancelMessage() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  socket.send(JSON.stringify({ action: 'cancelMessage' }))
 }
 
 export function isConnected() {
