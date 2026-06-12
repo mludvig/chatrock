@@ -78,12 +78,16 @@ async function getCfPrivateKey(): Promise<string> {
   if (_cfPrivateKey) return _cfPrivateKey
   const ssm = new SSMClient({})
   const res = await ssm.send(new GetParameterCommand({ Name: CF_KEY_PARAM, WithDecryption: true }))
-  _cfPrivateKey = res.Parameter?.Value ?? ''
+  const value = res.Parameter?.Value
+  if (!value) throw new Error('CloudFront private key not found in SSM')
+  _cfPrivateKey = value
   return _cfPrivateKey
 }
 
 export async function signCloudFrontUrl(s3Key: string, privateKeyPem?: string): Promise<string> {
-  if (!s3Key || s3Key.includes('..') || s3Key.startsWith('/')) {
+  // Decode percent-encoding before checking to block %2e%2e / %2F traversal attempts
+  const decoded = decodeURIComponent(s3Key)
+  if (!s3Key || decoded.includes('..') || decoded.startsWith('/') || s3Key.startsWith('/')) {
     throw new Error('invalid s3Key: path traversal not allowed')
   }
   const pem = privateKeyPem ?? await getCfPrivateKey()
