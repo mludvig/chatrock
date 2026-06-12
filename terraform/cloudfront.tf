@@ -127,7 +127,7 @@ resource "aws_cloudfront_distribution" "chatrock" {
   ordered_cache_behavior {
     path_pattern               = "/attachments/*"
     target_origin_id           = local.s3_attachments_origin_id
-    viewer_protocol_policy     = "redirect-to-https"
+    viewer_protocol_policy     = "https-only"
     allowed_methods            = ["GET", "HEAD"]
     cached_methods             = ["GET", "HEAD"]
     response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
