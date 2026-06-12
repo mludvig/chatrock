@@ -471,6 +471,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           filename: a.filename,
           contentType: a.contentType,
           url: a.localUrl ?? '',
+          s3Key: a.s3Key!,
           mode: a.mode,
         })),
       ],

@@ -46,7 +46,7 @@ export type Step =
   | { kind: 'thinking'; text: string }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }> }
-  | { kind: 'attachment'; attachmentKind: 'image' | 'document'; filename: string; contentType: string; url: string; mode?: 'standard' | 'rich' }
+  | { kind: 'attachment'; attachmentKind: 'image' | 'document'; filename: string; contentType: string; url: string; s3Key: string; mode?: 'standard' | 'rich' }
 
 export interface Message {
   msgId: string

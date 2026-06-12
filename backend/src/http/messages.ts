@@ -43,6 +43,7 @@ interface AttachmentStep {
   filename: string
   contentType: string
   url: string
+  s3Key: string
   mode?: 'standard' | 'rich'
 }
 
@@ -227,6 +228,7 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
               filename,
               contentType: `image/${block.image.format ?? 'png'}`,
               url,
+              s3Key: key,
             })
           }
           // blocks with bytes are silently skipped (defensive; should not be stored)
@@ -246,6 +248,7 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
               filename: block.document.name ?? filename,
               contentType: formatToMime[block.document.format ?? 'txt'] ?? 'application/octet-stream',
               url,
+              s3Key: key,
               ...(citations?.enabled !== undefined
                 ? { mode: citations.enabled ? 'rich' as const : 'standard' as const }
                 : {}),
