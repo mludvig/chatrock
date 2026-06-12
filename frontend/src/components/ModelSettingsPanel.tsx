@@ -1,5 +1,5 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBrain, faTemperatureHalf, faSlidersH } from '@fortawesome/free-solid-svg-icons'
+import { faBrain, faGlobe, faTemperatureHalf, faSlidersH } from '@fortawesome/free-solid-svg-icons'
 import type { ModelCapabilities, ModelSettings } from '../api/http'
 import { THINKING_EFFORTS } from '../api/http'
 
@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function ModelSettingsPanel({ caps, settings, onChange }: Props) {
-  const hasAny = caps.temperature || caps.topP || caps.topK || caps.thinking !== 'none'
+  const hasAny = caps.temperature || caps.topP || caps.topK || caps.thinking !== 'none' || true
   if (!hasAny) return null
 
   function set(patch: Partial<ModelSettings>) {
@@ -78,6 +78,19 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
           </div>
         </div>
       )}
+      <div className="model-setting-row model-setting-row--inline">
+        <label className="setting-label" title="Toggle web search (Jina). When off, the model cannot call web_search or web_fetch tools.">
+          <FontAwesomeIcon icon={faGlobe} />
+          <span>Web search</span>
+        </label>
+        <button
+          className={`toggle-btn${settings.webSearch !== false ? ' active' : ''}`}
+          onClick={() => set({ webSearch: settings.webSearch === false ? true : false })}
+          title="Toggle web search"
+        >
+          {settings.webSearch !== false ? 'On' : 'Off'}
+        </button>
+      </div>
     </div>
   )
 }
