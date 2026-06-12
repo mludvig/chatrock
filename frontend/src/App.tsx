@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faComments } from '@fortawesome/free-solid-svg-icons'
@@ -12,7 +12,9 @@ import './app.scss'
 
 function AuthedApp() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel } = useChatStore()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const auth = useAuth()
   const accessToken = auth.user?.access_token ?? ''
@@ -37,10 +39,16 @@ function AuthedApp() {
       .finally(() => setLoading(false))
   }, [auth.isAuthenticated, accessToken, setChats, setModels, setLoading])
 
+  // Auto-close sidebar on navigation (mobile)
+  useEffect(() => { setSidebarOpen(false) }, [location.pathname])
+
   const defaultModel = lastModel || models[1]?.id || models[0]?.id || ''
 
   return (
-    <div className="layout">
+    <div className={`layout${sidebarOpen ? ' sidebar-open' : ''}`}>
+      {sidebarOpen && (
+        <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
+      )}
       <Sidebar
         userName={userName}
         onNewChat={() => navigate('/c/new')}
@@ -58,6 +66,7 @@ function AuthedApp() {
                 models={models}
                 defaultModel={defaultModel}
                 onModelChange={setLastModel}
+                onOpenSidebar={() => setSidebarOpen(true)}
               />
             }
           />
