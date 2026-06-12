@@ -71,14 +71,15 @@ Browser → CloudFront (single distribution, custom domain)
 ```
 
 - **Auth**: Cognito Hosted UI (OIDC/PKCE). HTTP API uses a Cognito JWT authorizer. WebSocket `$connect` uses a Lambda authorizer that validates the access token from `?token=` query param (browsers can't set WebSocket headers).
-- **Streaming**: client sends `{ action: 'sendMessage', chatId, content?, model, systemPrompt, modelSettings, parentId? }` over WebSocket. `ws/sendMessage.ts` persists the user message (if `content` present), calls Bedrock `ConverseStream` in an agentic loop (up to 5 rounds for tool use), pushes event frames back via `ApiGatewayManagementApi.postToConnection`. See WS payload contract in the tree model section.
+- **Streaming**: client sends `{ action: 'sendMessage', chatId, content?, model, systemPrompt, modelSettings, parentId? }` over WebSocket. `ws/sendMessage.ts` persists the user message (if `content` present), calls Bedrock `ConverseStream` in an agentic loop (up to 8 rounds for tool use), pushes event frames back via `ApiGatewayManagementApi.postToConnection`. See WS payload contract in the tree model section.
+- **Cancel**: client sends `{ action: 'cancelMessage' }` over WebSocket. `ws/cancelMessage.ts` sets a DynamoDB cancel flag on the `CONN#` row; the stream loop polls it every 750ms via `isStreamCancelled`, aborts the Bedrock stream via `AbortController`, flushes any partial text as a turn, then emits `cancelled`.
 
 ### DynamoDB single-table
 
 Table `chatrock-prod` with PK/SK:
 - Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, createdAt, updatedAt, **activeLeafId**
-- Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?
-- WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL
+- Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearch?
+- WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL, cancelRequested?
 
 Every CRUD handler derives `sub` from the JWT claims — never from client input — so users only ever touch their own partition.
 
@@ -107,13 +108,14 @@ Key helpers in `backend/src/lib/tree.ts`:
 ```
 backend/src/
   config/models.ts      — model registry with capabilities (temperature/topP/topK/thinking)
-  lib/bedrock.ts        — ConverseStream wrapper + agentic tool-use loop
+  lib/bedrock.ts        — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8)
   lib/blocks.ts         — block-level helpers: capToolResultText (30 KB cap)
-  lib/dynamo.ts         — DynamoDB access layer: buildTurnKey/buildChatKey, batchPutMessages, all table ops
+  lib/dynamo.ts         — DynamoDB access layer: buildTurnKey/buildChatKey, batchPutMessages, setStreamCancel/isStreamCancelled
   lib/tools.ts          — Bedrock tool specs + Jina web_search / web_fetch executor
   lib/tree.ts           — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf
   http/                 — one file per HTTP API route group (chats, messages, models)
   ws/sendMessage.ts     — the core streaming handler (the most complex file)
+  ws/cancelMessage.ts   — sets DynamoDB cancel flag; stream loop polls and aborts via AbortController
   ws/authorizer.ts      — WebSocket Lambda authorizer
 ```
 
@@ -138,6 +140,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `tool_result` | `toolUseId`, `name`, `isError`, `content` |
 | `delta` | `text` |
 | `done` | `stopReason` |
+| `cancelled` | — (stream was aborted by `cancelMessage`) |
 | `usage` | `usage` (inputTokens, outputTokens, cache*) |
 | `titleUpdated` | `chatId`, `title` |
 | `error` | `message` |
@@ -147,19 +150,24 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 ```
 frontend/src/
   api/http.ts           — REST client + Model/ModelCapabilities/ModelSettings types + migrateSettings()
-  api/ws.ts             — WebSocket client (connect/send/event routing)
-  store/chatStore.ts    — Zustand store (messages, streamingMsg with toolCalls/thinking, lastModel persisted)
+  api/ws.ts             — WebSocket client (connect/send/cancelMessage/event routing)
+  store/chatStore.ts    — Zustand store (messages, streamingMsg with toolCalls/thinking, toasts, lastModel persisted)
+  lib/toolResults.ts    — shared helper: parses web_search JSON into SearchResult[] for cards
+  lib/useAsyncAction.ts — hook: wraps async fn → {run, pending}; errors auto-push to toast store
   components/
-    ChatView.tsx         — main chat pane, URL-driven (/c/new or /c/:chatId)
-    ModelSettingsPanel.tsx — dynamic settings panel rendered from model capabilities
-    MessageBubble.tsx    — renders thinking blocks, tool call pills, markdown; always-visible .bubble-row with sibling nav, re-run, edit, fork, copy actions
-    Sidebar.tsx          — chat list with navigate(), retitle wand
+    ChatView.tsx         — main chat pane, URL-driven (/c/new or /c/:chatId); stop button, scroll FABs, bubble stepper
+    ModelSettingsPanel.tsx — dynamic settings panel (temperature, topP, thinking effort, web search toggle)
+    MessageBubble.tsx    — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
+    Sidebar.tsx          — chat list with navigate(), retitle wand; off-canvas on mobile
+    Toaster.tsx          — stacked toast notifications (bottom-center), auto-dismiss 3s
   env.ts                — VITE_* env var access
 ```
 
 React Router v6: `/` → `/c/new`, `/c/:chatId` for existing chats. Navigation is URL-driven — `useParams` replaces a global active-chat store entry.
 
 `lastModel` is the only Zustand state persisted to localStorage. Everything else is ephemeral.
+
+`ModelSettings.webSearch` defaults to `true`; when `false`, `bedrock.ts` passes an empty tools array so the model cannot call web tools. Per-assistant-turn `thinkingEffort` and `webSearch` are persisted in DynamoDB and surfaced in the bubble metadata line.
 
 ### Frontend env vars
 
