@@ -1,9 +1,10 @@
 locals {
-  s3_origin_id       = "s3-spa"
-  http_api_origin_id = "http-api"
-  ws_api_origin_id   = "ws-api"
-  http_api_hostname  = replace(aws_apigatewayv2_api.http.api_endpoint, "https://", "")
-  ws_api_hostname    = "${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com"
+  s3_origin_id             = "s3-spa"
+  s3_attachments_origin_id = "s3-attachments"
+  http_api_origin_id       = "http-api"
+  ws_api_origin_id         = "ws-api"
+  http_api_hostname        = replace(aws_apigatewayv2_api.http.api_endpoint, "https://", "")
+  ws_api_hostname          = "${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com"
 }
 
 # CloudFront Function: rewrite extensionless paths to /index.html for SPA routing.
@@ -27,6 +28,17 @@ resource "aws_cloudfront_function" "spa_router" {
   EOT
 }
 
+resource "aws_cloudfront_public_key" "attachments" {
+  name        = "chatrock-attachments-key-${var.env}"
+  encoded_key = tls_private_key.attachments_cf.public_key_pem
+}
+
+resource "aws_cloudfront_key_group" "attachments" {
+  name    = "chatrock-attachments-keygroup-${var.env}"
+  items   = [aws_cloudfront_public_key.attachments.id]
+  comment = "Attachment download signing"
+}
+
 resource "aws_cloudfront_distribution" "chatrock" {
   enabled             = true
   default_root_object = "index.html"
@@ -45,6 +57,12 @@ resource "aws_cloudfront_distribution" "chatrock" {
     domain_name              = aws_s3_bucket.spa.bucket_regional_domain_name
     origin_id                = local.s3_origin_id
     origin_access_control_id = aws_cloudfront_origin_access_control.spa.id
+  }
+
+  origin {
+    domain_name              = aws_s3_bucket.attachments.bucket_regional_domain_name
+    origin_id                = local.s3_attachments_origin_id
+    origin_access_control_id = aws_cloudfront_origin_access_control.attachments.id
   }
 
   origin {
@@ -102,6 +120,25 @@ resource "aws_cloudfront_distribution" "chatrock" {
     min_ttl     = 0
     default_ttl = 0
     max_ttl     = 0
+    compress    = true
+  }
+
+  # /attachments/* → S3 attachments (signed URLs only)
+  ordered_cache_behavior {
+    path_pattern               = "/attachments/*"
+    target_origin_id           = local.s3_attachments_origin_id
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
+    trusted_key_groups         = [aws_cloudfront_key_group.attachments.id]
+    forwarded_values {
+      query_string = true
+      cookies { forward = "none" }
+    }
+    min_ttl     = 0
+    default_ttl = 3600
+    max_ttl     = 86400
     compress    = true
   }
 

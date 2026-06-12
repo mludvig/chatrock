@@ -147,3 +147,11 @@ resource "aws_apigatewayv2_route" "models" {
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
+
+resource "aws_apigatewayv2_route" "attachments_upload" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/attachments"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}

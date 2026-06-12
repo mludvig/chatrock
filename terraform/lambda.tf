@@ -9,6 +9,10 @@ locals {
     COGNITO_CLIENT_ID                   = aws_cognito_user_pool_client.spa.id
     JINA_API_KEY                        = var.jina_api_key
     AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
+    ATTACHMENTS_BUCKET                  = aws_s3_bucket.attachments.id
+    CLOUDFRONT_DOMAIN                   = "https://${var.domain_name}"
+    CLOUDFRONT_KEY_PAIR_ID              = aws_cloudfront_public_key.attachments.id
+    CLOUDFRONT_PRIVATE_KEY_SSM          = aws_ssm_parameter.cloudfront_attachments_private_key.name
   }
 }
 
@@ -143,6 +147,25 @@ resource "aws_lambda_function" "ws_send_message" {
 resource "aws_lambda_permission" "ws_send_apigw" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.ws_send_message.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
+}
+
+resource "aws_lambda_function" "ws_cancel_message" {
+  function_name    = "chatrock-ws-cancelMessage-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/ws-cancelMessage.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/ws-cancelMessage.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 10
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "ws_cancel_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ws_cancel_message.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
 }
