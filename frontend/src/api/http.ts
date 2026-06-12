@@ -46,6 +46,7 @@ export type Step =
   | { kind: 'thinking'; text: string }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }> }
+  | { kind: 'attachment'; attachmentKind: 'image' | 'document'; filename: string; contentType: string; url: string; mode?: 'standard' | 'rich' }
 
 export interface Message {
   msgId: string
@@ -130,4 +131,30 @@ export const api = {
     req<{ chatId: string }>('POST', `/api/chats/${chatId}/fork`, { fromMsgId }),
   deleteBranch: (chatId: string, msgId: string) =>
     req<void>('DELETE', `/api/chats/${chatId}/messages/${msgId}`),
+}
+
+export interface UploadRequest {
+  chatId: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+}
+
+export interface UploadResponse {
+  s3Key: string
+  uploadUrl: string
+}
+
+export async function requestUpload(uploadReq: UploadRequest): Promise<UploadResponse> {
+  return req<UploadResponse>('POST', '/api/attachments', uploadReq)
+}
+
+export async function uploadToS3(uploadUrl: string, file: File): Promise<void> {
+  const res = await fetch(uploadUrl, {
+    method: 'PUT',
+    body: file,
+    headers: { 'Content-Type': file.type },
+    // NOTE: presigned PUT already encodes AWS credentials; no Authorization header
+  })
+  if (!res.ok) throw new Error(`S3 upload failed: ${res.status}`)
 }
