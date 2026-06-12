@@ -56,7 +56,9 @@ import type { SearchResult } from '../lib/toolResults'
 export function sanitizeUrl(url: string): string {
   try {
     const parsed = new URL(url)
-    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? url : '#'
+    // Allow blob: for local ObjectURL previews (attachment thumbnails before upload completes)
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:' || parsed.protocol === 'blob:') return url
+    return '#'
   } catch {
     return '#'
   }
