@@ -654,6 +654,24 @@ body {
   }
 }
 
+.msg-meta {
+  font-size: 11px;
+  color: $muted;
+  opacity: 0.7;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+
+  .msg-meta-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+}
+
 .input-bar {
   display: flex;
   gap: 10px;
@@ -698,6 +716,11 @@ body {
 
   &:hover:not(:disabled) { background: $accent-h; }
   &:disabled { opacity: 0.4; cursor: default; }
+
+  &.btn-stop {
+    background: #c0392b;
+    &:hover { background: #a93226; }
+  }
 }
 
 // ── Splash / Login ────────────────────────────────────────────────────────────
@@ -894,6 +917,36 @@ body {
   border-radius: 6px;
   color: $muted;
   cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+
+  &:hover { background: color.adjust($surface2, $lightness: -4%); color: $text; }
+
+  &.active {
+    background: $accent-light;
+    border-color: $accent;
+    color: $accent;
+    font-weight: 600;
+  }
+}
+
+.model-setting-row--inline {
+  flex-direction: row;
+  align-items: center;
+
+  .setting-label { flex: 1; }
+}
+
+.toggle-btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: $font;
+  background: $surface2;
+  border: 1px solid $border;
+  border-radius: 6px;
+  color: $muted;
+  cursor: pointer;
+  min-width: 40px;
+  text-align: center;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 
   &:hover { background: color.adjust($surface2, $lightness: -4%); color: $text; }
@@ -1104,7 +1157,7 @@ body {
   ul, ol { padding-left: 1.4em; margin: 0.4em 0 0.75em; }
   li { margin-bottom: 0.2em; }
 
-  code {
+  .inline-code {
     font-family: 'SF Mono', 'Fira Code', monospace;
     font-size: 0.875em;
     background: $surface2;
@@ -1113,21 +1166,8 @@ body {
     padding: 1px 5px;
   }
 
-  pre {
-    background: #1e1e2e;
-    border-radius: 8px;
-    padding: 14px 16px;
-    overflow-x: auto;
-    margin: 0.6em 0;
-
-    code {
-      background: none;
-      border: none;
-      padding: 0;
-      color: #cdd6f4;
-      font-size: 0.85em;
-    }
-  }
+  // SyntaxHighlighter renders its own pre/code — just constrain overflow
+  pre { margin: 0.6em 0; overflow-x: auto; }
 
   blockquote {
     border-left: 3px solid $accent;
@@ -1155,9 +1195,54 @@ body {
   hr { border: none; border-top: 1px solid $border; margin: 1em 0; }
 }
 
-// For user messages, code inside still gets a readable style
-.message.user .md code { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.2); color: #fff; }
-.message.user .md a    { color: rgba(255,255,255,0.9); }
+// User bubble markdown — invert inline code colours; code blocks keep their dark theme
+.message.user .md .inline-code { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.2); color: #fff; }
+.message.user .md a             { color: rgba(255,255,255,0.9); }
+
+// ── Code block (syntax-highlighted, with copy button) ────────────────────────
+.code-block {
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0.6em 0;
+  border: 1px solid #3a3a4a;
+
+  .code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #282c34;
+    padding: 5px 12px;
+    min-height: 30px;
+  }
+
+  .code-lang {
+    font-size: 11px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #abb2bf;
+    text-transform: lowercase;
+  }
+
+  .code-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-family: $font;
+    background: transparent;
+    border: 1px solid #4a4a5a;
+    border-radius: 4px;
+    color: #abb2bf;
+    padding: 2px 8px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    margin-left: auto;
+
+    &:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  }
+
+  // Override SyntaxHighlighter's inline style border-radius so header connects cleanly
+  > div { border-radius: 0 !important; }
+}
 
 // ── Toaster ───────────────────────────────────────────────────────────────────
 .toaster {
@@ -1210,4 +1295,209 @@ body {
   border-radius: 3px;
 
   &:hover { background: color.adjust($border, $lightness: -10%); }
+}
+
+// ── Mobile responsive (≤720px) ────────────────────────────────────────────────
+$mobile: 720px;
+
+// Hamburger hidden on desktop
+.btn-hamburger { display: none; }
+
+@media (max-width: $mobile) {
+  // Single-column layout — sidebar off-canvas
+  .layout {
+    grid-template-columns: 1fr;
+    position: relative;
+  }
+
+  // Sidebar becomes a fixed drawer, hidden by default
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(300px, 85vw);
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.12);
+  }
+
+  // Slide in when layout has .sidebar-open
+  .sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+
+  // Backdrop shown when sidebar is open
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 199;
+    backdrop-filter: blur(1px);
+  }
+
+  // Show hamburger, hide on desktop (already display:none above breakpoint)
+  .btn-hamburger {
+    display: flex;
+    flex-shrink: 0;
+  }
+
+  // Compact header
+  .chat-header {
+    padding: 8px 12px;
+    gap: 8px;
+
+    h2 { font-size: 14px; }
+  }
+
+  .header-controls { gap: 6px; }
+
+  .model-select { font-size: 12px; padding: 4px 8px; max-width: 130px; }
+
+  // Bubbles: reduce horizontal padding on mobile
+  .bubble-row { padding: 0 8px; }
+
+  .message {
+    &.user { max-width: 90%; }
+    &.assistant { max-width: 98%; }
+  }
+
+  // Input area: tighter padding
+  .input-bar { padding: 8px 10px 12px; gap: 8px; }
+  .stats-bar { padding: 4px 12px 2px; }
+
+  // Auto-expanding textarea: start at 1 row, grow to ~5
+  .message-input {
+    font-size: 16px; // prevents iOS zoom-in on focus
+    min-height: 42px;
+  }
+
+  // Send/stop button slightly smaller
+  .btn-send { width: 40px; height: 40px; font-size: 16px; }
+
+  // Scroll FABs: closer to edge on mobile
+  .scroll-fabs { right: 8px; bottom: 8px; }
+
+  // Toaster: full-width on mobile
+  .toaster { left: 12px; right: 12px; transform: none; }
+  .toast   { max-width: 100%; }
+
+  // Settings panel: compact
+  .settings-panel { padding: 10px 12px; }
+}
+
+// ── Attachment tray ────────────────────────────────────────────────────────────
+
+.attachment-tray {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px 0;
+}
+
+.attachment-tray-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #2a2a2a;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #ccc;
+  max-width: 220px;
+
+  &.uploading { opacity: 0.7; }
+  &.error { border-color: #c0392b; color: #e74c3c; }
+
+  .tray-thumbnail {
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
+    border-radius: 4px;
+  }
+  .tray-file-icon { color: #888; font-size: 20px; }
+  .tray-filename {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tray-spinner { color: #888; }
+  .tray-error { color: #e74c3c; font-weight: bold; cursor: help; }
+  .tray-mode-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #333;
+    border: none;
+    color: #aaa;
+    cursor: pointer;
+    &.rich { color: #5dade2; }
+    &:hover { background: #444; }
+  }
+  .tray-remove {
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+    &:hover { color: #e74c3c; }
+  }
+}
+
+// ── Attach button ──────────────────────────────────────────────────────────────
+
+.btn-attach {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 8px;
+  font-size: 16px;
+  border-radius: 6px;
+  transition: color 0.15s;
+  &:hover:not(:disabled) { color: #ccc; }
+  &:disabled { opacity: 0.4; cursor: not-allowed; }
+}
+
+// ── Attachment blocks in message bubbles ───────────────────────────────────────
+
+.attachment-block {
+  margin: 6px 0;
+
+  &--image {
+    display: inline-block;
+    a { display: block; }
+    .attachment-thumbnail {
+      max-width: 360px;
+      max-height: 300px;
+      border-radius: 8px;
+      border: 1px solid #3a3a3a;
+      display: block;
+    }
+  }
+
+  &--doc {
+    .attachment-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: #2a2a2a;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      color: #ccc;
+      font-size: 13px;
+      text-decoration: none;
+      &:hover { border-color: #555; color: #fff; }
+    }
+    .attachment-icon { color: #5dade2; }
+    .attachment-mode { font-size: 11px; color: #888; }
+  }
 }

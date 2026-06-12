@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faGear, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown } from '@fortawesome/free-solid-svg-icons'
-import { api, defaultSettings, migrateSettings } from '../api/http'
+import { faBars, faGear, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
+import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelSettings, ModelCapabilities, TokenUsage } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
 import { sendMessage, cancelMessage, ensureConnected, setWSHandlers } from '../api/ws'
@@ -43,6 +43,22 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  interface PendingAttachment {
+    id: string
+    file: File
+    contentType: string
+    filename: string
+    attachmentKind: 'image' | 'document'
+    mode: 'standard' | 'rich'
+    s3Key?: string
+    localUrl?: string
+    status: 'uploading' | 'ready' | 'error'
+    errorMsg?: string
+  }
+
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [creatingChat, setCreatingChat] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
 
@@ -67,8 +83,69 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
     ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
 
+  const ALLOWED_TYPES: Record<string, 'image' | 'document'> = {
+    'image/png': 'image', 'image/jpeg': 'image', 'image/gif': 'image', 'image/webp': 'image',
+    'application/pdf': 'document',
+    'text/plain': 'document', 'text/markdown': 'document', 'text/x-markdown': 'document',
+    'text/csv': 'document', 'application/octet-stream': 'document',
+  }
+  const MAX_SIZES: Record<string, number> = {
+    'image/png': 5 * 1024 * 1024, 'image/jpeg': 5 * 1024 * 1024,
+    'image/gif': 5 * 1024 * 1024, 'image/webp': 5 * 1024 * 1024,
+    'application/pdf': 25 * 1024 * 1024,
+    'text/plain': 1 * 1024 * 1024, 'text/markdown': 1 * 1024 * 1024,
+    'text/x-markdown': 1 * 1024 * 1024, 'text/csv': 1 * 1024 * 1024,
+    'application/octet-stream': 1 * 1024 * 1024,
+  }
+
+  function addFiles(files: File[]) {
+    const currentChatId = chatId && chatId !== 'new' ? chatId : null
+    if (!currentChatId) {
+      pushToast({ kind: 'error', text: 'Start a chat before attaching files' })
+      return
+    }
+    for (const file of files) {
+      const ct = file.type || 'application/octet-stream'
+      const kind = ALLOWED_TYPES[ct]
+      if (!kind) {
+        pushToast({ kind: 'error', text: `File type not supported: ${file.name}` })
+        continue
+      }
+      const maxBytes = MAX_SIZES[ct] ?? 1 * 1024 * 1024
+      if (file.size > maxBytes) {
+        pushToast({ kind: 'error', text: `File too large: ${file.name}` })
+        continue
+      }
+      const id = crypto.randomUUID()
+      const localUrl = kind === 'image' ? URL.createObjectURL(file) : undefined
+      const att: PendingAttachment = {
+        id, file, contentType: ct, filename: file.name,
+        attachmentKind: kind, mode: 'standard', localUrl, status: 'uploading',
+      }
+      setAttachments(prev => [...prev, att])
+
+      requestUpload({ chatId: currentChatId, filename: file.name, contentType: ct, sizeBytes: file.size })
+        .then(({ s3Key, uploadUrl }) => uploadToS3(uploadUrl, file).then(() => s3Key))
+        .then(s3Key => {
+          setAttachments(prev => prev.map(a => a.id === id ? { ...a, s3Key, status: 'ready' } : a))
+        })
+        .catch(e => {
+          const msg = e instanceof Error ? e.message : String(e)
+          setAttachments(prev => prev.map(a => a.id === id ? { ...a, status: 'error', errorMsg: msg } : a))
+        })
+    }
+  }
+
   // Keep ref in sync after each render (must be an effect, not during render)
   useEffect(() => { chatIdRef.current = chatId })
+
+  // Revoke object URLs on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      attachments.forEach(a => { if (a.localUrl) URL.revokeObjectURL(a.localUrl) })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Reload messages for a given chatId, applying tool-result enrichment.
   // Used both by the load effect and the post-stream done-handler refetch.
@@ -363,17 +440,40 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   async function handleSend() {
     const content = input.trim()
-    if (!content || sending || creatingChat) return
+    const readyAttachments = attachments.filter(a => a.status === 'ready')
+    if ((!content && readyAttachments.length === 0) || sending || creatingChat) return
+    if (attachments.some(a => a.status === 'uploading')) {
+      pushToast({ kind: 'error', text: 'Please wait for uploads to finish' })
+      return
+    }
     setInput('')
+    setAttachments([])
     if (inputRef.current) inputRef.current.style.height = 'auto'
     setErrorMsg(null)
     setLastTurnUsage(null)
+
+    const attachmentsPayload = readyAttachments.map(a => ({
+      s3Key: a.s3Key!,
+      contentType: a.contentType,
+      filename: a.filename,
+      mode: a.mode,
+    }))
 
     // Optimistic user bubble (format C: steps-based)
     const optimisticUser = {
       msgId: crypto.randomUUID(),
       role: 'user' as const,
-      steps: [{ kind: 'text' as const, text: content }],
+      steps: [
+        ...(content ? [{ kind: 'text' as const, text: content }] : []),
+        ...readyAttachments.map(a => ({
+          kind: 'attachment' as const,
+          attachmentKind: a.attachmentKind,
+          filename: a.filename,
+          contentType: a.contentType,
+          url: a.localUrl ?? '',
+          mode: a.mode,
+        })),
+      ],
       model: '',
       createdAt: new Date().toISOString(),
     }
@@ -399,7 +499,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           updatedAt: now,
         })
         await ensureConnected(accessToken)
-        sendMessage({ chatId: res.chatId, content, model, systemPrompt, modelSettings })
+        sendMessage({ chatId: res.chatId, content, model, systemPrompt, modelSettings, attachments: attachmentsPayload })
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
         setSending(false)
@@ -429,6 +529,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
         modelSettings,
+        attachments: attachmentsPayload,
       })
     } catch (err) {
       setSending(false)
@@ -568,7 +669,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         </div>
       )}
 
-      <div className="input-area">
+      <div
+        className="input-area"
+        onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
+        onDrop={e => {
+          e.preventDefault()
+          addFiles(Array.from(e.dataTransfer.files))
+        }}
+      >
         {/* Token stats line — shown when there are any usage stats */}
         {(lastTurnUsage || conversationUsage) && (
           <div className="stats-bar">
@@ -581,7 +689,57 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </div>
         )}
 
+        {attachments.length > 0 && (
+          <div className="attachment-tray">
+            {attachments.map(att => (
+              <div
+                key={att.id}
+                className={`attachment-tray-item${att.status === 'error' ? ' error' : att.status === 'uploading' ? ' uploading' : ''}`}
+              >
+                {att.attachmentKind === 'image' && att.localUrl ? (
+                  <img src={att.localUrl} alt={att.filename} className="tray-thumbnail" />
+                ) : (
+                  <FontAwesomeIcon icon={faFile} className="tray-file-icon" />
+                )}
+                <span className="tray-filename">{att.filename}</span>
+                {att.status === 'uploading' && <FontAwesomeIcon icon={faSpinner} spin className="tray-spinner" />}
+                {att.status === 'error' && <span className="tray-error" title={att.errorMsg}>!</span>}
+                {att.attachmentKind === 'document' && att.status === 'ready' && (
+                  <button
+                    className={`tray-mode-btn${att.mode === 'rich' ? ' rich' : ''}`}
+                    title={att.mode === 'rich' ? 'Rich (visual, more tokens)' : 'Standard (text only)'}
+                    onClick={() => setAttachments(prev => prev.map(a =>
+                      a.id === att.id ? { ...a, mode: a.mode === 'standard' ? 'rich' : 'standard' } : a,
+                    ))}
+                  >
+                    <FontAwesomeIcon icon={att.mode === 'rich' ? faToggleOn : faToggleOff} />
+                    {att.mode === 'rich' ? 'Rich' : 'Standard'}
+                  </button>
+                )}
+                <button className="tray-remove" title="Remove" onClick={() => {
+                  if (att.localUrl) URL.revokeObjectURL(att.localUrl)
+                  setAttachments(prev => prev.filter(a => a.id !== att.id))
+                }}>
+                  <FontAwesomeIcon icon={faXmark} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="input-bar">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={Object.keys(ALLOWED_TYPES).join(',')}
+            style={{ display: 'none' }}
+            onChange={e => {
+              const files = Array.from(e.target.files ?? [])
+              if (files.length > 0) addFiles(files)
+              e.target.value = ''
+            }}
+          />
           <textarea
             ref={inputRef}
             className="message-input"
@@ -600,9 +758,30 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
                 handleSend()
               }
             }}
+            onPaste={e => {
+              const items = Array.from(e.clipboardData.items)
+              const files = items
+                .filter(item => item.kind === 'file' && ALLOWED_TYPES[item.type])
+                .map(item => item.getAsFile())
+                .filter((f): f is File => f !== null)
+              if (files.length > 0) {
+                e.preventDefault()
+                addFiles(files)
+              }
+            }}
             disabled={sending || creatingChat}
             autoFocus
           />
+          {currentCaps?.attachments && (
+            <button
+              className="btn-attach"
+              title="Attach file"
+              disabled={sending || creatingChat}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <FontAwesomeIcon icon={faPaperclip} />
+            </button>
+          )}
           {sending ? (
             <button
               className="btn-send btn-stop"
@@ -615,7 +794,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <button
               className="btn-send"
               onClick={handleSend}
-              disabled={creatingChat || !input.trim()}
+              disabled={creatingChat || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
             >
               <FontAwesomeIcon icon={faPaperPlane} />
             </button>
