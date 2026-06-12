@@ -74,7 +74,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const messagesRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   // bubble DOM refs for prev/next stepping (C3)
-  const bubbleRefsRef = useRef<HTMLDivElement[]>([])
+  const bubbleRefsRef = useRef<(HTMLDivElement | null)[]>([])
   const bubbleIdxRef = useRef(-1)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
@@ -320,7 +320,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   }
 
   function stepBubble(dir: 1 | -1) {
-    const refs = bubbleRefsRef.current.filter(Boolean)
+    const refs = bubbleRefsRef.current.filter((el): el is HTMLDivElement => !!el)
     if (refs.length === 0) return
     const next = Math.max(0, Math.min(refs.length - 1, bubbleIdxRef.current + dir))
     bubbleIdxRef.current = next
@@ -657,16 +657,16 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             </div>
           )}
           {allMessages.map((m, i) => (
-            <div key={'msgId' in m ? m.msgId : `stream-${i}`} ref={el => { if (el) bubbleRefsRef.current[i] = el }} style={{ display: 'contents' }}>
-              <MessageBubble
-                message={m}
-                onRerun={!isNew ? handleRerun : undefined}
-                onNavigate={!isNew ? handleNavigate : undefined}
-                onEditRequest={!isNew ? handleEditRequest : undefined}
-                onForkToHere={!isNew ? handleForkToHere : undefined}
-                onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
-              />
-            </div>
+            <MessageBubble
+              key={'msgId' in m ? m.msgId : `stream-${i}`}
+              ref={el => { bubbleRefsRef.current[i] = el }}
+              message={m}
+              onRerun={!isNew ? handleRerun : undefined}
+              onNavigate={!isNew ? handleNavigate : undefined}
+              onEditRequest={!isNew ? handleEditRequest : undefined}
+              onForkToHere={!isNew ? handleForkToHere : undefined}
+              onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
+            />
           ))}
           <div ref={bottomRef} />
         </div>
