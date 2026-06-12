@@ -441,4 +441,35 @@ describe('attachment steps in messages', () => {
     expect(attachStep.mode).toBe('standard')
     expect(attachStep.url).toContain('cdn.example.com')
   })
+
+  test('image and document attachment steps include s3Key alongside signed url', async () => {
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1' })
+    mockDynamo.listMessages.mockResolvedValue([
+      row({
+        msgId: 'u1',
+        parentId: null,
+        role: 'user',
+        responseId: 'r1',
+        blocks: [
+          { image: { format: 'png', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/shot.png' } } } },
+          { document: { format: 'pdf', name: 'Report', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/report.pdf' } }, citations: { enabled: false } } },
+        ],
+      }),
+    ])
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body ?? '{}')
+    const steps = body.bubbles[0].steps as Array<Record<string, unknown>>
+
+    const imageStep = steps.find(s => s.kind === 'attachment' && s.attachmentKind === 'image')
+    expect(imageStep).toBeDefined()
+    expect(imageStep!.s3Key).toBe('attachments/sub/chat/fid/shot.png')
+    expect(imageStep!.url).toContain('cdn.example.com')  // signed URL still present
+
+    const docStep = steps.find(s => s.kind === 'attachment' && s.attachmentKind === 'document')
+    expect(docStep).toBeDefined()
+    expect(docStep!.s3Key).toBe('attachments/sub/chat/fid/report.pdf')
+    expect(docStep!.url).toContain('cdn.example.com')  // signed URL still present
+  })
 })
