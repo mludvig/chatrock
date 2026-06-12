@@ -2,10 +2,17 @@ import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel } from '../lib/dynamo'
 import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
 import { buildActivePath, type TurnRow } from '../lib/tree'
 import { TITLE_MODEL, isValidModelId, type ModelSettings } from '../config/models'
+import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
+
+function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[]): ContentBlock[] {
+  const text = content ?? (attachments.length > 0 ? ' ' : '')
+  const textBlock: ContentBlock = { text }
+  return [textBlock, ...attachments.map(a => attachmentBlock(a))]
+}
 
 interface WSSendEvent {
   requestContext: {
@@ -29,8 +36,9 @@ export const buildHandler = (postFn: PostFn) => async (
     systemPrompt: string
     modelSettings?: ModelSettings
     parentId?: string | null
+    attachments?: AttachmentMeta[]
   }
-  const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId } = body
+  const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId, attachments = [] } = body
   // Detect edit/re-run by key presence (not value) so parentId: null (root edit) is handled.
   const hasParentId = 'parentId' in body
   // Re-run: parentId key present and no content = regenerate answer as a sibling
@@ -77,10 +85,12 @@ export const buildHandler = (postFn: PostFn) => async (
     // Replay history: root→parentId (user turn that prompted the original answer).
     // The original answer is NOT included — the new answer is a fresh sibling.
     const replayPath = buildActivePath(priorRows as unknown as TurnRow[], rerunParentId!)
-    bedrockMessages = replayPath.map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: (m.blocks ?? []) as ContentBlock[],
-    }))
+    bedrockMessages = await Promise.all(
+      replayPath.map(async m => ({
+        role: m.role as 'user' | 'assistant',
+        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+      }))
+    )
     // New assistant turns chain from the re-run parent
     lastTurnMsgId = rerunParentId!
   } else if (isEdit) {
@@ -102,7 +112,7 @@ export const buildHandler = (postFn: PostFn) => async (
       msgId: userMsgId,
       parentId: editParentId,
       role: 'user',
-      blocks: [{ text: content! }] as ContentBlock[],
+      blocks: buildUserBlocks(content, attachments),
       model,
       createdAt: responseStartTs,
       turnIndex: 0,
@@ -110,10 +120,12 @@ export const buildHandler = (postFn: PostFn) => async (
     }
     await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
     const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
-    bedrockMessages = buildActivePath(allRows, userMsgId).map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: (m.blocks ?? []) as ContentBlock[],
-    }))
+    bedrockMessages = await Promise.all(
+      buildActivePath(allRows, userMsgId).map(async m => ({
+        role: m.role as 'user' | 'assistant',
+        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+      }))
+    )
     lastTurnMsgId = userMsgId
   } else {
     // ── Normal send path ──────────────────────────────────────────────────────
@@ -129,7 +141,7 @@ export const buildHandler = (postFn: PostFn) => async (
       msgId: userMsgId,
       parentId: currentLeafId,
       role: 'user',
-      blocks: [{ text: content! }] as ContentBlock[],
+      blocks: buildUserBlocks(content, attachments),
       model,
       createdAt: responseStartTs,
       turnIndex: 0,
@@ -143,20 +155,47 @@ export const buildHandler = (postFn: PostFn) => async (
     // Replay blocks verbatim so reasoning signatures + prompt-caching prefix are preserved.
     const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
     const activePath = buildActivePath(allRows, userMsgId)
-    bedrockMessages = activePath.map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: (m.blocks ?? []) as ContentBlock[],
-    }))
+    bedrockMessages = await Promise.all(
+      activePath.map(async m => ({
+        role: m.role as 'user' | 'assistant',
+        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+      }))
+    )
     lastTurnMsgId = userMsgId
   }
 
   console.log(JSON.stringify({ event: 'stream_start', chatId, model, connId }))
 
+  // Clear any stale cancel flag from a previous stream on this connection
+  await clearStreamCancel(connId)
+
+  const abortController = new AbortController()
+  let cancelled = false
+
+  // Mid-turn cancel poller: checks the cancel flag every 750ms and aborts the
+  // Bedrock stream if set. Runs in parallel with the stream loop.
+  let pollTimer: ReturnType<typeof setTimeout> | undefined
+  const startPollTimer = () => {
+    pollTimer = setTimeout(async () => {
+      if (abortController.signal.aborted) return
+      if (await isStreamCancelled(connId)) {
+        abortController.abort()
+      } else {
+        startPollTimer()
+      }
+    }, 750)
+  }
+  startPollTimer()
+
   // Track the latest usage for forwarding
   let lastUsage: TokenUsage | undefined
 
+  // Partial-turn accumulator for mid-turn abort flush
+  let partialText = ''
+  let partialTurnIndex = 0
+
   try {
-    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages, modelSettings)) {
+    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages, modelSettings, abortController.signal)) {
       switch (chunk.type) {
         case 'thinking_delta':
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
@@ -165,6 +204,7 @@ export const buildHandler = (postFn: PostFn) => async (
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_done' }) })
           break
         case 'delta':
+          partialText += chunk.text
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
           break
         case 'tool_call_start':
@@ -206,8 +246,15 @@ export const buildHandler = (postFn: PostFn) => async (
             turnIndex: chunk.turnIndex,
             responseId,
             ...(chunk.role === 'assistant' && lastUsage ? { usage: lastUsage } : {}),
+            ...(chunk.role === 'assistant' && modelSettings.thinkingEffort !== undefined
+              ? { thinkingEffort: modelSettings.thinkingEffort } : {}),
+            ...(chunk.role === 'assistant' && modelSettings.webSearch !== undefined
+              ? { webSearch: modelSettings.webSearch } : {}),
           })
           lastTurnMsgId = turnMsgId
+          // Reset partial accumulator — this turn is fully persisted
+          partialText = ''
+          partialTurnIndex = chunk.turnIndex + 1
           break
         }
         case 'usage':
@@ -228,8 +275,46 @@ export const buildHandler = (postFn: PostFn) => async (
       }
     }
   } catch (err) {
-    console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: String(err) }))
-    await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: String(err) }) })
+    // Check if abort was requested (either via signal or cancel flag)
+    const wasAborted = abortController.signal.aborted || await isStreamCancelled(connId)
+    if (wasAborted) {
+      cancelled = true
+      // Flush any partial text accumulated before the abort
+      if (partialText) {
+        const turnMsgId = uuidv4()
+        const turnTs = new Date().toISOString()
+        await putMessage({
+          ...buildTurnKey(chatId, responseStartTs, seq, turnMsgId),
+          msgId: turnMsgId,
+          parentId: lastTurnMsgId,
+          role: 'assistant',
+          blocks: [{ text: partialText }],
+          model,
+          createdAt: turnTs,
+          turnIndex: partialTurnIndex,
+          responseId,
+        })
+        lastTurnMsgId = turnMsgId
+      }
+    } else {
+      clearTimeout(pollTimer)
+      console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: String(err) }))
+      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: String(err) }) })
+      return { statusCode: 200, body: '' }
+    }
+  }
+
+  clearTimeout(pollTimer)
+
+  if (cancelled) {
+    try {
+      await updateChatActiveLeaf(sub, chatId, lastTurnMsgId)
+    } catch (e) {
+      console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
+    }
+    await clearStreamCancel(connId)
+    console.log(JSON.stringify({ event: 'stream_cancelled', chatId, connId }))
+    await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'cancelled' }) })
     return { statusCode: 200, body: '' }
   }
 
