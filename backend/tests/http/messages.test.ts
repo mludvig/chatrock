@@ -7,6 +7,9 @@ const result = (r: unknown) => r as APIGatewayProxyStructuredResultV2
 
 jest.mock('../../src/lib/dynamo')
 jest.mock('../../src/lib/auth')
+jest.mock('../../src/lib/attachments', () => ({
+  signCloudFrontUrl: jest.fn().mockResolvedValue('https://cdn.example.com/attachments/sub/chat/fid/shot.png?Sig=x'),
+}))
 
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 const mockAuth   = auth   as jest.Mocked<typeof auth>
@@ -361,4 +364,81 @@ test('inc4: multi-turn tool response does not inflate sibling count', async () =
   // The assistant bubble is the only child of user-1 (toolResult rows are folded, not siblings)
   expect(assistantBubble.siblingCount).toBe(1)
   expect(assistantBubble.siblingIndex).toBe(1)
+})
+
+// ── AttachmentStep rendering ──────────────────────────────────────────────────
+
+describe('attachment steps in messages', () => {
+  test('user turn with image s3Location block produces attachment step with signed URL', async () => {
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1' })
+    mockDynamo.listMessages.mockResolvedValue([
+      row({
+        msgId: 'u1',
+        parentId: null,
+        role: 'user',
+        responseId: 'r1',
+        blocks: [
+          { text: 'Look at this' },
+          { image: { format: 'png', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/shot.png' } } } },
+        ],
+      }),
+    ])
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body ?? '{}')
+    const bubble = body.bubbles[0]
+    expect(bubble.role).toBe('user')
+
+    const attachStep = bubble.steps.find((s: { kind: string }) => s.kind === 'attachment')
+    expect(attachStep).toBeDefined()
+    expect(attachStep.attachmentKind).toBe('image')
+    expect(attachStep.url).toContain('cdn.example.com')
+    expect(attachStep.url).not.toContain('s3://')
+    expect(attachStep.filename).toBe('shot.png')
+  })
+
+  test('user turn image block with bytes (no s3Location) is silently skipped', async () => {
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1' })
+    mockDynamo.listMessages.mockResolvedValue([
+      row({
+        msgId: 'u1',
+        parentId: null,
+        role: 'user',
+        responseId: 'r1',
+        blocks: [
+          { image: { format: 'png', source: { bytes: Buffer.from('PNG') } } },
+        ],
+      }),
+    ])
+
+    const res = result(await handler(makeEvent('c1')))
+    const body = JSON.parse(res.body ?? '{}')
+    const steps = body.bubbles[0].steps
+    const attachStep = steps.find((s: { kind: string }) => s.kind === 'attachment')
+    expect(attachStep).toBeUndefined()
+  })
+
+  test('user turn with document s3Location produces attachment step with document kind', async () => {
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1' })
+    mockDynamo.listMessages.mockResolvedValue([
+      row({
+        msgId: 'u1',
+        parentId: null,
+        role: 'user',
+        responseId: 'r1',
+        blocks: [
+          { document: { format: 'pdf', name: 'Report', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/report.pdf' } }, citations: { enabled: false } } },
+        ],
+      }),
+    ])
+
+    const res = result(await handler(makeEvent('c1')))
+    const body = JSON.parse(res.body ?? '{}')
+    const attachStep = body.bubbles[0].steps.find((s: { kind: string }) => s.kind === 'attachment')
+    expect(attachStep).toBeDefined()
+    expect(attachStep.attachmentKind).toBe('document')
+    expect(attachStep.mode).toBe('standard')
+    expect(attachStep.url).toContain('cdn.example.com')
+  })
 })

@@ -2,6 +2,7 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 }
 import { getChat, listMessages } from '../lib/dynamo'
 import { buildActivePath } from '../lib/tree'
 import { subFromClaims } from '../lib/auth'
+import { signCloudFrontUrl } from '../lib/attachments'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import type { TokenUsage } from '../lib/bedrock'
 
@@ -36,7 +37,16 @@ interface ToolStep {
   isError?: boolean
 }
 
-type Step = ThinkingStep | TextStep | ToolStep
+interface AttachmentStep {
+  kind: 'attachment'
+  attachmentKind: 'image' | 'document'
+  filename: string
+  contentType: string
+  url: string
+  mode?: 'standard' | 'rich'
+}
+
+type Step = ThinkingStep | TextStep | ToolStep | AttachmentStep
 
 // Internal shape returned by groupTurnsToBubbles (no sibling metadata yet)
 interface RawBubble {
@@ -47,6 +57,8 @@ interface RawBubble {
   model: string
   createdAt: string
   usage?: TokenUsage
+  thinkingEffort?: string
+  webSearch?: boolean
 }
 
 // External shape sent to the client (includes sibling metadata)
@@ -75,6 +87,8 @@ interface TurnRow {
   turnIndex: number
   responseId: string
   usage?: TokenUsage
+  thinkingEffort?: string
+  webSearch?: boolean
 }
 
 // ── groupTurnsToBubbles ───────────────────────────────────────────────────────
@@ -90,7 +104,7 @@ interface TurnRow {
  *
  * Raw blocks, signatures, and redactedContent are never included in output.
  */
-function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
+async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResponse> {
   const bubbles: RawBubble[] = []
   const conversationUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
 
@@ -127,6 +141,8 @@ function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
           steps: [],
           model: row.model,
           createdAt: row.createdAt,
+          ...(row.thinkingEffort !== undefined ? { thinkingEffort: row.thinkingEffort } : {}),
+          ...(row.webSearch !== undefined ? { webSearch: row.webSearch } : {}),
         }
         currentToolSteps = new Map()
         currentResponseId = row.responseId
@@ -199,6 +215,42 @@ function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
       for (const block of row.blocks) {
         if ('text' in block && block.text !== undefined) {
           steps.push({ kind: 'text', text: block.text })
+        } else if ('image' in block && block.image) {
+          const src = block.image.source as { s3Location?: { uri: string }; bytes?: unknown }
+          if (src?.s3Location) {
+            const key = src.s3Location.uri.replace(/^s3:\/\/[^/]+\//, '')
+            const filename = key.split('/').pop() ?? 'image'
+            const url = await signCloudFrontUrl(key)
+            steps.push({
+              kind: 'attachment',
+              attachmentKind: 'image',
+              filename,
+              contentType: `image/${block.image.format ?? 'png'}`,
+              url,
+            })
+          }
+          // blocks with bytes are silently skipped (defensive; should not be stored)
+        } else if ('document' in block && block.document) {
+          const src = block.document.source as { s3Location?: { uri: string }; bytes?: unknown }
+          if (src?.s3Location) {
+            const key = src.s3Location.uri.replace(/^s3:\/\/[^/]+\//, '')
+            const filename = key.split('/').pop() ?? 'document'
+            const url = await signCloudFrontUrl(key)
+            const formatToMime: Record<string, string> = {
+              pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
+            }
+            const citations = block.document.citations as { enabled: boolean } | undefined
+            steps.push({
+              kind: 'attachment',
+              attachmentKind: 'document',
+              filename: block.document.name ?? filename,
+              contentType: formatToMime[block.document.format ?? 'txt'] ?? 'application/octet-stream',
+              url,
+              ...(citations?.enabled !== undefined
+                ? { mode: citations.enabled ? 'rich' as const : 'standard' as const }
+                : {}),
+            })
+          }
         }
       }
       bubbles.push({
@@ -235,12 +287,12 @@ export const handler = async (
   // the flat array; for a branched chat it filters to the active root→leaf path.
   const activeLeafId = (chat.activeLeafId as string | undefined) ?? null
   const activePath = buildActivePath(items as unknown as TurnRow[], activeLeafId)
-  const rawResponse = groupTurnsToBubbles(activePath)
+  const rawResponse = await groupTurnsToBubbles(activePath)
 
   // Compute sibling metadata by grouping ALL bubbles (full row set) by parentId.
   // Reusing groupTurnsToBubbles ensures only true bubble-start nodes are counted —
   // toolResult rows fold into their assistant bubble and never appear as siblings.
-  const allBubbles = groupTurnsToBubbles(items as unknown as TurnRow[]).bubbles
+  const allBubbles = (await groupTurnsToBubbles(items as unknown as TurnRow[])).bubbles
   const siblingsByParent = new Map<string | null, string[]>()
   for (const b of allBubbles) {
     const key = b.parentId ?? null
