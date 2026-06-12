@@ -1387,6 +1387,31 @@ $mobile: 720px;
   .settings-panel { padding: 10px 12px; }
 }
 
+// ── Edit banner ───────────────────────────────────────────────────────────────
+
+.edit-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: $accent-light;
+  border: 1px solid rgba($accent, 0.25);
+  border-radius: 6px;
+  font-size: 13px;
+  color: $accent;
+  margin-bottom: 4px;
+
+  .edit-banner-cancel {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: $muted;
+    font-size: 13px;
+    padding: 0 4px;
+    &:hover { color: $text; }
+  }
+}
+
 // ── Attachment tray ────────────────────────────────────────────────────────────
 
 .attachment-tray {

@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faGear, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
-import type { Model, ModelSettings, ModelCapabilities, TokenUsage } from '../api/http'
+import type { Model, ModelSettings, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
 import { sendMessage, cancelMessage, ensureConnected, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
@@ -59,6 +59,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   }
 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
+  const [editParentId, setEditParentId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [creatingChat, setCreatingChat] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
@@ -366,40 +368,38 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }, [chatId, isNew, activeChat, navigate])
 
-  const handleEditSubmit = useCallback(async (msgId: string, parentId: string | null, editedContent: string) => {
-    if (!activeChat || useChatStore.getState().sending || creatingChat) return
-    setSending(true)
-    setErrorMsg(null)
-    setLastTurnUsage(null)
+  const handleEditRequest = useCallback((message: Message) => {
+    // Revoke any in-flight blob previews from a prior draft
+    setAttachments(prev => { prev.forEach(a => { if (a.localUrl) URL.revokeObjectURL(a.localUrl) }); return [] })
+    const text = message.steps?.find(s => s.kind === 'text')?.text ?? ''
+    setInput(text)
+    const atts: PendingAttachment[] = (message.steps ?? [])
+      .filter((s): s is Extract<Step, { kind: 'attachment' }> => s.kind === 'attachment')
+      .map(s => ({
+        id: crypto.randomUUID(),
+        contentType: s.contentType,
+        filename: s.filename,
+        attachmentKind: s.attachmentKind,
+        mode: s.mode ?? 'standard',
+        s3Key: s.s3Key,
+        url: s.url,
+        status: 'ready' as const,
+      }))
+    setAttachments(atts)
+    setEditingMsgId(message.msgId)
+    setEditParentId(message.parentId ?? null)
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }, [])
 
-    // Optimistic: drop the edited bubble and everything after it, insert new user bubble.
-    const cut = messages.findIndex(m => 'msgId' in m && m.msgId === msgId)
-    const base = cut >= 0 ? messages.slice(0, cut) : []
-    const optimisticUser = {
-      msgId: crypto.randomUUID(),
-      role: 'user' as const,
-      steps: [{ kind: 'text' as const, text: editedContent }],
-      model: '',
-      createdAt: new Date().toISOString(),
-    }
-    setMessages([...base, optimisticUser])
-    startStream()
-
-    try {
-      await ensureConnected(accessToken)
-      sendMessage({
-        chatId: chatId!,
-        content: editedContent,
-        model: activeChat.model,
-        systemPrompt: activeChat.systemPrompt,
-        modelSettings,
-        parentId,
-      })
-    } catch (err) {
-      setSending(false)
-      setErrorMsg(err instanceof Error ? err.message : String(err))
-    }
-  }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettings, startStream])
+  const cancelEdit = useCallback(() => {
+    setAttachments(prev => { prev.forEach(a => { if (a.localUrl) URL.revokeObjectURL(a.localUrl) }); return [] })
+    setInput('')
+    setEditingMsgId(null)
+    setEditParentId(null)
+  }, [])
 
   const handleRerun = useCallback(async (parentId: string) => {
     if (!activeChat || useChatStore.getState().sending || creatingChat) return
@@ -447,8 +447,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       pushToast({ kind: 'error', text: 'Please wait for uploads to finish' })
       return
     }
+    const editMsgId = editingMsgId
+    const editPid = editParentId
     setInput('')
     setAttachments([])
+    setEditingMsgId(null)
+    setEditParentId(null)
     if (inputRef.current) inputRef.current.style.height = 'auto'
     setErrorMsg(null)
     setLastTurnUsage(null)
@@ -471,7 +475,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           attachmentKind: a.attachmentKind,
           filename: a.filename,
           contentType: a.contentType,
-          url: a.localUrl ?? '',
+          url: a.localUrl ?? a.url ?? '',
           s3Key: a.s3Key!,
           mode: a.mode,
         })),
@@ -517,6 +521,32 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // Existing chat
     if (!activeChat) return
     setSending(true)
+
+    if (editMsgId) {
+      // Edit branch: truncate display to before the edited message, then stream a sibling
+      const idx = messages.findIndex(m => 'msgId' in m && m.msgId === editMsgId)
+      const base = idx >= 0 ? messages.slice(0, idx) : messages
+      setMessages([...base, optimisticUser])
+      startStream()
+      try {
+        await ensureConnected(accessToken)
+        sendMessage({
+          chatId: chatId!,
+          content,
+          model: activeChat.model,
+          systemPrompt: activeChat.systemPrompt,
+          modelSettings,
+          parentId: editPid,
+          attachments: attachmentsPayload,
+        })
+      } catch (err) {
+        setSending(false)
+        setErrorMsg(err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+
+    // Normal send path
     setMessages([
       ...messages,
       optimisticUser,
@@ -632,7 +662,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
                 message={m}
                 onRerun={!isNew ? handleRerun : undefined}
                 onNavigate={!isNew ? handleNavigate : undefined}
-                onEdit={!isNew ? handleEditSubmit : undefined}
+                onEditRequest={!isNew ? handleEditRequest : undefined}
                 onForkToHere={!isNew ? handleForkToHere : undefined}
                 onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
               />
@@ -688,6 +718,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             {conversationUsage && (
               <UsageStats usage={conversationUsage} label="Total:" />
             )}
+          </div>
+        )}
+
+        {editingMsgId && (
+          <div className="edit-banner">
+            <span>Editing message</span>
+            <button type="button" className="edit-banner-cancel" onClick={cancelEdit} title="Cancel edit">
+              Cancel <FontAwesomeIcon icon={faXmark} />
+            </button>
           </div>
         )}
 
