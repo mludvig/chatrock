@@ -5,6 +5,8 @@ import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
+import { validateAttachment, presignPut, deleteChatObjects, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
+import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -64,6 +66,35 @@ export const handler = async (
     return ok({ chatId }, 201)
   }
 
+  if (route === 'POST /api/attachments') {
+    let body: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(event.body ?? '{}')
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>
+      }
+    } catch {
+      return err(400, 'Invalid JSON body')
+    }
+    const { chatId: uploadChatId, filename, contentType, sizeBytes } = body as {
+      chatId?: string; filename?: string; contentType?: string; sizeBytes?: number
+    }
+    if (!uploadChatId || !filename || !contentType || typeof sizeBytes !== 'number') {
+      return err(400, 'Missing required fields: chatId, filename, contentType, sizeBytes')
+    }
+    try {
+      validateAttachment(contentType as string, sizeBytes)
+    } catch (e) {
+      return err(400, (e as Error).message)
+    }
+    const fileId = uuidv4()
+    const safeName = (filename as string).replace(/[/\\]/g, '-').replace(/\0/g, '')
+    const s3Key = `${s3KeyPrefix(sub, uploadChatId as string)}${fileId}/${safeName}`
+    const uploadUrl = await presignPut(s3Key, contentType as string)
+    console.log(JSON.stringify({ event: 'attachment_upload_requested', sub, chatId: uploadChatId, s3Key }))
+    return ok({ s3Key, uploadUrl })
+  }
+
   const chatId = event.pathParameters?.chatId
   if (!chatId) return err(400, 'Missing chatId')
 
@@ -111,6 +142,7 @@ export const handler = async (
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
     await deleteChat(sub, chatId)
+    await deleteChatObjects(sub, chatId)
     console.log(JSON.stringify({ event: 'chat_deleted', sub, chatId }))
     return { statusCode: 204, body: '' }
   }
@@ -196,6 +228,15 @@ export const handler = async (
       ...(cloned.length ? { activeLeafId: cloned[cloned.length - 1].msgId } : {}),
     })
     if (cloned.length) await batchPutMessages(cloned)
+
+    const keyMap = await copyChatObjects(sub, chatId, newChatId)
+    if (keyMap.size > 0) {
+      const rewritten = cloned.map(r => ({
+        ...r,
+        blocks: (r.blocks as ContentBlock[]).map(b => rewriteBlockUri(b, keyMap)),
+      }))
+      await batchPutMessages(rewritten)
+    }
 
     console.log(JSON.stringify({ event: 'chat_forked', sub, chatId, newChatId, fromMsgId, clonedCount: cloned.length }))
     return ok({ chatId: newChatId }, 201)

@@ -1,9 +1,20 @@
 import type { APIGatewayProxyStructuredResultV2 } from 'aws-lambda'
 import { handler } from '../../src/http/chats'
 import * as dynamo from '../../src/lib/dynamo'
+import * as attachmentsMod from '../../src/lib/attachments'
 
 jest.mock('../../src/lib/dynamo')
+jest.mock('../../src/lib/attachments', () => ({
+  validateAttachment: jest.fn(),
+  presignPut: jest.fn().mockResolvedValue('https://s3.example.com/presigned-put'),
+  deleteChatObjects: jest.fn().mockResolvedValue(undefined),
+  copyChatObjects: jest.fn().mockResolvedValue(new Map()),
+  rewriteBlockUri: jest.fn((b: unknown) => b),
+  s3KeyPrefix: jest.fn((sub: string, chatId: string) => `attachments/${sub}/${chatId}/`),
+}))
+
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
+const mockAttachments = attachmentsMod as jest.Mocked<typeof attachmentsMod>
 
 // Helper: build a minimal turn row mock for listMessages responses
 const makeRow = (msgId: string, parentId: string | null) => ({
@@ -490,6 +501,80 @@ test('inc7: delete branch returns 404 when msgId not in chat', async () => {
 
   const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'nonexistent' }) as any))
   expect(res.statusCode).toBe(404)
+})
+
+// ── Upload route ──────────────────────────────────────────────────────────────
+
+describe('POST /api/attachments', () => {
+  test('returns s3Key and uploadUrl', async () => {
+    mockAttachments.validateAttachment.mockReturnValue({ kind: 'image', format: 'png', maxBytes: 5 * 1024 * 1024 } as any)
+
+    const res = result(await handler(makeEvent('POST', '/api/attachments', {
+      chatId: 'chat-1',
+      filename: 'screenshot.png',
+      contentType: 'image/png',
+      sizeBytes: 100_000,
+    }) as any))
+
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body ?? '{}')
+    expect(body.s3Key).toMatch(/^attachments\/user-1\/chat-1\//)
+    expect(body.s3Key).toContain('screenshot.png')
+    expect(body.uploadUrl).toBe('https://s3.example.com/presigned-put')
+  })
+
+  test('rejects invalid content type with 400', async () => {
+    mockAttachments.validateAttachment.mockImplementation(() => { throw new Error('Content type not allowed') })
+
+    const res = result(await handler(makeEvent('POST', '/api/attachments', {
+      chatId: 'chat-1',
+      filename: 'virus.exe',
+      contentType: 'application/x-msdownload',
+      sizeBytes: 100,
+    }) as any))
+
+    expect(res.statusCode).toBe(400)
+  })
+
+  test('rejects missing fields with 400', async () => {
+    const res = result(await handler(makeEvent('POST', '/api/attachments', {
+      chatId: 'chat-1',
+      // missing filename, contentType, sizeBytes
+    }) as any))
+
+    expect(res.statusCode).toBe(400)
+  })
+})
+
+// ── Delete calls deleteChatObjects ────────────────────────────────────────────
+
+test('DELETE /api/chats/{chatId} calls deleteChatObjects after DDB delete', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.deleteChat.mockResolvedValue(undefined)
+  mockAttachments.deleteChatObjects.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}', undefined, { chatId: 'c1' }) as any))
+
+  expect(res.statusCode).toBe(204)
+  expect(mockAttachments.deleteChatObjects).toHaveBeenCalledWith('user-1', 'c1')
+})
+
+// ── Fork copies S3 objects ────────────────────────────────────────────────────
+
+test('POST /api/chats/{chatId}/fork calls copyChatObjects', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '' })
+  const rows = [
+    { PK: 'CHAT#c1', SK: 'MSG#2024#0000#u1', msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'hi' }], model: 'x', createdAt: '2024-01-01T00:00:00Z', turnIndex: 0, responseId: 'r1' },
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows as any)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+  mockAttachments.copyChatObjects.mockResolvedValue(new Map())
+
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'u1' }, { chatId: 'c1' }) as any))
+
+  expect(res.statusCode).toBe(201)
+  expect(mockAttachments.copyChatObjects).toHaveBeenCalledWith('user-1', 'c1', expect.any(String))
 })
 
 test('inc6: original chat rows are not modified (no writes to original CHAT#c1 partition)', async () => {
