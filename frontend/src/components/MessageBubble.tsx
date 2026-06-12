@@ -1,4 +1,4 @@
-import { useState, memo } from 'react'
+import { useState, memo, forwardRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -272,7 +272,9 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate, onEditRequest, onForkToHere, onDeleteBranch }: Props) {
+const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBubble(
+  { message, onRerun, onNavigate, onEditRequest, onForkToHere, onDeleteBranch }, ref,
+) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
@@ -292,7 +294,7 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
   }
 
   return (
-    <div className={`message ${message.role}`}>
+    <div ref={ref} className={`message ${message.role}`}>
       <div className="message-content">
         {/* Waiting indicator — shown before any steps arrive */}
         {isAssistant && waiting && steps.length === 0 && (
@@ -505,6 +507,6 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
 
     </div>
   )
-})
+}))
 
 export default MessageBubble
