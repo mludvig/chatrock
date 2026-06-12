@@ -2,6 +2,13 @@ import { buildHandler } from '../../src/ws/sendMessage'
 import * as dynamo from '../../src/lib/dynamo'
 import * as bedrock from '../../src/lib/bedrock'
 
+jest.mock('../../src/lib/attachments', () => ({
+  attachmentBlock: jest.fn().mockReturnValue({ image: { format: 'png', source: { s3Location: { uri: 's3://bucket/key.png' } } } }),
+  hydrateBlocks: jest.fn().mockImplementation(async (blocks: unknown[]) => blocks),
+}))
+import * as attachmentsMod from '../../src/lib/attachments'
+const mockAttachments = attachmentsMod as jest.Mocked<typeof attachmentsMod>
+
 // Keep pure key-builder functions real; only mock the async DB operations
 jest.mock('../../src/lib/dynamo', () => ({
   ...jest.requireActual('../../src/lib/dynamo'),
@@ -11,6 +18,8 @@ jest.mock('../../src/lib/dynamo', () => ({
   putMessage: jest.fn(),
   updateChatTitle: jest.fn(),
   updateChatActiveLeaf: jest.fn(),
+  isStreamCancelled: jest.fn().mockResolvedValue(false),
+  clearStreamCancel: jest.fn().mockResolvedValue(undefined),
 }))
 jest.mock('../../src/lib/bedrock')
 
@@ -742,6 +751,158 @@ test('inc5: edit with non-null parentId creates new user turn as sibling under t
   expect(userPut.msgId).not.toBe('u2')
 })
 
+// ── Increment D (D3): stream cancel behaviour ─────────────────────────────────
+
+test('d3: cancel between turns — persisted turns survive, cancelled event emitted', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.isStreamCancelled.mockResolvedValue(false)
+  mockDynamo.clearStreamCancel.mockResolvedValue(undefined)
+
+  // Fake stream: yields one complete turn, then throws AbortError (simulating the
+  // abort signal being fired by the poll timer between turns).
+  const converseStreamFn = jest.fn((_model: unknown, _sys: unknown, _msgs: unknown, _settings: unknown, signal?: AbortSignal) =>
+    (async function* () {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'first answer' }], turnIndex: 0 }
+      // Simulate the abort signal firing (as if the poll timer called abort())
+      if (signal) {
+        const ctrl = (signal as unknown as { _controller?: AbortController })._controller
+        if (ctrl) ctrl.abort()
+      }
+      throw Object.assign(new Error('AbortError'), { name: 'AbortError' })
+    })()
+  )
+  mockBedrock.converseStream.mockImplementation(converseStreamFn as typeof mockBedrock.converseStream)
+
+  // Override converseStream to receive the AbortController signal and abort it
+  // A simpler approach: the fake stream throws AbortError directly to simulate cancellation.
+  const converseStreamFn2 = jest.fn((_m: unknown, _s: unknown, _msgs: unknown, _settings: unknown, _signal?: AbortSignal) =>
+    (async function* () {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'first answer' }], turnIndex: 0 }
+      // Throw AbortError to simulate the signal firing
+      const err = new Error('Request aborted')
+      err.name = 'AbortError'
+      throw err
+    })()
+  )
+  mockBedrock.converseStream.mockImplementation(converseStreamFn2 as typeof mockBedrock.converseStream)
+  // Make isStreamCancelled return true so the catch block recognises it as a cancel
+  mockDynamo.isStreamCancelled.mockResolvedValue(true)
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  // User turn + first assistant turn both persisted
+  const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  expect(putCalls.some(r => r.role === 'user')).toBe(true)
+  expect(putCalls.some(r => r.role === 'assistant')).toBe(true)
+
+  // 'cancelled' event emitted, not 'done'
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  expect(events.find(e => e.type === 'cancelled')).toBeDefined()
+  expect(events.find(e => e.type === 'done')).toBeUndefined()
+
+  // activeLeafId set to the last persisted turn
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const cancelledLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const assistantPut = putCalls.find(r => r.role === 'assistant')!
+  expect(cancelledLeaf).toBe(assistantPut.msgId)
+})
+
+test('d3: cancel mid-turn — partial text flushed as assistant turn, cancelled event emitted', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.isStreamCancelled.mockResolvedValue(true)
+  mockDynamo.clearStreamCancel.mockResolvedValue(undefined)
+
+  // Fake stream: emits partial deltas, then throws AbortError mid-turn (no 'turn' chunk)
+  const converseStreamFn = jest.fn((_m: unknown, _s: unknown, _msgs: unknown, _settings: unknown) =>
+    (async function* () {
+      yield { type: 'delta' as const, text: 'partial ' }
+      yield { type: 'delta' as const, text: 'answer' }
+      const err = new Error('Request aborted')
+      err.name = 'AbortError'
+      throw err
+    })()
+  )
+  mockBedrock.converseStream.mockImplementation(converseStreamFn as typeof mockBedrock.converseStream)
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+
+  // Partial text should have been flushed as an assistant turn
+  const partialPut = putCalls.find(r => r.role === 'assistant')
+  expect(partialPut).toBeDefined()
+  expect(partialPut!.blocks).toEqual([{ text: 'partial answer' }])
+
+  // 'cancelled' WS event emitted
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  expect(events.find(e => e.type === 'cancelled')).toBeDefined()
+  expect(events.find(e => e.type === 'done')).toBeUndefined()
+
+  // activeLeafId updated to the partial turn
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const cancelLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  expect(cancelLeaf).toBe(partialPut!.msgId)
+})
+
+// ── Increment F: per-turn metadata + web-search toggle ───────────────────────
+
+test('f1: assistant turn row stores thinkingEffort and webSearch from modelSettings', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '',
+    modelSettings: { thinkingEffort: 'high', webSearch: true },
+  }))
+
+  const assistantPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+
+  expect(assistantPut.thinkingEffort).toBe('high')
+  expect(assistantPut.webSearch).toBe(true)
+})
+
+test('f2: webSearch:false passes empty tools — converseStream called with webSearch:false setting', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '',
+    modelSettings: { webSearch: false },
+  }))
+
+  // The modelSettings passed to converseStream must include webSearch:false
+  const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
+  expect((passedSettings as Record<string, unknown>).webSearch).toBe(false)
+})
+
 test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat history)', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'asst-prev' })
@@ -773,4 +934,81 @@ test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat histo
   expect(passedMessages[1].content).toEqual([{ text: 'prior answer' }])
   // Third message is the newly persisted user turn
   expect(passedMessages[2].content).toEqual([{ text: 'Follow-up' }])
+})
+
+describe('attachments in WS payload', () => {
+  test('user turn includes attachment blocks when attachments provided', async () => {
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1',
+      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      systemPrompt: '', title: 'T',
+    })
+    mockDynamo.listMessages.mockResolvedValue([])
+    mockDynamo.putMessage.mockResolvedValue(undefined)
+    mockDynamo.updateChatTitle?.mockResolvedValue(undefined)
+
+    const fakeStream = async function* () {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'OK' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(fakeStream())
+    mockBedrock.converseOnce?.mockResolvedValue('Title')
+
+    const handler = buildHandler(mockPost)
+    await handler(makeEvent({
+      chatId: 'c1',
+      content: 'Look at this',
+      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      systemPrompt: '',
+      attachments: [{ s3Key: 'attachments/u/c/f/shot.png', contentType: 'image/png', filename: 'shot.png' }],
+    }))
+
+    const userCall = mockDynamo.putMessage.mock.calls.find(
+      (c: unknown[]) => (c[0] as { role: string }).role === 'user',
+    )?.[0] as Record<string, unknown> | undefined
+
+    expect(userCall).toBeDefined()
+    const blocks = userCall!.blocks as unknown[]
+    expect(blocks.length).toBeGreaterThan(1)
+    expect(mockAttachments.attachmentBlock).toHaveBeenCalledWith(
+      expect.objectContaining({ s3Key: 'attachments/u/c/f/shot.png' }),
+    )
+  })
+
+  test('attachment-only send (no content) uses space placeholder text block', async () => {
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1',
+      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      systemPrompt: '', title: 'T',
+    })
+    mockDynamo.listMessages.mockResolvedValue([])
+    mockDynamo.putMessage.mockResolvedValue(undefined)
+    mockDynamo.updateChatTitle?.mockResolvedValue(undefined)
+
+    const fakeStream = async function* () {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'I see it' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(fakeStream())
+    mockBedrock.converseOnce?.mockResolvedValue('Title')
+
+    const handler = buildHandler(mockPost)
+    await handler(makeEvent({
+      chatId: 'c1',
+      // No content — attachment-only
+      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      systemPrompt: '',
+      attachments: [{ s3Key: 'attachments/u/c/f/shot.png', contentType: 'image/png', filename: 'shot.png' }],
+    }))
+
+    const userCall = mockDynamo.putMessage.mock.calls.find(
+      (c: unknown[]) => (c[0] as { role: string }).role === 'user',
+    )?.[0] as Record<string, unknown> | undefined
+
+    expect(userCall).toBeDefined()
+    const blocks = userCall!.blocks as { text?: string }[]
+    expect(blocks[0].text).toBe(' ')
+  })
 })
