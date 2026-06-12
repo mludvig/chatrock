@@ -15,6 +15,7 @@ set -euo pipefail
 # All deploy paths (apply/backend/tf/frontend) end with a CloudFront invalidation.
 # Rebuilds are skipped when source files are not newer than existing artifacts.
 # Use --force-rebuild to override.
+# Use --wait to block until the CloudFront invalidation completes.
 #
 # Legacy flag usage (still supported):
 #   ./deploy.sh --backend-only       = backend
@@ -33,6 +34,7 @@ SKIP_TERRAFORM=false
 SKIP_FRONTEND=false
 TF_ACTION="apply"
 FORCE_REBUILD=false
+WAIT_INVALIDATION=false
 
 for arg in "$@"; do
   case $arg in
@@ -43,13 +45,14 @@ for arg in "$@"; do
     backend)       SUBCOMMAND="backend" ;;
     tf)            SUBCOMMAND="tf" ;;
     --force-rebuild) FORCE_REBUILD=true ;;
+    --wait)          WAIT_INVALIDATION=true ;;
     --backend-only)  SKIP_FRONTEND=true ;;
     --frontend-only) SKIP_BACKEND=true; SKIP_TERRAFORM=true ;;
     --tf-only)       SKIP_BACKEND=true; SKIP_FRONTEND=true ;;
     --skip-tf)       SKIP_TERRAFORM=true ;;
     *)
       echo "Unknown argument: $arg"
-      echo "Usage: $0 {apply|plan|validate|frontend|backend|tf} [--force-rebuild]"
+      echo "Usage: $0 {apply|plan|validate|frontend|backend|tf} [--force-rebuild] [--wait]"
       exit 1
       ;;
   esac
@@ -187,6 +190,14 @@ INV_ID=$(aws cloudfront create-invalidation \
   --paths "/*" \
   --query 'Invalidation.Id' --output text)
 echo "  Invalidation ID: $INV_ID"
+
+if [ "$WAIT_INVALIDATION" = true ]; then
+  echo "▶ Waiting for invalidation to complete..."
+  aws cloudfront wait invalidation-completed \
+    --distribution-id "$DISTRIBUTION_ID" \
+    --id "$INV_ID"
+  echo "  ✓ Invalidation complete"
+fi
 
 echo ""
 echo "✅  Chatrock deployed → $APP_URL"
