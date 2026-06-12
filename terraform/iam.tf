@@ -68,6 +68,25 @@ data "aws_iam_policy_document" "lambda_policy" {
     actions   = ["execute-api:ManageConnections"]
     resources = ["arn:aws:execute-api:${var.aws_region}:*:${aws_apigatewayv2_api.ws.id}/*"]
   }
+
+  statement {
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:DeleteObject",
+    ]
+    resources = ["${aws_s3_bucket.attachments.arn}/*"]
+  }
+
+  statement {
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.attachments.arn]
+  }
+
+  statement {
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.cloudfront_attachments_private_key.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "lambda" {
