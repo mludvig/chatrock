@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGear, faPaperPlane, faSpinner, faXmark, faChevronUp, faChevronDown } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faGear, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings } from '../api/http'
 import type { Model, ModelSettings, ModelCapabilities, TokenUsage } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
-import { sendMessage, ensureConnected, setWSHandlers } from '../api/ws'
+import { sendMessage, cancelMessage, ensureConnected, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
@@ -16,9 +16,10 @@ interface Props {
   models: Model[]
   defaultModel: string
   onModelChange: (modelId: string) => void
+  onOpenSidebar: () => void
 }
 
-export default function ChatView({ accessToken, models, defaultModel, onModelChange }: Props) {
+export default function ChatView({ accessToken, models, defaultModel, onModelChange, onOpenSidebar }: Props) {
   const { chatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
   const isNew = !chatId || chatId === 'new'
@@ -40,6 +41,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const [modelSettings, setModelSettings] = useState<ModelSettings>({})
 
   const [input, setInput] = useState('')
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [creatingChat, setCreatingChat] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
@@ -63,7 +65,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
-    ?? { temperature: true, topP: true, topK: false, thinking: 'none' }
+    ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
 
   // Keep ref in sync after each render (must be an effect, not during render)
   useEffect(() => { chatIdRef.current = chatId })
@@ -139,7 +141,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           cacheReadInputTokens: (prev.cacheReadInputTokens ?? 0) + (evt.usage.cacheReadInputTokens ?? 0),
           cacheWriteInputTokens: (prev.cacheWriteInputTokens ?? 0) + (evt.usage.cacheWriteInputTokens ?? 0),
         } : { ...evt.usage })
-      } else if (evt.type === 'done') {
+      } else if (evt.type === 'done' || evt.type === 'cancelled') {
         finalizeStream()
         setSending(false)
         // Hydrate real msgId/parentId on the just-streamed answer so every
@@ -245,7 +247,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     refs[next]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  async function handleNavigate(targetMsgId: string) {
+  const handleNavigate = useCallback(async (targetMsgId: string) => {
     if (!chatId || isNew || sending) return
     try {
       await api.setActiveLeaf(chatId, targetMsgId)
@@ -253,9 +255,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }
+  }, [chatId, isNew, sending, reloadMessages])
 
-  async function handleDeleteBranch(msgId: string) {
+  const handleDeleteBranch = useCallback(async (msgId: string) => {
     if (!chatId || isNew || sending) return
     try {
       await api.deleteBranch(chatId, msgId)
@@ -263,9 +265,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     } catch (err) {
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
-  }
+  }, [chatId, isNew, sending, reloadMessages])
 
-  async function handleForkToHere(fromMsgId: string, role: 'user' | 'assistant', text: string) {
+  const handleForkToHere = useCallback(async (fromMsgId: string, role: 'user' | 'assistant', text: string) => {
     if (!chatId || isNew || !activeChat) return
     try {
       const res = await api.forkChat(chatId, fromMsgId)
@@ -279,15 +281,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         updatedAt: now,
       })
       pushToast({ kind: 'success', text: 'Forked into a new chat' })
-      // For a user bubble: pre-fill its text as a draft in the new chat
       if (role === 'user') pendingDraftRef.current = text
       navigate(`/c/${res.chatId}`)
     } catch (err) {
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
-  }
+  }, [chatId, isNew, activeChat, navigate])
 
-  async function handleEditSubmit(msgId: string, parentId: string | null, editedContent: string) {
+  const handleEditSubmit = useCallback(async (msgId: string, parentId: string | null, editedContent: string) => {
     if (!activeChat || useChatStore.getState().sending || creatingChat) return
     setSending(true)
     setErrorMsg(null)
@@ -320,9 +321,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }
+  }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettings, startStream])
 
-  async function handleRerun(parentId: string) {
+  const handleRerun = useCallback(async (parentId: string) => {
     if (!activeChat || useChatStore.getState().sending || creatingChat) return
     setSending(true)
     setErrorMsg(null)
@@ -347,12 +348,24 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
+  }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettings, startStream])
+
+  function handleStop() {
+    // Optimistic: reset UI immediately so the input re-enables right away.
+    // The server will honour the cancel asynchronously; the eventual 'cancelled'
+    // WS event (if it arrives) is a no-op because sending is already false.
+    finalizeStream()
+    setSending(false)
+    const currentId = chatIdRef.current
+    if (currentId && currentId !== 'new') reloadMessages(currentId)
+    cancelMessage()
   }
 
   async function handleSend() {
     const content = input.trim()
     if (!content || sending || creatingChat) return
     setInput('')
+    if (inputRef.current) inputRef.current.style.height = 'auto'
     setErrorMsg(null)
     setLastTurnUsage(null)
 
@@ -453,6 +466,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   return (
     <div className="chat-view">
       <div className="chat-header">
+        <button className="btn-icon btn-hamburger" onClick={onOpenSidebar} title="Open sidebar">
+          <FontAwesomeIcon icon={faBars} />
+        </button>
         <h2>{isNew ? 'New Chat' : (activeChat?.title ?? 'Chat')}</h2>
         <div className="header-controls">
           <select
@@ -567,11 +583,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
         <div className="input-bar">
           <textarea
+            ref={inputRef}
             className="message-input"
-            rows={3}
+            rows={1}
             placeholder={isNew ? 'Start the conversation…' : 'Send a message…'}
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => {
+              setInput(e.target.value)
+              const el = e.target
+              el.style.height = 'auto'
+              el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+            }}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -581,13 +603,23 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             disabled={sending || creatingChat}
             autoFocus
           />
-          <button
-            className="btn-send"
-            onClick={handleSend}
-            disabled={sending || creatingChat || !input.trim()}
-          >
-            <FontAwesomeIcon icon={faPaperPlane} />
-          </button>
+          {sending ? (
+            <button
+              className="btn-send btn-stop"
+              onClick={handleStop}
+              title="Stop generating"
+            >
+              <FontAwesomeIcon icon={faStop} />
+            </button>
+          ) : (
+            <button
+              className="btn-send"
+              onClick={handleSend}
+              disabled={creatingChat || !input.trim()}
+            >
+              <FontAwesomeIcon icon={faPaperPlane} />
+            </button>
+          )}
         </div>
       </div>
     </div>
