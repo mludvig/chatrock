@@ -219,7 +219,7 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
           const src = block.image.source as { s3Location?: { uri: string }; bytes?: unknown }
           if (src?.s3Location) {
             const key = src.s3Location.uri.replace(/^s3:\/\/[^/]+\//, '')
-            const filename = key.split('/').pop() ?? 'image'
+            const filename = key.split('/').pop() || 'image'
             const url = await signCloudFrontUrl(key)
             steps.push({
               kind: 'attachment',
@@ -234,7 +234,7 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
           const src = block.document.source as { s3Location?: { uri: string }; bytes?: unknown }
           if (src?.s3Location) {
             const key = src.s3Location.uri.replace(/^s3:\/\/[^/]+\//, '')
-            const filename = key.split('/').pop() ?? 'document'
+            const filename = key.split('/').pop() || 'document'
             const url = await signCloudFrontUrl(key)
             const formatToMime: Record<string, string> = {
               pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
