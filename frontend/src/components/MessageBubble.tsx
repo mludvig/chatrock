@@ -1,11 +1,51 @@
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx'
+import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript'
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx'
+import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript'
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python'
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json'
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml'
+import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown'
+import css from 'react-syntax-highlighter/dist/esm/languages/prism/css'
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql'
+import java from 'react-syntax-highlighter/dist/esm/languages/prism/java'
+import go from 'react-syntax-highlighter/dist/esm/languages/prism/go'
+import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust'
+import terraform from 'react-syntax-highlighter/dist/esm/languages/prism/hcl'
+
+SyntaxHighlighter.registerLanguage('tsx', tsx)
+SyntaxHighlighter.registerLanguage('typescript', typescript)
+SyntaxHighlighter.registerLanguage('ts', typescript)
+SyntaxHighlighter.registerLanguage('jsx', jsx)
+SyntaxHighlighter.registerLanguage('javascript', javascript)
+SyntaxHighlighter.registerLanguage('js', javascript)
+SyntaxHighlighter.registerLanguage('python', python)
+SyntaxHighlighter.registerLanguage('py', python)
+SyntaxHighlighter.registerLanguage('bash', bash)
+SyntaxHighlighter.registerLanguage('sh', bash)
+SyntaxHighlighter.registerLanguage('shell', bash)
+SyntaxHighlighter.registerLanguage('json', json)
+SyntaxHighlighter.registerLanguage('yaml', yaml)
+SyntaxHighlighter.registerLanguage('yml', yaml)
+SyntaxHighlighter.registerLanguage('markdown', markdown)
+SyntaxHighlighter.registerLanguage('css', css)
+SyntaxHighlighter.registerLanguage('sql', sql)
+SyntaxHighlighter.registerLanguage('java', java)
+SyntaxHighlighter.registerLanguage('go', go)
+SyntaxHighlighter.registerLanguage('rust', rust)
+SyntaxHighlighter.registerLanguage('terraform', terraform)
+SyntaxHighlighter.registerLanguage('hcl', terraform)
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare, faPaperPlane,
-  faCodeBranch, faCopy, faCheck, faTrash,
+  faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
@@ -20,6 +60,52 @@ export function sanitizeUrl(url: string): string {
   } catch {
     return '#'
   }
+}
+
+// ── Code block with copy button ──────────────────────────────────────────────
+
+function CodeBlock({ language, code }: { language: string; code: string }) {
+  const [copied, setCopied] = useState(false)
+  function copy() {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <div className="code-block">
+      <div className="code-block-header">
+        {language && <span className="code-lang">{language}</span>}
+        <button className="code-copy-btn" onClick={copy} title="Copy code">
+          <FontAwesomeIcon icon={copied ? faCheck : faCopy} />
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <SyntaxHighlighter
+        language={language || 'text'}
+        style={oneDark}
+        customStyle={{ margin: 0, borderRadius: '0 0 6px 6px', fontSize: '13px' }}
+        PreTag="div"
+      >
+        {code}
+      </SyntaxHighlighter>
+    </div>
+  )
+}
+
+// react-markdown components prop — shared between user and assistant bubbles
+const mdComponents = {
+  code({ className, children, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) {
+    const match = /language-(\w+)/.exec(className ?? '')
+    const language = match ? match[1] : ''
+    const code = String(children).replace(/\n$/, '')
+    // inline code — no block treatment
+    const isInline = !className && !code.includes('\n')
+    if (isInline) {
+      return <code className="inline-code" {...props}>{children}</code>
+    }
+    return <CodeBlock language={language} code={code} />
+  },
 }
 
 // ── Search result cards ───────────────────────────────────────────────────────
@@ -86,6 +172,32 @@ function safeInput(inputJson: string, key: string): string {
   } catch {
     return inputJson.slice(0, 60)
   }
+}
+
+// ── Attachment block (images + documents) ───────────────────────────────────
+
+function AttachmentBlock({ step }: { step: Extract<Step, { kind: 'attachment' }> }) {
+  const safeUrl = sanitizeUrl(step.url)
+  if (step.attachmentKind === 'image') {
+    return (
+      <div className="attachment-block attachment-block--image">
+        <a href={safeUrl} target="_blank" rel="noopener noreferrer">
+          <img src={safeUrl} alt={step.filename} className="attachment-thumbnail" />
+        </a>
+        <span className="attachment-filename">{step.filename}</span>
+      </div>
+    )
+  }
+  const modeLabel = step.mode === 'rich' ? ' (Rich)' : step.mode === 'standard' ? ' (Standard)' : ''
+  return (
+    <div className="attachment-block attachment-block--doc">
+      <a className="attachment-chip" href={safeUrl} target="_blank" rel="noopener noreferrer">
+        <FontAwesomeIcon icon={faFile} className="attachment-icon" />
+        <span className="attachment-filename">{step.filename}</span>
+        {modeLabel && <span className="attachment-mode">{modeLabel}</span>}
+      </a>
+    </div>
+  )
 }
 
 // ── Thinking block ────────────────────────────────────────────────────────────
@@ -158,7 +270,7 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-export default function MessageBubble({ message, onRerun, onNavigate, onEdit, onForkToHere, onDeleteBranch }: Props) {
+const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate, onEdit, onForkToHere, onDeleteBranch }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
@@ -214,13 +326,27 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit, on
               />
             )
           }
+          if (cleanStep.kind === 'attachment') {
+            return (
+              <AttachmentBlock
+                key={`att-${i}`}
+                step={cleanStep}
+              />
+            )
+          }
           if (cleanStep.kind === 'text') {
             if (!isAssistant) {
-              return editing ? null : <span key={i}>{cleanStep.text}</span>
+              return editing ? null : (
+                <div key={i} className="md md--user">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                    {cleanStep.text || ''}
+                  </ReactMarkdown>
+                </div>
+              )
             }
             return (
               <div key={i} className="md">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {cleanStep.text || ''}
                 </ReactMarkdown>
                 {isLastTextStep(i) && <span className="cursor">▋</span>}
@@ -231,6 +357,46 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit, on
         })}
 
       </div>
+
+      {/* Per-message metadata line — assistant bubbles only, not streaming */}
+      {isAssistant && !isStreaming && 'model' in message && (message as Message).createdAt && (() => {
+        const msg = message as Message
+        const modelShort = msg.model.replace(/^global\.anthropic\./, '').replace(/-\d{8,}.*$/, '')
+        const ts = new Date(msg.createdAt)
+        const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
+        return (
+          <div className="msg-meta">
+            <span className="msg-meta-item">
+              <FontAwesomeIcon icon={faRobot} />
+              {modelShort}
+            </span>
+            {msg.usage && (
+              <span className="msg-meta-item">
+                <FontAwesomeIcon icon={faCoins} />
+                {fmtTokens(msg.usage.inputTokens + msg.usage.outputTokens)} tok
+                {msg.usage.cacheReadInputTokens ? ` · ${fmtTokens(msg.usage.cacheReadInputTokens)} cached` : ''}
+              </span>
+            )}
+            <span className="msg-meta-item">
+              <FontAwesomeIcon icon={faClock} />
+              {dateStr} {timeStr}
+            </span>
+            {msg.thinkingEffort && msg.thinkingEffort !== 'off' && (
+              <span className="msg-meta-item">
+                <FontAwesomeIcon icon={faBrain} />
+                {msg.thinkingEffort}
+              </span>
+            )}
+            {msg.webSearch === false && (
+              <span className="msg-meta-item">
+                <FontAwesomeIcon icon={faGlobe} />
+                no web
+              </span>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Edit area — outside the bubble so it gets full message width */}
       {!isAssistant && editing && (
@@ -385,4 +551,6 @@ export default function MessageBubble({ message, onRerun, onNavigate, onEdit, on
 
     </div>
   )
-}
+})
+
+export default MessageBubble
