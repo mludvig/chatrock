@@ -81,8 +81,9 @@ data "aws_iam_policy_document" "spa_bucket" {
 # ── Attachments bucket ────────────────────────────────────────────────────────
 
 resource "aws_s3_bucket" "attachments" {
-  bucket = "chatrock-attachments-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
-  tags   = { Env = var.env }
+  bucket           = "chatrock-attachments-${data.aws_caller_identity.current.account_id}-${var.aws_region}-an"
+  bucket_namespace = "account-regional"
+  tags             = { Env = var.env }
 }
 
 resource "aws_s3_bucket_public_access_block" "attachments" {
