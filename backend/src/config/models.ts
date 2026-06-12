@@ -6,6 +6,7 @@ export interface ModelCapabilities {
   topK: boolean
   // 'adaptive' = effort-based (low/medium/high/max); 'none' = no thinking support
   thinking: 'adaptive' | 'none'
+  attachments: boolean
 }
 
 // Per-send inference settings from the client. Only include supported fields.
@@ -14,6 +15,7 @@ export interface ModelSettings {
   topP?: number                                     // 0.0–1.0
   topK?: number                                     // 1–500 (integer)
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
+  webSearch?: boolean                               // false disables web tools
 }
 
 // ── Model registry ────────────────────────────────────────────────────────────
@@ -30,22 +32,22 @@ export const MODELS: Model[] = [
   {
     id: 'global.anthropic.claude-fable-5',
     name: 'Claude Fable 5',
-    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive' },
+    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
   },
   {
     id: 'global.anthropic.claude-opus-4-8',
     name: 'Claude Opus 4.8',
-    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive' },
+    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
   },
   {
     id: 'global.anthropic.claude-sonnet-4-6',
     name: 'Claude Sonnet 4.6',
-    capabilities: { temperature: true, topP: true, topK: false, thinking: 'adaptive' },
+    capabilities: { temperature: true, topP: true, topK: false, thinking: 'adaptive', attachments: true },
   },
   {
     id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     name: 'Claude Haiku 4.5',
-    capabilities: { temperature: true, topP: true, topK: true, thinking: 'none' },
+    capabilities: { temperature: true, topP: true, topK: true, thinking: 'none', attachments: true },
   },
 ]
 
@@ -58,7 +60,7 @@ export const TITLE_MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 
 export function getCapabilities(modelId: string): ModelCapabilities {
   return MODELS.find(m => m.id === modelId)?.capabilities
-    ?? { temperature: true, topP: true, topK: false, thinking: 'none' }
+    ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
 }
 
 export function isValidModelId(modelId: string): boolean {

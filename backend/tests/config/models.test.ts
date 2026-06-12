@@ -1,4 +1,4 @@
-import { MODELS, DEFAULT_CHAT_MODEL, TITLE_MODEL } from '../../src/config/models'
+import { MODELS, DEFAULT_CHAT_MODEL, TITLE_MODEL, getCapabilities } from '../../src/config/models'
 
 test('MODELS list is non-empty and has required fields', () => {
   expect(MODELS.length).toBeGreaterThan(0)
@@ -15,4 +15,14 @@ test('DEFAULT_CHAT_MODEL is in MODELS list', () => {
 test('TITLE_MODEL is a non-empty string', () => {
   expect(typeof TITLE_MODEL).toBe('string')
   expect(TITLE_MODEL.length).toBeGreaterThan(0)
+})
+
+test('all current models have attachments capability', () => {
+  for (const m of MODELS) {
+    expect(m.capabilities.attachments).toBe(true)
+  }
+})
+
+test('getCapabilities fallback has attachments true', () => {
+  expect(getCapabilities('unknown-model').attachments).toBe(true)
 })
