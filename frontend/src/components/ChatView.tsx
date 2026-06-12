@@ -46,13 +46,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   interface PendingAttachment {
     id: string
-    file: File
+    file?: File                 // absent for attachments re-loaded from a past message
     contentType: string
     filename: string
     attachmentKind: 'image' | 'document'
     mode: 'standard' | 'rich'
     s3Key?: string
-    localUrl?: string
+    localUrl?: string           // blob: preview for freshly added files
+    url?: string                // signed CloudFront URL for re-loaded attachments
     status: 'uploading' | 'ready' | 'error'
     errorMsg?: string
   }
@@ -697,11 +698,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
                 key={att.id}
                 className={`attachment-tray-item${att.status === 'error' ? ' error' : att.status === 'uploading' ? ' uploading' : ''}`}
               >
-                {att.attachmentKind === 'image' && att.localUrl ? (
-                  <img src={att.localUrl} alt={att.filename} className="tray-thumbnail" />
-                ) : (
-                  <FontAwesomeIcon icon={faFile} className="tray-file-icon" />
-                )}
+                {att.attachmentKind === 'image' && (att.localUrl || att.url)
+                  ? <img className="tray-thumbnail" src={att.localUrl ?? att.url} alt={att.filename} />
+                  : <FontAwesomeIcon icon={faFile} className="tray-file-icon" />}
                 <span className="tray-filename">{att.filename}</span>
                 {att.status === 'uploading' && <FontAwesomeIcon icon={faSpinner} spin className="tray-spinner" />}
                 {att.status === 'error' && <span className="tray-error" title={att.errorMsg}>!</span>}
@@ -718,7 +717,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
                   </button>
                 )}
                 <button className="tray-remove" title="Remove" onClick={() => {
-                  if (att.localUrl) URL.revokeObjectURL(att.localUrl)
+                  if (att.localUrl?.startsWith('blob:')) URL.revokeObjectURL(att.localUrl)
                   setAttachments(prev => prev.filter(a => a.id !== att.id))
                 }}>
                   <FontAwesomeIcon icon={faXmark} />
