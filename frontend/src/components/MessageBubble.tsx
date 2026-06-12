@@ -44,7 +44,7 @@ SyntaxHighlighter.registerLanguage('hcl', terraform)
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
-  faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare, faPaperPlane,
+  faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare,
   faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
@@ -259,7 +259,6 @@ interface Props {
   message: Message | StreamingMsg
   onRerun?: (parentId: string) => void
   onNavigate?: (targetMsgId: string) => void
-  onEdit?: (msgId: string, parentId: string | null, content: string) => void
   onEditRequest?: (message: Message) => void
   onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
   onDeleteBranch?: (msgId: string) => void
@@ -273,13 +272,11 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate, onEdit, onEditRequest, onForkToHere, onDeleteBranch }: Props) {
+const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate, onEditRequest, onForkToHere, onDeleteBranch }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
   const steps: Step[] = message.steps ?? []
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
   const [copied, setCopied] = useState(false)
 
   // For a streaming message, the last step is "open" (still accumulating).
@@ -295,7 +292,7 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
   }
 
   return (
-    <div className={`message ${message.role}${editing ? ' editing' : ''}`}>
+    <div className={`message ${message.role}`}>
       <div className="message-content">
         {/* Waiting indicator — shown before any steps arrive */}
         {isAssistant && waiting && steps.length === 0 && (
@@ -339,7 +336,7 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
           }
           if (cleanStep.kind === 'text') {
             if (!isAssistant) {
-              return editing ? null : (
+              return (
                 <div key={i} className="md md--user">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                     {cleanStep.text || ''}
@@ -401,54 +398,12 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
         )
       })()}
 
-      {/* Edit area — outside the bubble so it gets full message width */}
-      {!isAssistant && editing && (
-        <div className="edit-area">
-          <textarea
-            className="edit-textarea"
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Escape') setEditing(false)
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                if (draft.trim() && onEdit) {
-                  const msg = message as Message
-                  onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
-                }
-                setEditing(false)
-              }
-            }}
-            autoFocus
-            rows={3}
-          />
-          <div className="edit-actions">
-            <button
-              className="edit-send-btn"
-              title="Send edited message"
-              onClick={() => {
-                if (draft.trim() && onEdit) {
-                  const msg = message as Message
-                  onEdit(msg.msgId, msg.parentId ?? null, draft.trim())
-                }
-                setEditing(false)
-              }}
-            >
-              Send <FontAwesomeIcon icon={faPaperPlane} />
-            </button>
-            <button className="edit-cancel-btn" title="Cancel edit (Esc)" onClick={() => setEditing(false)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Always-visible bottom row: sibling nav first, then action icons */}
       {!isStreaming && (() => {
         const hasSiblings = onNavigate && 'siblingCount' in message &&
           (message as Message).siblingCount != null &&
           (message as Message).siblingCount! > 1
-        const hasEdit = !isAssistant && !editing && (onEdit || onEditRequest) && 'msgId' in message
+        const hasEdit = !isAssistant && onEditRequest && 'msgId' in message
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
         const hasForkCopy = 'msgId' in message
         const hasDelete = onDeleteBranch && 'msgId' in message && (message as Message).parentId != null
@@ -490,15 +445,7 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
               <button
                 className="action-btn"
                 title="Edit this question"
-                onClick={() => {
-                  if (onEditRequest) {
-                    onEditRequest(msg)
-                  } else {
-                    const text = msg.steps?.find(s => s.kind === 'text')?.text ?? ''
-                    setDraft(text)
-                    setEditing(true)
-                  }
-                }}
+                onClick={() => onEditRequest?.(message as Message)}
               >
                 <FontAwesomeIcon icon={faPenToSquare} />
               </button>
