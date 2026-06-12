@@ -976,7 +976,7 @@ describe('attachments in WS payload', () => {
     )
   })
 
-  test('attachment-only send (no content) uses space placeholder text block', async () => {
+  test('attachment-only send (no content) has no text block — only attachment blocks', async () => {
     mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
     mockDynamo.getChat.mockResolvedValue({
       PK: 'USER#user-1', SK: 'CHAT#c1',
@@ -1008,7 +1008,9 @@ describe('attachments in WS payload', () => {
     )?.[0] as Record<string, unknown> | undefined
 
     expect(userCall).toBeDefined()
-    const blocks = userCall!.blocks as { text?: string }[]
-    expect(blocks[0].text).toBe(' ')
+    const blocks = userCall!.blocks as { text?: string; image?: unknown }[]
+    // No blank text block — attachment-only payload should start with the image block
+    expect(blocks.some(b => b.text !== undefined && b.text.trim() === '')).toBe(false)
+    expect(blocks.some(b => b.image !== undefined)).toBe(true)
   })
 })

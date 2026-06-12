@@ -9,9 +9,10 @@ import { TITLE_MODEL, isValidModelId, type ModelSettings } from '../config/model
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
 
 function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[]): ContentBlock[] {
-  const text = content ?? (attachments.length > 0 ? ' ' : '')
-  const textBlock: ContentBlock = { text }
-  return [textBlock, ...attachments.map(a => attachmentBlock(a))]
+  const attachBlocks: ContentBlock[] = attachments.map(a => attachmentBlock(a))
+  if (content) return [{ text: content }, ...attachBlocks]
+  // No text — attachment-only send: Bedrock rejects blank/whitespace text blocks
+  return attachBlocks
 }
 
 interface WSSendEvent {
