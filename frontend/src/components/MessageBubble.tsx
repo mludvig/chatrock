@@ -260,6 +260,7 @@ interface Props {
   onRerun?: (parentId: string) => void
   onNavigate?: (targetMsgId: string) => void
   onEdit?: (msgId: string, parentId: string | null, content: string) => void
+  onEditRequest?: (message: Message) => void
   onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
   onDeleteBranch?: (msgId: string) => void
 }
@@ -272,7 +273,7 @@ interface Props {
  * Steps are rendered in arrival order — exactly as they appear in steps[].
  * This preserves the think → search → think → answer interleaved structure.
  */
-const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate, onEdit, onForkToHere, onDeleteBranch }: Props) {
+const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate, onEdit, onEditRequest, onForkToHere, onDeleteBranch }: Props) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
@@ -447,7 +448,7 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
         const hasSiblings = onNavigate && 'siblingCount' in message &&
           (message as Message).siblingCount != null &&
           (message as Message).siblingCount! > 1
-        const hasEdit = !isAssistant && !editing && onEdit && 'msgId' in message
+        const hasEdit = !isAssistant && !editing && (onEdit || onEditRequest) && 'msgId' in message
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
         const hasForkCopy = 'msgId' in message
         const hasDelete = onDeleteBranch && 'msgId' in message && (message as Message).parentId != null
@@ -490,9 +491,13 @@ const MessageBubble = memo(function MessageBubble({ message, onRerun, onNavigate
                 className="action-btn"
                 title="Edit this question"
                 onClick={() => {
-                  const text = msg.steps?.find(s => s.kind === 'text')?.text ?? ''
-                  setDraft(text)
-                  setEditing(true)
+                  if (onEditRequest) {
+                    onEditRequest(msg)
+                  } else {
+                    const text = msg.steps?.find(s => s.kind === 'text')?.text ?? ''
+                    setDraft(text)
+                    setEditing(true)
+                  }
                 }}
               >
                 <FontAwesomeIcon icon={faPenToSquare} />
