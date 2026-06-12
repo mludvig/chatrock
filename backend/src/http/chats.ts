@@ -88,7 +88,7 @@ export const handler = async (
       return err(400, (e as Error).message)
     }
     const fileId = uuidv4()
-    const safeName = (filename as string).replace(/[/\\]/g, '-').replace(/\0/g, '')
+    const safeName = (filename as string).replace(/[/\\]/g, '-').replace(/\0/g, '').replace(/^\.+/, '_')
     const s3Key = `${s3KeyPrefix(sub, uploadChatId as string)}${fileId}/${safeName}`
     const uploadUrl = await presignPut(s3Key, contentType as string)
     console.log(JSON.stringify({ event: 'attachment_upload_requested', sub, chatId: uploadChatId, s3Key }))

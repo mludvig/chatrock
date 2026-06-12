@@ -28,6 +28,7 @@ const ALLOWED: Record<string, AllowedType> = {
 export function validateAttachment(contentType: string, sizeBytes: number): AllowedType {
   const spec = ALLOWED[contentType]
   if (!spec) throw new Error(`Content type ${contentType} not allowed`)
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) throw new Error('File is empty or invalid size')
   if (sizeBytes > spec.maxBytes) {
     throw new Error(`File too large: ${sizeBytes} > ${spec.maxBytes} bytes`)
   }
