@@ -316,6 +316,46 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
   expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
 })
 
+// ── F2: webSearch:false passes no toolConfig to Bedrock ──────────────────────
+
+test('f2: webSearch:false sends no toolConfig in the Bedrock request', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], { webSearch: false })) {
+    chunks.push(chunk)
+  }
+
+  // Bedrock send() was called once; the command input must have no toolConfig
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeUndefined()
+})
+
+test('f2: webSearch:true (default) sends toolConfig to Bedrock', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {})) {
+    chunks.push(chunk)
+  }
+
+  // Default (webSearch not set) should include toolConfig
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeDefined()
+})
+
 // ── Test 5: existing UI chunks still flow through ────────────────────────────
 
 test('still emits thinking_delta, thinking_done, delta, tool_call_start, tool_call, tool_result, stop', async () => {

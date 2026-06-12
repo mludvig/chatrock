@@ -189,3 +189,28 @@ export async function deleteConnection(connId: string) {
     Key: buildConnKey(connId),
   }))
 }
+
+export async function setStreamCancel(connId: string): Promise<void> {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildConnKey(connId),
+    UpdateExpression: 'SET cancelRequested = :v',
+    ExpressionAttributeValues: { ':v': true },
+  }))
+}
+
+export async function isStreamCancelled(connId: string): Promise<boolean> {
+  const res = await ddb.send(new GetCommand({
+    TableName: TABLE,
+    Key: buildConnKey(connId),
+  }))
+  return res.Item?.cancelRequested === true
+}
+
+export async function clearStreamCancel(connId: string): Promise<void> {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildConnKey(connId),
+    UpdateExpression: 'REMOVE cancelRequested',
+  }))
+}

@@ -13,7 +13,8 @@ const handlers = [
   { name: 'ws-authorizer',    entry: 'src/ws/authorizer.ts' },
   { name: 'ws-connect',       entry: 'src/ws/connect.ts' },
   { name: 'ws-disconnect',    entry: 'src/ws/disconnect.ts' },
-  { name: 'ws-sendMessage',   entry: 'src/ws/sendMessage.ts' },
+  { name: 'ws-sendMessage',      entry: 'src/ws/sendMessage.ts' },
+  { name: 'ws-cancelMessage',    entry: 'src/ws/cancelMessage.ts' },
 ]
 
 const distDir = path.join(__dirname, '..', 'terraform', 'dist')

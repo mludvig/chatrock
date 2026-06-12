@@ -145,6 +145,7 @@ async function* streamOneTurn(
   messages: Message[],
   tools: Tool[],
   settings: ModelSettings,
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk, TurnResult> {
   const cmd = new ConverseStreamCommand({
     modelId,
@@ -154,7 +155,7 @@ async function* streamOneTurn(
     ...(tools.length > 0 ? { toolConfig: { tools } } : {}),
   })
 
-  const res = await bedrockClient.send(cmd)
+  const res = await bedrockClient.send(cmd, ...(abortSignal ? [{ abortSignal }] : []))
   if (!res.stream) throw new Error('No stream in Bedrock response')
 
   let stopReason = 'end_turn'
@@ -307,8 +308,9 @@ export async function* converseStream(
   systemPrompt: string,
   messages: Message[],
   settings: ModelSettings = {},
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
-  const tools = buildToolsWithCache()
+  const tools = settings.webSearch === false ? [] : buildToolsWithCache()
   // Base messages are the incoming history (verbatim blocks replayed as-is)
   const baseMessages: Message[] = [...messages]
   // New messages added this session (grows with each tool-use round)
@@ -317,8 +319,9 @@ export async function* converseStream(
   let turnIndex = 0
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    if (abortSignal?.aborted) return
     const builtMessages = buildMessagesWithCache(baseMessages, newMessages)
-    const gen = streamOneTurn(modelId, systemPrompt, builtMessages, tools, settings)
+    const gen = streamOneTurn(modelId, systemPrompt, builtMessages, tools, settings, abortSignal)
     let result: TurnResult | undefined
 
     // Drain the generator, forwarding UI chunks to caller
@@ -351,6 +354,8 @@ export async function* converseStream(
     // Build the assistant message for this round (verbatim content from turn)
     newMessages.push({ role: 'assistant', content: result.content })
 
+    if (abortSignal?.aborted) return
+
     // Execute tools, apply cap helper, build tool-result message
     const toolResults: ContentBlock[] = []
     for (const tu of result.toolUses) {
@@ -382,10 +387,12 @@ export async function* converseStream(
     // Loop → next turn with tool results injected
   }
 
+  if (abortSignal?.aborted) return
+
   // Exhausted tool-use rounds: make one final call with no tools so the model
   // must produce a text answer rather than keep requesting tool use.
   const builtMessages = buildMessagesWithCache(baseMessages, newMessages)
-  const finalGen = streamOneTurn(modelId, systemPrompt, builtMessages, [], settings)
+  const finalGen = streamOneTurn(modelId, systemPrompt, builtMessages, [], settings, abortSignal)
   let finalResult: TurnResult | undefined
 
   while (true) {
