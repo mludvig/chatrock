@@ -76,6 +76,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const bubbleRefsRef = useRef<(HTMLDivElement | null)[]>([])
   const bubbleIdxRef = useRef(-1)
   const pendingScrollTopRef = useRef(false)
+  const justLoadedRef = useRef(false)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
@@ -275,6 +276,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       })
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
+      justLoadedRef.current = true
     }).catch(() => {
       if (!cancelled) navigate('/c/new', { replace: true })
     }).finally(() => {
@@ -293,6 +295,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     const target = streamingMsg ? refs[refs.length - 2] : refs[refs.length - 1]
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [messages, streamingMsg])
+
+  // Instant jump to bottom when opening a chat (no smooth scroll)
+  useEffect(() => {
+    if (!justLoadedRef.current) return
+    justLoadedRef.current = false
+    const el = messagesRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages])
 
   // Reset bubble refs when chat changes
   useEffect(() => {
