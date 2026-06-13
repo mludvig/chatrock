@@ -88,13 +88,23 @@ async function jinaSearch(query: string): Promise<string> {
 
 async function jinaFetch(url: string): Promise<string> {
   const jinaUrl = `https://r.jina.ai/${url}`
-  const headers: Record<string, string> = { 'Accept': 'text/plain' }
+  const headers: Record<string, string> = { 'Accept': 'application/json' }
   if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`
 
   const res = await fetch(jinaUrl, { headers })
   if (!res.ok) throw new Error(`Jina fetch failed: ${res.status}`)
 
-  const text = await res.text()
-  // Cap at ~8k chars to avoid blowing the context window
-  return text.length > 8000 ? text.slice(0, 8000) + '\n\n[... truncated ...]' : text
+  const json = await res.json() as {
+    data?: { title?: string; url?: string; description?: string; content?: string }
+  }
+  const d = json.data ?? {}
+  const content = d.content ?? ''
+  // Cap the page body at ~8k chars to protect the context window
+  const text = content.length > 8000 ? content.slice(0, 8000) + '\n\n[... truncated ...]' : content
+  const result = {
+    title: d.title ?? d.url ?? url,
+    url: d.url ?? url,
+    description: d.description ?? '',
+  }
+  return JSON.stringify({ result, text })
 }
