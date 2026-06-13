@@ -28,7 +28,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     chats, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream,
-    renameChat, sending, setSending, updateChatSystemPrompt, pushToast,
+    renameChat, removeChat, sending, setSending, updateChatSystemPrompt, pushToast,
   } = useChatStore()
 
   // For /c/new: local model + system prompt state (not yet persisted)
@@ -78,6 +78,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const pendingScrollTopRef = useRef(false)
   const justLoadedRef = useRef(false)
   const streamCancelledRef = useRef(false)
+  const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
@@ -448,14 +449,35 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettings, startStream])
 
+  const stepHasContent = (st: Step) =>
+    (st.kind === 'text' && st.text.trim() !== '') ||
+    (st.kind === 'thinking' && st.text.trim() !== '') ||
+    st.kind === 'tool'
+
   function handleStop() {
-    // Optimistic: reset UI immediately so the input re-enables right away.
-    // The server will honour the cancel asynchronously; the eventual 'cancelled'
-    // WS event (if it arrives) is a no-op because sending is already false.
     streamCancelledRef.current = true
+    const sm = useChatStore.getState().streamingMsg
+    const producedContent = !!sm && sm.steps.some(stepHasContent)
+    const currentId = chatIdRef.current
+    const draft = pendingSendRef.current
+
+    // New chat, Stop before any answer: restore the question so it can be resubmitted.
+    if (!producedContent && draft?.wasNew && currentId && currentId !== 'new') {
+      cancelMessage()
+      clearStream()
+      setSending(false)
+      setInput(draft.content)
+      setAttachments(draft.attachments)
+      pendingSendRef.current = null
+      api.deleteChat(currentId).catch(() => {})
+      removeChat(currentId)
+      navigate('/c/new', { replace: true })
+      return
+    }
+
+    // Default: keep whatever partial content streamed.
     finalizeStream()
     setSending(false)
-    const currentId = chatIdRef.current
     if (currentId && currentId !== 'new') reloadMessages(currentId)
     cancelMessage()
   }
@@ -505,6 +527,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       model: '',
       createdAt: new Date().toISOString(),
     }
+
+    pendingSendRef.current = { content, attachments: readyAttachments, wasNew: isNew }
 
     if (isNew) {
       setCreatingChat(true)
