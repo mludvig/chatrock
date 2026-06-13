@@ -114,8 +114,8 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
 
 export const api = {
   listChats: ()                        => req<{ chats: Chat[] }>('GET', '/api/chats'),
-  createChat: (model: string, systemPrompt: string) =>
-    req<{ chatId: string }>('POST', '/api/chats', { model, systemPrompt }),
+  createChat: (model: string, systemPrompt: string, chatId?: string) =>
+    req<{ chatId: string }>('POST', '/api/chats', { model, systemPrompt, ...(chatId ? { chatId } : {}) }),
   renameChat: (chatId: string, title: string) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { title }),
   updateSystemPrompt: (chatId: string, systemPrompt: string) =>
