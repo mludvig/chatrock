@@ -15,6 +15,7 @@ export interface StreamingMsg {
   usage?: TokenUsage
   streaming: true
   waiting?: boolean  // true until first content event arrives
+  idle?: boolean     // true after 2s of no content events (inter-turn gap)
 }
 
 export type ToastKind = 'success' | 'error' | 'info'
@@ -63,6 +64,8 @@ interface ChatState {
   resolveToolCall: (toolUseId: string, result: string, isError: boolean) => void
   /** Set live usage stats from the 'usage' WS event */
   setStreamUsage: (usage: TokenUsage) => void
+  /** Toggle idle indicator — churn-free: no-op when value unchanged */
+  setStreamIdle: (idle: boolean) => void
   /** Move streamingMsg to messages[] as a DisplayBubble */
   finalizeStream: () => void
   clearStream: () => void
@@ -230,6 +233,11 @@ export const useChatStore = create<ChatState>()(
           ? { ...s.streamingMsg, usage }
           : null,
       })),
+
+      setStreamIdle: (idle) => set((s) => {
+        if (!s.streamingMsg || (s.streamingMsg.idle ?? false) === idle) return {}
+        return { streamingMsg: { ...s.streamingMsg, idle } }
+      }),
 
       finalizeStream: () => set((s) => {
         if (!s.streamingMsg) return {}

@@ -27,7 +27,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const {
     chats, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
-    addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream,
+    addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream,
     renameChat, removeChat, sending, setSending, updateChatSystemPrompt, pushToast,
   } = useChatStore()
 
@@ -78,6 +78,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const pendingScrollTopRef = useRef(false)
   const justLoadedRef = useRef(false)
   const streamCancelledRef = useRef(false)
+  const idleTimerRef = useRef<number | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
   const pendingNewChatIdRef = useRef<string | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
@@ -212,16 +213,21 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           evt.type !== 'error' &&
           evt.type !== 'cancelled') return
       if (evt.type === 'delta') {
+        bumpIdleTimer()
         appendDelta(evt.text)
       } else if (evt.type === 'thinking_delta') {
+        bumpIdleTimer()
         appendThinkingDelta(evt.text)
       } else if (evt.type === 'thinking_done') {
         markThinkingDone()
       } else if (evt.type === 'tool_call_start') {
+        bumpIdleTimer()
         addToolCall({ toolUseId: evt.toolUseId, name: evt.name, input: '' })
       } else if (evt.type === 'tool_call') {
+        bumpIdleTimer()
         updateToolCallInput(evt.toolUseId, evt.input)
       } else if (evt.type === 'tool_result') {
+        bumpIdleTimer()
         resolveToolCall(evt.toolUseId, evt.content ?? '', evt.isError)
       } else if (evt.type === 'usage') {
         setStreamUsage(evt.usage)
@@ -234,6 +240,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           cacheWriteInputTokens: (prev.cacheWriteInputTokens ?? 0) + (evt.usage.cacheWriteInputTokens ?? 0),
         } : { ...evt.usage })
       } else if (evt.type === 'done' || evt.type === 'cancelled') {
+        clearIdleTimer()
         finalizeStream()
         setSending(false)
         // Hydrate real msgId/parentId on the just-streamed answer so every
@@ -245,12 +252,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       } else if (evt.type === 'titleUpdated') {
         renameChat(evt.chatId, evt.title)
       } else if (evt.type === 'error') {
+        clearIdleTimer()
         clearStream()
         setSending(false)
         setErrorMsg(evt.message)
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, finalizeStream, clearStream, renameChat, setSending, reloadMessages])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream, renameChat, setSending, reloadMessages])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -321,6 +329,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     bubbleRefsRef.current = []
     bubbleIdxRef.current = -1
     pendingNewChatIdRef.current = null
+    clearIdleTimer()
   }, [chatId])
 
   function handleMessagesScroll() {
@@ -457,8 +466,21 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     (st.kind === 'thinking' && st.text.trim() !== '') ||
     st.kind === 'tool'
 
+  function clearIdleTimer() {
+    if (idleTimerRef.current !== null) {
+      clearTimeout(idleTimerRef.current)
+      idleTimerRef.current = null
+    }
+  }
+  function bumpIdleTimer() {
+    clearIdleTimer()
+    setStreamIdle(false)
+    idleTimerRef.current = window.setTimeout(() => setStreamIdle(true), 2000)
+  }
+
   function handleStop() {
     streamCancelledRef.current = true
+    clearIdleTimer()
     const sm = useChatStore.getState().streamingMsg
     const producedContent = !!sm && sm.steps.some(stepHasContent)
     const currentId = chatIdRef.current

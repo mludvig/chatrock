@@ -278,6 +278,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
+  const idle = isStreaming && 'idle' in message && !!(message as StreamingMsg).idle
   const steps: Step[] = message.steps ?? []
   const [copied, setCopied] = useState(false)
 
@@ -357,6 +358,14 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
           }
           return null
         })}
+
+        {/* Idle indicator — shown after 2s of no content events, once steps have started */}
+        {idle && steps.length > 0 && (
+          <span className="waiting-indicator">
+            <FontAwesomeIcon icon={faSpinner} spin />
+            <span>Processing…</span>
+          </span>
+        )}
 
       </div>
 
