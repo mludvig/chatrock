@@ -46,8 +46,8 @@ function AuthedApp() {
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
+    document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent) => {
-      document.body.style.userSelect = 'none'
       const w = Math.max(180, Math.min(480, ev.clientX))
       setSidebarWidth(w)
     }
