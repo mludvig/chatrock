@@ -25,8 +25,22 @@ describe('parseSearchResults', () => {
     expect(parseSearchResults('web_search', 'not json', false)).toBeUndefined()
   })
 
-  it('returns undefined for non-web_search tools', () => {
+  it('returns undefined for unknown tool names', () => {
     const json = JSON.stringify({ results: [{ title: 'T', url: 'https://x.com', description: 'D' }] })
+    expect(parseSearchResults('web_browse', json, false)).toBeUndefined()
+  })
+
+  it('returns a single card array for web_fetch with valid JSON', () => {
+    const json = JSON.stringify({
+      result: { title: 'Example Page', url: 'https://example.com', description: 'A page' },
+      text: 'page body...',
+    })
+    const res = parseSearchResults('web_fetch', json, false)
+    expect(res).toEqual([{ title: 'Example Page', url: 'https://example.com', description: 'A page' }])
+  })
+
+  it('returns undefined for web_fetch when result key is absent', () => {
+    const json = JSON.stringify({ text: 'body only' })
     expect(parseSearchResults('web_fetch', json, false)).toBeUndefined()
   })
 
