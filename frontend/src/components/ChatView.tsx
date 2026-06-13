@@ -72,10 +72,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
-  const stickToBottom = useRef(true)
   // bubble DOM refs for prev/next stepping (C3)
   const bubbleRefsRef = useRef<(HTMLDivElement | null)[]>([])
   const bubbleIdxRef = useRef(-1)
+  const pendingScrollTopRef = useRef(false)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
@@ -284,16 +284,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
 
-  // Auto-scroll — only when stuck to bottom
+  // After a send, bring the user's new question to the top of the viewport (don't follow the stream)
   useEffect(() => {
-    if (stickToBottom.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
+    if (!pendingScrollTopRef.current) return
+    pendingScrollTopRef.current = false
+    const refs = bubbleRefsRef.current.filter((el): el is HTMLDivElement => !!el)
+    // The streaming assistant bubble (if present) is last; the user question is the one before it.
+    const target = streamingMsg ? refs[refs.length - 2] : refs[refs.length - 1]
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [messages, streamingMsg])
 
-  // Reset stick + bubble refs when chat changes
+  // Reset bubble refs when chat changes
   useEffect(() => {
-    stickToBottom.current = true
     setShowScrollDown(false)
     bubbleRefsRef.current = []
     bubbleIdxRef.current = -1
@@ -303,12 +305,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     const el = messagesRef.current
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    stickToBottom.current = atBottom
     setShowScrollDown(!atBottom)
   }
 
   function scrollToBottom() {
-    stickToBottom.current = true
     setShowScrollDown(false)
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -412,6 +412,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     const cut = messages.findIndex(m => m.msgId === parentId)
     if (cut >= 0) setMessages(messages.slice(0, cut + 1))
     startStream()
+    pendingScrollTopRef.current = true
 
     try {
       await ensureConnected(accessToken)
@@ -492,6 +493,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setSending(true)
       setMessages([optimisticUser])
       startStream()
+      pendingScrollTopRef.current = true
 
       try {
         const res = await api.createChat(model, systemPrompt)
@@ -528,6 +530,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       const base = idx >= 0 ? messages.slice(0, idx) : messages
       setMessages([...base, optimisticUser])
       startStream()
+      pendingScrollTopRef.current = true
       try {
         await ensureConnected(accessToken)
         sendMessage({
@@ -552,6 +555,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       optimisticUser,
     ])
     startStream()
+    pendingScrollTopRef.current = true
 
     try {
       await ensureConnected(accessToken)
