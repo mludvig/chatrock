@@ -47,15 +47,19 @@ function AuthedApp() {
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
     const onMove = (ev: PointerEvent) => {
+      document.body.style.userSelect = 'none'
       const w = Math.max(180, Math.min(480, ev.clientX))
       setSidebarWidth(w)
     }
     const onUp = () => {
+      document.body.style.userSelect = ''
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   return (
