@@ -30,8 +30,9 @@ body {
 // ── Layout ───────────────────────────────────────────────────────────────────
 .layout {
   display: grid;
-  grid-template-columns: $sidebar-w 1fr;
+  grid-template-columns: var(--sidebar-w, #{$sidebar-w}) 1fr;
   height: 100dvh;
+  position: relative;
 }
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
@@ -41,6 +42,18 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--sidebar-w, #{$sidebar-w});
+  width: 6px;
+  margin-left: -3px;
+  cursor: col-resize;
+  z-index: 50;
+  &:hover { background: rgba($accent, 0.25); }
 }
 
 .sidebar-header {
@@ -435,14 +448,6 @@ body {
 
   &.user      { align-self: flex-end; }
   &.assistant { align-self: flex-start; }
-
-  // While editing: stretch full column width so edit-area can fill it
-  &.user.editing {
-    align-self: stretch;
-  }
-
-  // Hide the blue bubble shell while the edit textarea is open
-  &.editing .message-content { display: none; }
 }
 
 // Always-visible row: sibling nav + action icons
@@ -496,69 +501,6 @@ body {
   min-width: 28px;
   text-align: center;
   font-variant-numeric: tabular-nums;
-}
-
-// Edit area: textarea + Send/Cancel, sits below the user bubble
-.edit-area {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-self: flex-end;   // right-align under the user bubble
-  width: 100%;
-  max-width: 680px;       // match .message-content max-width
-  min-width: 320px;
-  margin-top: 4px;
-}
-
-.edit-textarea {
-  width: 100%;
-  box-sizing: border-box;
-  background: $surface;
-  border: 2px solid $accent;
-  border-radius: 10px;
-  padding: 10px 12px;
-  color: $text;
-  font-family: $font;
-  font-size: 15px;
-  line-height: 1.5;
-  resize: vertical;
-  outline: none;
-  &:focus { border-color: $accent; }
-}
-
-.edit-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
-.edit-send-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: $accent;
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  padding: 5px 11px;
-  font-size: 13px;
-  font-family: $font;
-  cursor: pointer;
-  transition: opacity 0.12s;
-  &:hover { opacity: 0.88; }
-}
-
-.edit-cancel-btn {
-  background: $surface;
-  border: 1px solid $muted;
-  border-radius: 6px;
-  color: $text;
-  font-size: 13px;
-  font-family: $font;
-  padding: 5px 11px;
-  cursor: pointer;
-  transition: color 0.12s, border-color 0.12s;
-  &:hover { color: $text; border-color: $muted; }
 }
 
 .message-content {
@@ -1309,6 +1251,8 @@ $mobile: 720px;
     grid-template-columns: 1fr;
     position: relative;
   }
+
+  .sidebar-resizer { display: none; }
 
   // Sidebar becomes a fixed drawer, hidden by default
   .sidebar {

@@ -13,7 +13,7 @@ import './app.scss'
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel } = useChatStore()
+  const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel, sidebarWidth, setSidebarWidth } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const auth = useAuth()
@@ -44,8 +44,25 @@ function AuthedApp() {
 
   const defaultModel = lastModel || models[1]?.id || models[0]?.id || ''
 
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const onMove = (ev: PointerEvent) => {
+      const w = Math.max(180, Math.min(480, ev.clientX))
+      setSidebarWidth(w)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   return (
-    <div className={`layout${sidebarOpen ? ' sidebar-open' : ''}`}>
+    <div
+      className={`layout${sidebarOpen ? ' sidebar-open' : ''}`}
+      style={{ ['--sidebar-w' as string]: `${sidebarWidth}px` }}
+    >
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}
@@ -55,6 +72,7 @@ function AuthedApp() {
         onSignOut={() => auth.signoutRedirect()}
         onRenameChat={renameChat}
       />
+      <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />
       <main className="main">
         <Routes>
           <Route path="/" element={<Navigate to="/c/new" replace />} />

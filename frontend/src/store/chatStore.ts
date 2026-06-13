@@ -36,6 +36,7 @@ interface ChatState {
   loading: boolean
   sending: boolean
   lastModel: string
+  sidebarWidth: number
   toasts: Toast[]
 
   setChats: (chats: Chat[]) => void
@@ -69,6 +70,7 @@ interface ChatState {
   setLoading: (v: boolean) => void
   setSending: (v: boolean) => void
   setLastModel: (modelId: string) => void
+  setSidebarWidth: (w: number) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -120,6 +122,7 @@ export const useChatStore = create<ChatState>()(
       loading: false,
       sending: false,
       lastModel: '',
+      sidebarWidth: 260,
       toasts: [],
 
       setChats: (chats) => set({ chats }),
@@ -260,10 +263,11 @@ export const useChatStore = create<ChatState>()(
       setLoading: (loading) => set({ loading }),
       setSending: (sending) => set({ sending }),
       setLastModel: (lastModel) => set({ lastModel }),
+      setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
     }),
     {
       name: 'chatrock-store',
-      partialize: (s) => ({ lastModel: s.lastModel }),
+      partialize: (s) => ({ lastModel: s.lastModel, sidebarWidth: s.sidebarWidth }),
     }
   )
 )
