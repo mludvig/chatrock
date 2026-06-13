@@ -56,4 +56,17 @@ describe('web_fetch executor', () => {
     const res = await executeTool('web_fetch', { url: 'https://example.com/fail' })
     expect(res.status).toBe('error')
   })
+
+  it('falls back to raw url when data is absent', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    }) as unknown as typeof fetch
+
+    const res = await executeTool('web_fetch', { url: 'https://example.com' })
+    const payload = JSON.parse((res.content?.[0] as { text: string }).text)
+    expect(payload.result.url).toBe('https://example.com')
+    expect(payload.result.title).toBe('https://example.com')  // title falls back to url
+    expect(payload.text).toBe('')
+  })
 })
