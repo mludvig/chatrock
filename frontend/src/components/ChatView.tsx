@@ -77,6 +77,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const bubbleIdxRef = useRef(-1)
   const pendingScrollTopRef = useRef(false)
   const justLoadedRef = useRef(false)
+  const streamCancelledRef = useRef(false)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
@@ -200,6 +201,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Register WS event handler
   useEffect(() => {
     setWSHandlers((evt: WSEvent) => {
+      // Allow titleUpdated (title gen runs independently of stream cancel) and
+      // error (always show server errors) and cancelled (needed for timely reload
+      // after the server persists the partial cancelled turn) to pass through.
+      if (streamCancelledRef.current &&
+          evt.type !== 'titleUpdated' &&
+          evt.type !== 'error' &&
+          evt.type !== 'cancelled') return
       if (evt.type === 'delta') {
         appendDelta(evt.text)
       } else if (evt.type === 'thinking_delta') {
@@ -413,6 +421,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   const handleRerun = useCallback(async (parentId: string) => {
     if (!activeChat || useChatStore.getState().sending || creatingChat) return
+    streamCancelledRef.current = false
     setSending(true)
     setErrorMsg(null)
     setLastTurnUsage(null)
@@ -443,6 +452,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // Optimistic: reset UI immediately so the input re-enables right away.
     // The server will honour the cancel asynchronously; the eventual 'cancelled'
     // WS event (if it arrives) is a no-op because sending is already false.
+    streamCancelledRef.current = true
     finalizeStream()
     setSending(false)
     const currentId = chatIdRef.current
@@ -467,6 +477,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (inputRef.current) inputRef.current.style.height = 'auto'
     setErrorMsg(null)
     setLastTurnUsage(null)
+    streamCancelledRef.current = false
 
     const attachmentsPayload = readyAttachments.map(a => ({
       s3Key: a.s3Key!,
