@@ -577,6 +577,40 @@ test('POST /api/chats/{chatId}/fork calls copyChatObjects', async () => {
   expect(mockAttachments.copyChatObjects).toHaveBeenCalledWith('user-1', 'c1', expect.any(String))
 })
 
+// ── Client-supplied chatId (new chat) ────────────────────────────────────────
+
+test('POST /api/chats with valid client chatId uses that id', async () => {
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.getChat.mockResolvedValue(undefined)  // not a duplicate
+  const clientId = '11111111-2222-3333-4444-555555555555'
+  const res = result(await handler(makeEvent('POST', '/api/chats', {
+    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: clientId,
+  }) as any))
+  expect(res.statusCode).toBe(201)
+  const body = JSON.parse(res.body ?? '{}')
+  expect(body.chatId).toBe(clientId)
+  expect(mockDynamo.putChat).toHaveBeenCalledTimes(1)
+  expect(mockDynamo.getChat).toHaveBeenCalledWith('user-1', clientId)
+})
+
+test('POST /api/chats with invalid chatId returns 400', async () => {
+  const res = result(await handler(makeEvent('POST', '/api/chats', {
+    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: 'not-a-uuid',
+  }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid chatId' })
+})
+
+test('POST /api/chats with duplicate chatId returns 409', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#existing' })
+  const clientId = '11111111-2222-3333-4444-555555555555'
+  const res = result(await handler(makeEvent('POST', '/api/chats', {
+    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: clientId,
+  }) as any))
+  expect(res.statusCode).toBe(409)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Chat already exists' })
+})
+
 test('inc6: original chat rows are not modified (no writes to original CHAT#c1 partition)', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',

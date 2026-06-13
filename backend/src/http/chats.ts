@@ -52,7 +52,14 @@ export const handler = async (
     }
     const model = (body.model as string | undefined) ?? process.env.DEFAULT_MODEL ?? ''
     if (body.model !== undefined && !isValidModelId(model)) return err(400, 'Invalid model')
-    const chatId = uuidv4()
+    const clientId = body.chatId as string | undefined
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (clientId !== undefined && !UUID_RE.test(clientId)) return err(400, 'Invalid chatId')
+    if (clientId) {
+      const existing = await getChat(sub, clientId)
+      if (existing) return err(409, 'Chat already exists')
+    }
+    const chatId = clientId ?? uuidv4()
     const now = new Date().toISOString()
     await putChat({
       ...buildChatKey(sub, chatId),

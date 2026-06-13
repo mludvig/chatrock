@@ -79,6 +79,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const justLoadedRef = useRef(false)
   const streamCancelledRef = useRef(false)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
+  const pendingNewChatIdRef = useRef<string | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
@@ -104,12 +105,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     'application/octet-stream': 1 * 1024 * 1024,
   }
 
+  function newChatUploadId(): string {
+    if (!pendingNewChatIdRef.current) pendingNewChatIdRef.current = crypto.randomUUID()
+    return pendingNewChatIdRef.current
+  }
+
   function addFiles(files: File[]) {
-    const currentChatId = chatId && chatId !== 'new' ? chatId : null
-    if (!currentChatId) {
-      pushToast({ kind: 'error', text: 'Start a chat before attaching files' })
-      return
-    }
+    const currentChatId = chatId && chatId !== 'new' ? chatId : newChatUploadId()
     for (const file of files) {
       const ct = file.type || 'application/octet-stream'
       const kind = ALLOWED_TYPES[ct]
@@ -318,6 +320,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setShowScrollDown(false)
     bubbleRefsRef.current = []
     bubbleIdxRef.current = -1
+    pendingNewChatIdRef.current = null
   }, [chatId])
 
   function handleMessagesScroll() {
@@ -541,7 +544,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       pendingScrollTopRef.current = true
 
       try {
-        const res = await api.createChat(model, systemPrompt)
+        const newId = pendingNewChatIdRef.current ?? crypto.randomUUID()
+        const res = await api.createChat(model, systemPrompt, newId)
+        pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
         useChatStore.getState().addChat({
           chatId: res.chatId,
