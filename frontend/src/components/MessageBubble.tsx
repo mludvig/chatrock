@@ -1,4 +1,4 @@
-import { useState, memo, forwardRef } from 'react'
+import { useState, useEffect, memo, forwardRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -205,7 +205,9 @@ function AttachmentBlock({ step }: { step: Extract<Step, { kind: 'attachment' }>
 // ── Thinking block ────────────────────────────────────────────────────────────
 
 function ThinkingBlock({ text, done, streaming }: { text: string; done: boolean; streaming: boolean }) {
-  const [open, setOpen] = useState(false)
+  // Auto-open while thinking is live; auto-collapse once done so the answer isn't buried.
+  const [open, setOpen] = useState(!done)
+  useEffect(() => { if (done) setOpen(false) }, [done])
   return (
     <div className={`thinking-block${open ? ' open' : ''}`}>
       <button className="thinking-header" onClick={() => setOpen(o => !o)}>
