@@ -85,6 +85,27 @@ export interface ModelSettings {
   webSearch?: boolean
 }
 
+export interface UserMemory {
+  memId: string
+  text: string
+  category: 'identity' | 'preference' | 'style' | 'other'
+  createdAt: string
+  updatedAt: string
+}
+
+export interface UserPreferences {
+  persona?: string
+  injectCurrentDate?: boolean
+  answerLength?: 'default' | 'short' | 'extensive'
+  defaultModel?: string
+  thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
+  webSearch?: boolean
+  temperature?: number
+  topP?: number
+  topK?: number
+  showTokenStats?: boolean
+}
+
 export interface Model {
   id: string
   name: string
@@ -131,6 +152,10 @@ export const api = {
     req<{ chatId: string }>('POST', `/api/chats/${chatId}/fork`, { fromMsgId }),
   deleteBranch: (chatId: string, msgId: string) =>
     req<void>('DELETE', `/api/chats/${chatId}/messages/${msgId}`),
+  getPreferences: ()                         => req<{ preferences: UserPreferences }>('GET', '/api/preferences'),
+  savePreferences: (prefs: UserPreferences)  => req<{ ok: boolean }>('PUT', '/api/preferences', prefs),
+  listMemory: ()                             => req<{ memories: UserMemory[] }>('GET', '/api/memory'),
+  deleteMemory: (memId: string)              => req<void>('DELETE', `/api/memory/${memId}`),
 }
 
 export interface UploadRequest {

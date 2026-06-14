@@ -214,3 +214,53 @@ export async function clearStreamCancel(connId: string): Promise<void> {
     UpdateExpression: 'REMOVE cancelRequested',
   }))
 }
+
+export const buildUserPrefKey = (sub: string) => ({
+  PK: `USER#${sub}`,
+  SK: 'PREF#USER',
+})
+
+export async function getUserPrefs(sub: string): Promise<Record<string, unknown>> {
+  const res = await ddb.send(new GetCommand({
+    TableName: TABLE,
+    Key: buildUserPrefKey(sub),
+  }))
+  return (res.Item?.prefs as Record<string, unknown>) ?? {}
+}
+
+export async function putUserPrefs(sub: string, prefs: Record<string, unknown>): Promise<void> {
+  await ddb.send(new PutCommand({
+    TableName: TABLE,
+    Item: {
+      ...buildUserPrefKey(sub),
+      prefs,
+      updatedAt: new Date().toISOString(),
+    },
+  }))
+}
+
+export const buildUserMemKey = (sub: string, memId: string) => ({
+  PK: `USER#${sub}`,
+  SK: `MEM#USER#${memId}`,
+})
+
+export async function listUserMemories(sub: string) {
+  const res = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':prefix': 'MEM#USER#' },
+    ScanIndexForward: true,
+  }))
+  return res.Items ?? []
+}
+
+export async function putUserMemory(item: Record<string, unknown>): Promise<void> {
+  await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
+}
+
+export async function deleteUserMemory(sub: string, memId: string): Promise<void> {
+  await ddb.send(new DeleteCommand({
+    TableName: TABLE,
+    Key: buildUserMemKey(sub, memId),
+  }))
+}

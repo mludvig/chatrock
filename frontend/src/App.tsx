@@ -5,6 +5,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faComments } from '@fortawesome/free-solid-svg-icons'
 import { api, setAccessToken } from './api/http'
 import { useChatStore } from './store/chatStore'
+import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
 import ChatView from './components/ChatView'
 import Toaster from './components/Toaster'
@@ -13,7 +14,7 @@ import './app.scss'
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel, sidebarWidth, setSidebarWidth } = useChatStore()
+  const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const auth = useAuth()
@@ -28,27 +29,29 @@ function AuthedApp() {
   useEffect(() => {
     if (!auth.isAuthenticated || !accessToken) return
     setLoading(true)
-    Promise.all([api.listChats(), api.listModels()])
-      .then(([chatsRes, modelsRes]) => {
+    Promise.all([api.listChats(), api.listModels(), api.getPreferences()])
+      .then(([chatsRes, modelsRes, prefsRes]) => {
         const sorted = chatsRes.chats.sort(
           (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
         )
         setChats(sorted)
         setModels(modelsRes.models)
+        setUserPreferences(prefsRes.preferences)
       })
       .finally(() => setLoading(false))
-  }, [auth.isAuthenticated, accessToken, setChats, setModels, setLoading])
+  }, [auth.isAuthenticated, accessToken, setChats, setModels, setLoading, setUserPreferences])
 
   // Auto-close sidebar on navigation (mobile)
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
 
-  const defaultModel = lastModel || models[1]?.id || models[0]?.id || ''
+  const defaultModel = lastModel || userPreferences.defaultModel || models[1]?.id || models[0]?.id || ''
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent) => {
-      const w = Math.max(180, Math.min(480, ev.clientX))
+      // Subtract the 48px activity bar from the pointer position
+      const w = Math.max(180, Math.min(480, ev.clientX - 48))
       setSidebarWidth(w)
     }
     const onUp = () => {
@@ -70,10 +73,12 @@ function AuthedApp() {
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}
-      <Sidebar
+      <ActivityBar
         userName={userName}
-        onNewChat={() => navigate('/c/new')}
         onSignOut={() => auth.signoutRedirect()}
+      />
+      <Sidebar
+        onNewChat={() => navigate('/c/new')}
         onRenameChat={renameChat}
       />
       <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />

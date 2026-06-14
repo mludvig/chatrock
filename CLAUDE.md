@@ -143,6 +143,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `cancelled` | — (stream was aborted by `cancelMessage`) |
 | `usage` | `usage` (inputTokens, outputTokens, cache*) |
 | `titleUpdated` | `chatId`, `title` |
+| `memoryUpdated` | `count` — number of new memories extracted this turn |
 | `error` | `message` |
 
 ### Frontend structure

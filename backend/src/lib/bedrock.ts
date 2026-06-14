@@ -422,12 +422,13 @@ export async function converseOnce(
   modelId: string,
   systemPrompt: string,
   messages: Message[],
+  options?: { maxTokens?: number },
 ): Promise<string> {
   const cmd = new ConverseCommand({
     modelId,
     system: systemPrompt ? [{ text: systemPrompt }] : undefined,
     messages,
-    inferenceConfig: { maxTokens: 64 },
+    inferenceConfig: { maxTokens: options?.maxTokens ?? 64 },
   })
   const res = await bedrockClient.send(cmd)
   const block = res.output?.message?.content?.[0]

@@ -264,6 +264,7 @@ interface Props {
   onEditRequest?: (message: Message) => void
   onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
   onDeleteBranch?: (msgId: string) => void
+  showTokenStats?: boolean
 }
 
 /**
@@ -275,7 +276,7 @@ interface Props {
  * This preserves the think → search → think → answer interleaved structure.
  */
 const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBubble(
-  { message, onRerun, onNavigate, onEditRequest, onForkToHere, onDeleteBranch }, ref,
+  { message, onRerun, onNavigate, onEditRequest, onForkToHere, onDeleteBranch, showTokenStats }, ref,
 ) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
@@ -384,7 +385,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
               <FontAwesomeIcon icon={faRobot} />
               {modelShort}
             </span>
-            {msg.usage && (
+            {showTokenStats !== false && msg.usage && (
               <span className="msg-meta-item">
                 <FontAwesomeIcon icon={faCoins} />
                 {fmtTokens(msg.usage.inputTokens + msg.usage.outputTokens)} tok

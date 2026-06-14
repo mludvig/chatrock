@@ -2,11 +2,14 @@ import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, buildUserMemKey } from '../lib/dynamo'
 import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
 import { buildActivePath, type TurnRow } from '../lib/tree'
 import { TITLE_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
+import { resolvePreferences } from '../lib/preferences'
+import { assembleSystemPrompt } from '../lib/promptAssembly'
+import { extractUserFacts, reconcile, type UserMemory } from '../lib/memory'
 
 function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[]): ContentBlock[] {
   const attachBlocks: ContentBlock[] = attachments.map(a => attachmentBlock(a))
@@ -61,6 +64,37 @@ export const buildHandler = (postFn: PostFn) => async (
     await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Chat not found' }) })
     return { statusCode: 200, body: '' }
   }
+
+  // Load and resolve user preferences + memories in parallel
+  const [userPrefs, userMemoriesRaw] = await Promise.all([
+    getUserPrefs(sub),
+    listUserMemories(sub),
+  ])
+  const effectivePrefs = resolvePreferences({ user: userPrefs })
+
+  // Merge preference inference defaults into modelSettings
+  // (client per-send value wins if defined)
+  const effectiveModelSettings: ModelSettings = {
+    thinkingEffort: effectivePrefs.thinkingEffort,
+    webSearch: effectivePrefs.webSearch,
+    temperature: effectivePrefs.temperature,
+    topP: effectivePrefs.topP,
+    topK: effectivePrefs.topK,
+    ...modelSettings,  // client values override
+  }
+
+  // Assemble the effective system prompt (server-authoritative)
+  const now = new Date().toISOString()
+  const memoriesForPrompt = userMemoriesRaw.map(i => ({
+    text: i.text as string,
+    category: i.category as string,
+  }))
+  const effectiveSystemPrompt = assembleSystemPrompt({
+    basePrompt: systemPrompt,
+    prefs: effectivePrefs,
+    memories: memoriesForPrompt,
+    now,
+  })
 
   // Capture the response start time once — all turns of this response share it
   // so their SKs (MSG#<ts>#<seq>#<id>) sort together in order.
@@ -195,8 +229,11 @@ export const buildHandler = (postFn: PostFn) => async (
   let partialText = ''
   let partialTurnIndex = 0
 
+  // Accumulates assistant text across all turns for post-stream memory extraction
+  let assistantTextForMemory = ''
+
   try {
-    for await (const chunk of converseStream(model, systemPrompt, bedrockMessages, modelSettings, abortController.signal)) {
+    for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, abortController.signal)) {
       switch (chunk.type) {
         case 'thinking_delta':
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
@@ -206,6 +243,7 @@ export const buildHandler = (postFn: PostFn) => async (
           break
         case 'delta':
           partialText += chunk.text
+          assistantTextForMemory += chunk.text
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
           break
         case 'tool_call_start':
@@ -247,10 +285,10 @@ export const buildHandler = (postFn: PostFn) => async (
             turnIndex: chunk.turnIndex,
             responseId,
             ...(chunk.role === 'assistant' && lastUsage ? { usage: lastUsage } : {}),
-            ...(chunk.role === 'assistant' && modelSettings.thinkingEffort !== undefined
-              ? { thinkingEffort: modelSettings.thinkingEffort } : {}),
-            ...(chunk.role === 'assistant' && modelSettings.webSearch !== undefined
-              ? { webSearch: modelSettings.webSearch } : {}),
+            ...(chunk.role === 'assistant' && effectiveModelSettings.thinkingEffort !== undefined
+              ? { thinkingEffort: effectiveModelSettings.thinkingEffort } : {}),
+            ...(chunk.role === 'assistant' && effectiveModelSettings.webSearch !== undefined
+              ? { webSearch: effectiveModelSettings.webSearch } : {}),
           })
           lastTurnMsgId = turnMsgId
           // Reset partial accumulator — this turn is fully persisted
@@ -329,6 +367,48 @@ export const buildHandler = (postFn: PostFn) => async (
       await updateChatTitle(sub, chatId, title)
       await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title }) })
     }
+  }
+
+  // ── Post-turn memory extraction (non-blocking) ────────────────────────────
+  // Runs after the turn is fully persisted and the client has its response.
+  // Errors are swallowed — memory failure must never break the chat turn.
+  try {
+    const transcript = [
+      `User: ${content ?? ''}`,
+      `Assistant: ${assistantTextForMemory}`,
+    ].join('\n')
+    const existing = await listUserMemories(sub)
+    const existingMemories: UserMemory[] = existing.map(i => ({
+      memId: i.memId as string,
+      text: i.text as string,
+      category: i.category as UserMemory['category'],
+      createdAt: i.createdAt as string,
+      updatedAt: i.updatedAt as string,
+    }))
+    const candidates = await extractUserFacts(transcript)
+    const ops = reconcile(candidates, existingMemories)
+    const memNow = new Date().toISOString()
+    for (const op of ops) {
+      if (op.op === 'ADD') {
+        const memId = uuidv4()
+        await putUserMemory({
+          ...buildUserMemKey(sub, memId),
+          memId,
+          text: op.text,
+          category: op.category,
+          createdAt: memNow,
+          updatedAt: memNow,
+        })
+      }
+      // UPDATE and DELETE not implemented in Phase 1
+    }
+    const newCount = ops.filter(o => o.op === 'ADD').length
+    if (newCount > 0) {
+      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: newCount }) })
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'memory_extraction_error', chatId, error: String(err) }))
+    // Swallow: memory extraction failure must never break a chat turn
   }
 
   return { statusCode: 200, body: '' }

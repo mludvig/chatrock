@@ -4,7 +4,7 @@ resource "aws_apigatewayv2_api" "http" {
 
   cors_configuration {
     allow_origins = ["https://${var.domain_name}"]
-    allow_methods = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+    allow_methods = ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"]
     allow_headers = ["Authorization", "Content-Type"]
     max_age       = 300
   }
@@ -70,6 +70,20 @@ resource "aws_apigatewayv2_integration" "http_models" {
   api_id                 = aws_apigatewayv2_api.http.id
   integration_type       = "AWS_PROXY"
   integration_uri        = aws_lambda_function.http_models.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_integration" "http_preferences" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.http_preferences.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_integration" "http_memory" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.http_memory.invoke_arn
   payload_format_version = "2.0"
 }
 
@@ -152,6 +166,38 @@ resource "aws_apigatewayv2_route" "attachments_upload" {
   api_id             = aws_apigatewayv2_api.http.id
   route_key          = "POST /api/attachments"
   target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "preferences_get" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/preferences"
+  target             = "integrations/${aws_apigatewayv2_integration.http_preferences.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "preferences_put" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "PUT /api/preferences"
+  target             = "integrations/${aws_apigatewayv2_integration.http_preferences.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "memory_list" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/memory"
+  target             = "integrations/${aws_apigatewayv2_integration.http_memory.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "memory_delete" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "DELETE /api/memory/{memId}"
+  target             = "integrations/${aws_apigatewayv2_integration.http_memory.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }

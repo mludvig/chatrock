@@ -12,6 +12,7 @@ export type WSEvent =
   | { type: 'done';           stopReason: string }
   | { type: 'cancelled' }
   | { type: 'titleUpdated';   chatId: string; title: string }
+  | { type: 'memoryUpdated';  count: number }
   | { type: 'error';          message: string }
 
 type EventHandler = (evt: WSEvent) => void

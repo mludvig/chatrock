@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Chat, Message, Model, Step, TokenUsage } from '../api/http'
+import type { Chat, Message, Model, Step, TokenUsage, UserPreferences } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
-export type { Step, TokenUsage } from '../api/http'
+export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
 // A tool step that may be in progress (no result yet)
 export type ToolStep = Extract<Step, { kind: 'tool' }>
@@ -28,6 +28,8 @@ export interface Toast {
 
 let _toastSeq = 0
 
+export type ActivePanel = 'chats' | 'memory' | 'prefs'
+
 interface ChatState {
   chats: Chat[]
   activeChatId: string | null
@@ -38,6 +40,8 @@ interface ChatState {
   sending: boolean
   lastModel: string
   sidebarWidth: number
+  activePanel: ActivePanel
+  userPreferences: UserPreferences
   toasts: Toast[]
 
   setChats: (chats: Chat[]) => void
@@ -74,6 +78,10 @@ interface ChatState {
   setSending: (v: boolean) => void
   setLastModel: (modelId: string) => void
   setSidebarWidth: (w: number) => void
+  setActivePanel: (panel: ActivePanel) => void
+  setUserPreferences: (p: UserPreferences) => void
+  memoryRefreshTick: number
+  triggerMemoryRefresh: () => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -126,7 +134,10 @@ export const useChatStore = create<ChatState>()(
       sending: false,
       lastModel: '',
       sidebarWidth: 260,
+      activePanel: 'chats',
+      userPreferences: {},
       toasts: [],
+      memoryRefreshTick: 0,
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -272,10 +283,13 @@ export const useChatStore = create<ChatState>()(
       setSending: (sending) => set({ sending }),
       setLastModel: (lastModel) => set({ lastModel }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
+      setActivePanel: (activePanel) => set({ activePanel }),
+      setUserPreferences: (userPreferences) => set({ userPreferences }),
+      triggerMemoryRefresh: () => set((s) => ({ memoryRefreshTick: s.memoryRefreshTick + 1 })),
     }),
     {
       name: 'chatrock-store',
-      partialize: (s) => ({ lastModel: s.lastModel, sidebarWidth: s.sidebarWidth }),
+      partialize: (s) => ({ lastModel: s.lastModel, sidebarWidth: s.sidebarWidth, activePanel: s.activePanel, userPreferences: s.userPreferences }),
     }
   )
 )
