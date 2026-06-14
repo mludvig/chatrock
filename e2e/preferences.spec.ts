@@ -16,7 +16,7 @@ test('custom persona is reflected in assistant replies', async ({ page }) => {
   // Start a new chat and ask something emoji-prone
   await page.goto('/c/new')
   await page.locator('[data-panel="chats"]').click()
-  await page.locator('.chat-input').fill('Say hello!')
+  await page.locator('.message-input').fill('Say hello!')
   await page.locator('.btn-send').click()
   await page.waitForSelector('.msg-done', { timeout: 30000 })
   // Get the assistant response text
@@ -28,7 +28,7 @@ test('show token stats toggle works', async ({ page }) => {
   await page.goto('/c/new')
   // First ensure we have a chat with a message
   await page.locator('[data-panel="chats"]').click()
-  await page.locator('.chat-input').fill('Hi')
+  await page.locator('.message-input').fill('Hi')
   await page.locator('.btn-send').click()
   await page.waitForSelector('.msg-done', { timeout: 30000 })
 
