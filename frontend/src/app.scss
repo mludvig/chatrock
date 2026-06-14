@@ -1137,9 +1137,10 @@ body {
   hr { border: none; border-top: 1px solid $border; margin: 1em 0; }
 }
 
-// User bubble markdown — invert inline code colours; code blocks keep their dark theme
-.message.user .md .inline-code { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.2); color: #fff; }
-.message.user .md a             { color: rgba(255,255,255,0.9); }
+// User bubble markdown — invert colours for the blue background
+.message.user .md .inline-code  { background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.2); color: #fff; }
+.message.user .md a              { color: rgba(255,255,255,0.9); }
+.message.user .md blockquote     { border-left-color: rgba(255,255,255,0.5); color: rgba(255,255,255,0.75); }
 
 // ── Code block (syntax-highlighted, with copy button) ────────────────────────
 .code-block {
