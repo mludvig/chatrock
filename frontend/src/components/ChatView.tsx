@@ -305,14 +305,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
 
-  // After a send, bring the user's new question to the top of the viewport (don't follow the stream)
+  // After a send, pin the user's question to the top of the viewport so the answer
+  // streams in below it.  Use instant scrollTop arithmetic — smooth scroll gets
+  // interrupted by streaming delta re-renders and never finishes.
   useEffect(() => {
     if (!pendingScrollTopRef.current) return
     pendingScrollTopRef.current = false
+    const container = messagesRef.current
     const refs = bubbleRefsRef.current.filter((el): el is HTMLDivElement => !!el)
     // The streaming assistant bubble (if present) is last; the user question is the one before it.
     const target = streamingMsg ? refs[refs.length - 2] : refs[refs.length - 1]
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!container || !target) return
+    // offsetTop of the target relative to the scrollable container
+    container.scrollTop = target.offsetTop - container.offsetTop
   }, [messages, streamingMsg])
 
   // Instant jump to bottom when opening a chat (no smooth scroll)
