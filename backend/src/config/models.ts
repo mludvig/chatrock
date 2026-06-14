@@ -56,6 +56,11 @@ export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-4-6'
 // Cheaper model used for auto-title generation only
 export const TITLE_MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 
+// Model used for background memory extraction after each turn.
+// Independently configurable from TITLE_MODEL so it can be changed to a
+// stronger model if extraction quality needs improvement.
+export const MEMORY_EXTRACTION_MODEL = TITLE_MODEL
+
 // ── Capability helpers ────────────────────────────────────────────────────────
 
 export function getCapabilities(modelId: string): ModelCapabilities {

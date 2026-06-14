@@ -29,6 +29,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream,
     renameChat, removeChat, sending, setSending, updateChatSystemPrompt, pushToast,
+    userPreferences, triggerMemoryRefresh,
   } = useChatStore()
 
   // For /c/new: local model + system prompt state (not yet persisted)
@@ -196,10 +197,27 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (currentModelDef) {
       setModelSettings(s => {
         // Only re-initialise if settings are empty (first load or model change handled elsewhere)
-        if (Object.keys(s).length === 0) return defaultSettings(currentModelDef.capabilities)
+        if (Object.keys(s).length === 0) {
+          const base = defaultSettings(currentModelDef.capabilities)
+          // Seed from user preferences where the pref applies to this model's caps
+          return {
+            ...base,
+            ...(userPreferences.webSearch !== undefined ? { webSearch: userPreferences.webSearch } : {}),
+            ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
+              ? { thinkingEffort: userPreferences.thinkingEffort }
+              : {}),
+            ...(currentModelDef.capabilities.temperature && userPreferences.temperature !== undefined
+              ? { temperature: userPreferences.temperature }
+              : {}),
+            ...(currentModelDef.capabilities.topP && userPreferences.topP !== undefined
+              ? { topP: userPreferences.topP }
+              : {}),
+          }
+        }
         return s
       })
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentModelDef])
 
   // Register WS event handler
@@ -251,6 +269,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         }
       } else if (evt.type === 'titleUpdated') {
         renameChat(evt.chatId, evt.title)
+      } else if (evt.type === 'memoryUpdated') {
+        triggerMemoryRefresh()
       } else if (evt.type === 'error') {
         clearIdleTimer()
         clearStream()
@@ -258,7 +278,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         setErrorMsg(evt.message)
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream, renameChat, setSending, reloadMessages])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -747,6 +767,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               onEditRequest={!isNew ? handleEditRequest : undefined}
               onForkToHere={!isNew ? handleForkToHere : undefined}
               onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
+              showTokenStats={userPreferences.showTokenStats !== false}
             />
           ))}
           <div ref={bottomRef} />

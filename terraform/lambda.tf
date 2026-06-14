@@ -74,6 +74,44 @@ resource "aws_lambda_permission" "http_models_apigw" {
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
+resource "aws_lambda_function" "http_preferences" {
+  function_name    = "chatrock-http-preferences-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/http-preferences.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/http-preferences.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 30
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "http_preferences_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.http_preferences.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
+resource "aws_lambda_function" "http_memory" {
+  function_name    = "chatrock-http-memory-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/http-memory.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/http-memory.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 30
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "http_memory_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.http_memory.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
 # ── WebSocket handlers ──────────────────────────────────────────────────────
 resource "aws_lambda_function" "ws_authorizer" {
   function_name    = "chatrock-ws-authorizer-${var.env}"

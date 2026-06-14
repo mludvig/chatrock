@@ -1,6 +1,7 @@
 import { buildHandler } from '../../src/ws/sendMessage'
 import * as dynamo from '../../src/lib/dynamo'
 import * as bedrock from '../../src/lib/bedrock'
+import * as memoryLib from '../../src/lib/memory'
 
 jest.mock('../../src/lib/attachments', () => ({
   attachmentBlock: jest.fn().mockReturnValue({ image: { format: 'png', source: { s3Location: { uri: 's3://bucket/key.png' } } } }),
@@ -20,11 +21,20 @@ jest.mock('../../src/lib/dynamo', () => ({
   updateChatActiveLeaf: jest.fn(),
   isStreamCancelled: jest.fn().mockResolvedValue(false),
   clearStreamCancel: jest.fn().mockResolvedValue(undefined),
+  getUserPrefs: jest.fn().mockResolvedValue({}),
+  listUserMemories: jest.fn().mockResolvedValue([]),
+  putUserMemory: jest.fn().mockResolvedValue(undefined),
+  deleteUserMemory: jest.fn().mockResolvedValue(undefined),
 }))
 jest.mock('../../src/lib/bedrock')
+jest.mock('../../src/lib/memory', () => ({
+  extractUserFacts: jest.fn().mockResolvedValue([]),
+  reconcile: jest.fn().mockReturnValue([]),
+}))
 
 const mockDynamo  = dynamo  as jest.Mocked<typeof dynamo>
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
+const mockMemory  = memoryLib as jest.Mocked<typeof memoryLib>
 
 const mockPost = jest.fn().mockResolvedValue(undefined)
 
@@ -1013,4 +1023,156 @@ describe('attachments in WS payload', () => {
     expect(blocks.some(b => b.text !== undefined && b.text.trim() === '')).toBe(false)
     expect(blocks.some(b => b.image !== undefined)).toBe(true)
   })
+})
+
+// ── Slice 1b: user preferences wired into sendMessage ────────────────────────
+
+function prefsBase() {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+}
+
+test('prefs1: uses assembleSystemPrompt with user prefs — persona appears in system prompt', async () => {
+  prefsBase()
+  mockDynamo.getUserPrefs.mockResolvedValue({ persona: 'Be brief' })
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const [, passedSystemPrompt] = mockBedrock.converseStream.mock.calls[0]
+  expect(typeof passedSystemPrompt).toBe('string')
+  expect(passedSystemPrompt as string).toContain('Be brief')
+})
+
+test('prefs2: client modelSettings override user preference defaults', async () => {
+  prefsBase()
+  // User default: webSearch off
+  mockDynamo.getUserPrefs.mockResolvedValue({ webSearch: false })
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  // Client explicitly turns web search ON — must win
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { webSearch: true } }))
+
+  const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
+  expect((passedSettings as Record<string, unknown>).webSearch).toBe(true)
+})
+
+test('prefs3: getUserPrefs failure propagates as a fatal error — converseStream not called', async () => {
+  prefsBase()
+  mockDynamo.getUserPrefs.mockRejectedValue(new Error('DynamoDB unavailable'))
+
+  // The handler propagates the DynamoDB error — converseStream must NOT be called
+  await expect(
+    buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+  ).rejects.toThrow('DynamoDB unavailable')
+
+  expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+})
+
+// ── Slice 2b: memory extraction and prompt injection ─────────────────────────
+
+function memoryBase() {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.getUserPrefs.mockResolvedValue({})
+  mockDynamo.listUserMemories.mockResolvedValue([])
+  mockDynamo.putUserMemory.mockResolvedValue(undefined)
+  mockMemory.extractUserFacts.mockResolvedValue([])
+  mockMemory.reconcile.mockReturnValue([])
+}
+
+test('mem1: memory extraction runs after assistant message persisted — putUserMemory called and memoryUpdated frame emitted', async () => {
+  memoryBase()
+  mockMemory.extractUserFacts.mockResolvedValue([{ category: 'identity', text: 'User is from NZ' }])
+  mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
+
+  async function* fakeStream() {
+    yield { type: 'delta' as const, text: 'Hello from NZ' }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Hello from NZ' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi, I am from NZ', model: MODEL, systemPrompt: '' }))
+
+  // putUserMemory must have been called for the ADD op
+  expect(mockDynamo.putUserMemory).toHaveBeenCalledTimes(1)
+  const memArg = mockDynamo.putUserMemory.mock.calls[0][0] as Record<string, unknown>
+  expect(memArg.text).toBe('User is from NZ')
+  expect(memArg.category).toBe('identity')
+  expect(typeof memArg.memId).toBe('string')
+
+  // memoryUpdated WS frame emitted with count=1
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  const memoryEvent = events.find(e => e.type === 'memoryUpdated')
+  expect(memoryEvent).toBeDefined()
+  expect(memoryEvent!.count).toBe(1)
+})
+
+test('mem2: memory extraction failure is swallowed — chat turn completes normally', async () => {
+  memoryBase()
+  mockMemory.extractUserFacts.mockRejectedValue(new Error('Bedrock timeout'))
+
+  async function* fakeStream() {
+    yield { type: 'delta' as const, text: 'ok' }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  const res = await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' })) as Record<string, unknown>
+
+  // Handler returns 200 (turn completed normally)
+  expect(res.statusCode).toBe(200)
+
+  // 'done' event was still sent (stream completed successfully)
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  expect(events.find(e => e.type === 'done')).toBeDefined()
+
+  // No memoryUpdated frame (extraction failed)
+  expect(events.find(e => e.type === 'memoryUpdated')).toBeUndefined()
+})
+
+test('mem3: user memories are injected into assembled prompt', async () => {
+  memoryBase()
+  mockDynamo.listUserMemories.mockResolvedValue([
+    {
+      PK: 'USER#user-1',
+      SK: 'MEM#USER#mem-1',
+      memId: 'mem-1',
+      text: 'User is a software engineer',
+      category: 'identity',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ])
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  // converseStream must have been called with a system prompt containing the memory text
+  const [, passedSystemPrompt] = mockBedrock.converseStream.mock.calls[0]
+  expect(typeof passedSystemPrompt).toBe('string')
+  expect(passedSystemPrompt as string).toContain('User is a software engineer')
 })
