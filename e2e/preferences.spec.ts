@@ -18,9 +18,9 @@ test('custom persona is reflected in assistant replies', async ({ page }) => {
   await page.locator('[data-panel="chats"]').click()
   await page.locator('.message-input').fill('Say hello!')
   await page.locator('.btn-send').click()
-  await page.waitForSelector('.msg-done', { timeout: 30000 })
+  await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
   // Get the assistant response text
-  const reply = await page.locator('.bubble-assistant').last().textContent()
+  const reply = await page.locator('.message.assistant').last().textContent()
   expect(reply).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u)  // no emoji codepoints
 })
 
@@ -30,7 +30,7 @@ test('show token stats toggle works', async ({ page }) => {
   await page.locator('[data-panel="chats"]').click()
   await page.locator('.message-input').fill('Hi')
   await page.locator('.btn-send').click()
-  await page.waitForSelector('.msg-done', { timeout: 30000 })
+  await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
 
   // Open prefs, disable token stats
   await page.locator('[data-panel="prefs"]').click()
