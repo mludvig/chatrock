@@ -40,10 +40,8 @@ test('show token stats toggle works', async ({ page }) => {
   if (isOn?.toLowerCase().includes('on')) await toggle.click()
   await page.waitForTimeout(1200)
 
-  // Navigate back to chat
-  await page.goto('/c/new') // reload doesn't matter — just verify no token meta
-
-  // Token meta should be hidden (this relies on the showTokenStats flag being checked)
-  // The test is approximate — the flag is stored server-side and applies to new chats
-  await expect(page.locator('.prefs-panel')).not.toBeVisible()  // we navigated away
+  // Switch back to chats panel and verify prefs panel is hidden
+  await page.locator('[data-panel="chats"]').click()
+  await expect(page.locator('.prefs-panel')).not.toBeVisible()
+  await expect(page.locator('.chats-panel, .chat-list')).toBeVisible()
 })
