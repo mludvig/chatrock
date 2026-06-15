@@ -112,8 +112,8 @@ test('memories populated → memory block present with each fact', () => {
     memories,
   })
   expect(result).toContain('What you know about the user:')
-  expect(result).toContain('- User likes TypeScript')
-  expect(result).toContain('- User is based in Auckland')
+  expect(result).toContain('User likes TypeScript')
+  expect(result).toContain('User is based in Auckland')
 })
 
 test('empty memories → memory block absent', () => {
@@ -193,4 +193,82 @@ test('date line uses only YYYY-MM-DD portion of ISO string', () => {
   })
   expect(result).toContain("Today's date is 2026-06-14.")
   expect(result).not.toContain('T23:59:59')
+})
+
+// ── memId support in memory block ────────────────────────────────────────────
+
+test('memories with memId → [memId] bracket rendered in memory lines', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: {},
+    memories: [
+      { memId: 'abc123', text: 'User likes TypeScript', category: 'preference' },
+    ],
+  })
+  expect(result).toContain('[abc123]')
+  expect(result).toContain('User likes TypeScript')
+})
+
+test('memories without memId → lines still render without brackets (backward compat)', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: {},
+    memories: [
+      { text: 'User is a developer', category: 'identity' },
+    ],
+  })
+  expect(result).toContain('User is a developer')
+  // No [undefined] or [?] artefacts
+  expect(result).not.toContain('[undefined]')
+  expect(result).not.toContain('[?]')
+})
+
+test('memoryToolEnabled:true with memories → capability sentence present AND memIds in lines', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: {},
+    memories: [
+      { memId: 'id-1', text: 'User likes Python', category: 'preference' },
+    ],
+    memoryToolEnabled: true,
+  })
+  expect(result).toContain('[id-1]')
+  expect(result).toContain('manage_memory')
+  expect(result).toContain('remember')
+})
+
+test('memoryToolEnabled:false with memories → memIds in lines but NO capability sentence', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: {},
+    memories: [
+      { memId: 'id-1', text: 'User likes Python', category: 'preference' },
+    ],
+    memoryToolEnabled: false,
+  })
+  expect(result).toContain('[id-1]')
+  expect(result).not.toContain('manage_memory')
+})
+
+test('empty memories + memoryToolEnabled:true → "currently empty" header + capability sentence', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: {},
+    memories: [],
+    memoryToolEnabled: true,
+  })
+  expect(result).toContain('currently empty')
+  expect(result).toContain('manage_memory')
+})
+
+test('empty memories + memoryToolEnabled:false (or absent) → memory block absent', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: 'Base.',
+    prefs: {},
+    memories: [],
+    memoryToolEnabled: false,
+  })
+  expect(result).not.toContain('What you know about the user:')
+  expect(result).not.toContain('currently empty')
+  expect(result).not.toContain('manage_memory')
 })

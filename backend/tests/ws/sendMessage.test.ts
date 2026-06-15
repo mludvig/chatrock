@@ -1236,3 +1236,22 @@ test('mem5: memoryEnabled:false — extractUserFacts NOT called (extraction skip
   const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
   expect(events.find(e => e.type === 'memoryUpdated')).toBeUndefined()
 })
+
+test('memoryChanged chunk from converseStream → postFn called with memoryUpdated event', async () => {
+  memoryBase()
+
+  async function* fakeStream() {
+    yield { type: 'delta' as const, text: 'ok' }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'memoryChanged' as const }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  const memEvent = events.find(e => e.type === 'memoryUpdated')
+  expect(memEvent).toBeDefined()
+  expect(memEvent!.count).toBe(1)
+})

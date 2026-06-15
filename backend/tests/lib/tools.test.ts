@@ -1,4 +1,14 @@
 import { executeTool } from '../../src/lib/tools'
+import * as memoryLib from '../../src/lib/memory'
+
+// Mock executeMemoryTool so we can spy on it without real dynamo calls
+jest.mock('../../src/lib/memory', () => ({
+  ...jest.requireActual('../../src/lib/memory'),
+  executeMemoryTool: jest.fn(),
+}))
+const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeMemoryTool
+
+const TEST_CTX = { sub: 'test-user' }
 
 describe('web_fetch executor', () => {
   const realFetch = global.fetch
@@ -12,7 +22,7 @@ describe('web_fetch executor', () => {
       }),
     }) as unknown as typeof fetch
 
-    const res = await executeTool('web_fetch', { url: 'https://example.com' })
+    const res = await executeTool('web_fetch', { url: 'https://example.com' }, TEST_CTX)
     const payload = JSON.parse((res.content?.[0] as { text: string }).text)
     expect(payload.result).toMatchObject({ title: 'Example Domain', url: 'https://example.com', description: 'An example' })
     expect(payload.text).toContain('Hello world body')
@@ -27,7 +37,7 @@ describe('web_fetch executor', () => {
       }),
     }) as unknown as typeof fetch
 
-    const res = await executeTool('web_fetch', { url: 'https://example.com/long' })
+    const res = await executeTool('web_fetch', { url: 'https://example.com/long' }, TEST_CTX)
     const payload = JSON.parse((res.content?.[0] as { text: string }).text)
     expect(payload.text).toContain('[... truncated ...]')
     expect(payload.text.length).toBeLessThan(9000)
@@ -41,7 +51,7 @@ describe('web_fetch executor', () => {
       }),
     }) as unknown as typeof fetch
 
-    const res = await executeTool('web_fetch', { url: 'https://example.com/notitle' })
+    const res = await executeTool('web_fetch', { url: 'https://example.com/notitle' }, TEST_CTX)
     const payload = JSON.parse((res.content?.[0] as { text: string }).text)
     expect(payload.result.title).toBe('https://example.com/notitle')
     expect(payload.result.url).toBe('https://example.com/notitle')
@@ -53,7 +63,7 @@ describe('web_fetch executor', () => {
       status: 503,
     }) as unknown as typeof fetch
 
-    const res = await executeTool('web_fetch', { url: 'https://example.com/fail' })
+    const res = await executeTool('web_fetch', { url: 'https://example.com/fail' }, TEST_CTX)
     expect(res.status).toBe('error')
   })
 
@@ -63,10 +73,57 @@ describe('web_fetch executor', () => {
       json: async () => ({}),
     }) as unknown as typeof fetch
 
-    const res = await executeTool('web_fetch', { url: 'https://example.com' })
+    const res = await executeTool('web_fetch', { url: 'https://example.com' }, TEST_CTX)
     const payload = JSON.parse((res.content?.[0] as { text: string }).text)
     expect(payload.result.url).toBe('https://example.com')
     expect(payload.result.title).toBe('https://example.com')  // title falls back to url
     expect(payload.text).toBe('')
+  })
+})
+
+// ── manage_memory dispatch ────────────────────────────────────────────────────
+
+describe('manage_memory dispatch', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('dispatches to executeMemoryTool with ctx.sub', async () => {
+    mockExecuteMemoryTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: 'Saved.' }],
+      status: 'success',
+    })
+
+    const result = await executeTool(
+      'manage_memory',
+      { operation: 'remember', text: 'I am a developer', category: 'identity' },
+      { sub: 'user-1' },
+    )
+
+    expect(mockExecuteMemoryTool).toHaveBeenCalledTimes(1)
+    expect(mockExecuteMemoryTool).toHaveBeenCalledWith(
+      { operation: 'remember', text: 'I am a developer', category: 'identity' },
+      { sub: 'user-1' },
+    )
+    expect(result.status).toBe('success')
+  })
+
+  it('security: input.sub is ignored — dynamo key uses ctx.sub', async () => {
+    mockExecuteMemoryTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: 'Saved.' }],
+      status: 'success',
+    })
+
+    await executeTool(
+      'manage_memory',
+      { operation: 'remember', text: 'I am a hacker', category: 'identity', sub: 'attacker-sub' },
+      { sub: 'real-user' },
+    )
+
+    // The ctx passed to executeMemoryTool must use ctx.sub, not input.sub
+    const ctxArg = mockExecuteMemoryTool.mock.calls[0][1] as { sub: string }
+    expect(ctxArg.sub).toBe('real-user')
   })
 })

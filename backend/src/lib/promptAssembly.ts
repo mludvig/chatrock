@@ -3,8 +3,9 @@ import type { UserPreferences } from './preferences'
 export interface AssembleInput {
   basePrompt: string          // the chat's systemPrompt (client-supplied)
   prefs: UserPreferences
-  memories: Array<{ text: string; category: string }>
+  memories: Array<{ memId?: string; text: string; category: string }>
   now?: string                // ISO date string — injected if injectCurrentDate=true
+  memoryToolEnabled?: boolean // if true, include manage_memory capability instructions
 }
 
 export function assembleSystemPrompt(input: AssembleInput): string {
@@ -29,9 +30,17 @@ export function assembleSystemPrompt(input: AssembleInput): string {
   }
 
   // 4. User memory block
-  if (input.memories.length > 0) {
-    const memLines = input.memories.map(m => `- ${m.text}`).join('\n')
-    parts.push(`What you know about the user:\n${memLines}`)
+  if (input.memories.length > 0 || input.memoryToolEnabled) {
+    const lines = input.memories.map(m =>
+      m.memId ? `- [${m.memId}] ${m.text}` : `- ${m.text}`
+    ).join('\n')
+    const header = input.memories.length > 0
+      ? `What you know about the user:\n${lines}`
+      : `You have a persistent memory about the user. It is currently empty.`
+    const capability = input.memoryToolEnabled
+      ? `\n\nYou can manage this memory with the manage_memory tool: save new durable facts (remember), correct an existing fact (update, requires memId), or remove one (forget, requires memId). Memory persists across all future conversations.`
+      : ''
+    parts.push(header + capability)
   }
 
   // 5. Base prompt (chat's own system prompt)

@@ -318,7 +318,7 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
 
 // ── F2: webSearch:false passes no toolConfig to Bedrock ──────────────────────
 
-test('f2: webSearch:false sends no toolConfig in the Bedrock request', async () => {
+test('f2: webSearch:false, memoryEnabled:false sends no toolConfig in the Bedrock request', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -328,7 +328,7 @@ test('f2: webSearch:false sends no toolConfig in the Bedrock request', async () 
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { webSearch: false })) {
+  for await (const chunk of converseStream('test-model', '', [], { webSearch: false, memoryEnabled: false }, undefined, undefined)) {
     chunks.push(chunk)
   }
 
@@ -354,6 +354,151 @@ test('f2: webSearch:true (default) sends toolConfig to Bedrock', async () => {
   // Default (webSearch not set) should include toolConfig
   const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
   expect(cmdInput.toolConfig).toBeDefined()
+})
+
+// ── Memory tool assembly tests ────────────────────────────────────────────────
+
+test('tools: webSearch:false, memoryEnabled:true → manage_memory tool present, web tools absent', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], { webSearch: false, memoryEnabled: true }, undefined, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeDefined()
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('manage_memory')
+  expect(toolNames).not.toContain('web_search')
+  expect(toolNames).not.toContain('web_fetch')
+})
+
+test('tools: webSearch:true, memoryEnabled:true → both web tools AND memory tool present', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk2 of converseStream('test-model', '', [], { webSearch: true, memoryEnabled: true }, undefined, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeDefined()
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('manage_memory')
+  expect(toolNames).toContain('web_search')
+  expect(toolNames).toContain('web_fetch')
+})
+
+// ── ctx threading and memoryChanged chunk tests ───────────────────────────────
+
+test('ctx: loop threads ctx into executeTool call — 3rd arg is {sub}', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-ctx', name: 'manage_memory' } } } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"operation":"remember","text":"I am a dev","category":"identity"}' } } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'tool_use' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
+  ]))
+  mockExecuteTool.mockResolvedValueOnce({
+    toolUseId: 'tu-ctx',
+    content: [{ text: 'Saved.' }],
+    status: 'success',
+  })
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Done' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+  ]))
+
+  const toolCtx = { sub: 'user-from-ctx' }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk3 of converseStream('test-model', '', [], {}, toolCtx, undefined)) {
+    // drain
+  }
+
+  // executeTool must have been called with ctx as 3rd argument
+  expect(mockExecuteTool).toHaveBeenCalledTimes(1)
+  const [, , ctxArg] = mockExecuteTool.mock.calls[0]
+  expect(ctxArg).toEqual(toolCtx)
+})
+
+test('memoryChanged: manage_memory tool success → memoryChanged chunk yielded', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-mem', name: 'manage_memory' } } } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"operation":"remember","text":"I like Python","category":"preference"}' } } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'tool_use' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
+  ]))
+  mockExecuteTool.mockResolvedValueOnce({
+    toolUseId: 'tu-mem',
+    content: [{ text: 'Saved.' }],
+    status: 'success',
+  })
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Done' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+    chunks.push(chunk)
+  }
+
+  const memChunk = chunks.find(c => (c as { type: string }).type === 'memoryChanged')
+  expect(memChunk).toBeDefined()
+})
+
+test('memoryChanged NOT yielded when manage_memory returns error', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-fail', name: 'manage_memory' } } } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"operation":"forget"}' } } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'tool_use' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
+  ]))
+  mockExecuteTool.mockResolvedValueOnce({
+    toolUseId: 'tu-fail',
+    content: [{ text: 'memId is required.' }],
+    status: 'error',
+  })
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Done' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+    chunks.push(chunk)
+  }
+
+  const memChunk = chunks.find(c => (c as { type: string }).type === 'memoryChanged')
+  expect(memChunk).toBeUndefined()
 })
 
 // ── Test 5: existing UI chunks still flow through ────────────────────────────
