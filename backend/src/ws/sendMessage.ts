@@ -236,6 +236,9 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Accumulates assistant text across all turns for post-stream memory extraction
   let assistantTextForMemory = ''
+  // Set to true if manage_memory tool was called during the stream.
+  // Prevents a second memoryUpdated toast from the passive extractor on the same turn.
+  let memoryChangedDuringStream = false
 
   try {
     for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, toolCtx, abortController.signal)) {
@@ -308,6 +311,7 @@ export const buildHandler = (postFn: PostFn) => async (
           break
         case 'memoryChanged':
           // Tool loop signalled that manage_memory succeeded — notify the client
+          memoryChangedDuringStream = true
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: 1 }) })
           break
         case 'stop':
@@ -440,7 +444,7 @@ export const buildHandler = (postFn: PostFn) => async (
         candidateCount: candidates.length,
         addedCount: newCount,
       }))
-      if (newCount > 0) {
+      if (newCount > 0 && !memoryChangedDuringStream) {
         await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: newCount }) })
       }
     } catch (err) {

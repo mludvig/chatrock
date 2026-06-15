@@ -1358,3 +1358,29 @@ test('memoryChanged chunk from converseStream → postFn called with memoryUpdat
   expect(memEvent).toBeDefined()
   expect(memEvent!.count).toBe(1)
 })
+
+test('memoryChanged during stream suppresses passive-extractor memoryUpdated to prevent double toast', async () => {
+  // Both the tool loop (memoryChanged) AND passive extraction would fire.
+  // Only one memoryUpdated frame should reach the client.
+  memoryBase()
+  // Passive extractor will find a new fact
+  mockMemory.extractUserFacts.mockResolvedValue([{ category: 'identity', text: 'User is from NZ' }])
+  mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
+
+  async function* fakeStream() {
+    yield { type: 'delta' as const, text: 'Noted' }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Noted' }], turnIndex: 0 }
+    yield { type: 'memoryChanged' as const }  // tool already fired
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'remember I am from NZ', model: MODEL, systemPrompt: '' }))
+
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  const memEvents = events.filter(e => e.type === 'memoryUpdated')
+  // Exactly one memoryUpdated frame — the one from memoryChanged (count:1)
+  // The passive-extractor postFn call must be suppressed
+  expect(memEvents).toHaveLength(1)
+  expect(memEvents[0].count).toBe(1)
+})
