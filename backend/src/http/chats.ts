@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
-import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
@@ -36,6 +36,7 @@ export const handler = async (
       createdAt: i.createdAt,
       updatedAt: i.updatedAt,
       ...(i.activeLeafId !== undefined ? { activeLeafId: i.activeLeafId } : {}),
+      ...(i.modelSettings !== undefined ? { modelSettings: i.modelSettings } : {}),
     }))
     return ok({ chats })
   }
@@ -66,6 +67,9 @@ export const handler = async (
       title: 'New Chat',
       model,
       systemPrompt: (body.systemPrompt as string | undefined) ?? '',
+      ...(body.modelSettings && typeof body.modelSettings === 'object' && !Array.isArray(body.modelSettings)
+        ? { modelSettings: body.modelSettings }
+        : {}),
       createdAt: now,
       updatedAt: now,
     })
@@ -140,6 +144,13 @@ export const handler = async (
       const leaf = resolveLeaf(rowSet, body.activeLeafId as string)
       await updateChatActiveLeaf(sub, chatId, leaf)
       updatedFields.push('activeLeafId')
+    }
+    if (body.modelSettings !== undefined) {
+      if (typeof body.modelSettings !== 'object' || body.modelSettings === null || Array.isArray(body.modelSettings)) {
+        return err(400, 'modelSettings must be a plain object')
+      }
+      await updateChatModelSettings(sub, chatId, body.modelSettings as Record<string, unknown>)
+      updatedFields.push('modelSettings')
     }
     console.log(JSON.stringify({ event: 'chat_updated', sub, chatId, fields: updatedFields }))
     return ok({ ok: true })
@@ -230,6 +241,7 @@ export const handler = async (
       title: `${chat.title} (fork)`,
       model: chat.model,
       systemPrompt: (chat.systemPrompt as string | undefined) ?? '',
+      ...(chat.modelSettings !== undefined ? { modelSettings: chat.modelSettings } : {}),
       createdAt: now,
       updatedAt: now,
       ...(cloned.length ? { activeLeafId: cloned[cloned.length - 1].msgId } : {}),

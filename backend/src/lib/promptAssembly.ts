@@ -11,9 +11,10 @@ export interface AssembleInput {
 export function assembleSystemPrompt(input: AssembleInput): string {
   const parts: string[] = []
 
-  // 1. Persona / custom instructions
-  if (input.prefs.persona?.trim()) {
-    parts.push(input.prefs.persona.trim())
+  // 1. Effective custom instructions — per-chat replaces global default when non-empty
+  const effectiveInstructions = input.basePrompt.trim() || input.prefs.persona?.trim() || ''
+  if (effectiveInstructions) {
+    parts.push(effectiveInstructions)
   }
 
   // 2. Current date injection
@@ -41,11 +42,6 @@ export function assembleSystemPrompt(input: AssembleInput): string {
       ? `\n\nYou can manage this memory with the manage_memory tool: save new durable facts (remember), correct an existing fact (update, requires memId), or remove one (forget, requires memId). Memory persists across all future conversations.`
       : ''
     parts.push(header + capability)
-  }
-
-  // 5. Base prompt (chat's own system prompt)
-  if (input.basePrompt.trim()) {
-    parts.push(input.basePrompt.trim())
   }
 
   return parts.join('\n\n')
