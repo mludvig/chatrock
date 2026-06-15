@@ -68,6 +68,8 @@ export interface Message {
   siblingIndex?: number
   siblingCount?: number
   siblings?: string[]
+  // Set on assistant bubbles that ended due to a stream error (partial answer)
+  errored?: boolean
 }
 
 export interface ModelCapabilities {

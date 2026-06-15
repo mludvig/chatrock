@@ -96,6 +96,17 @@ function buildToolsWithCache(settings: ModelSettings): Tool[] {
 }
 
 /**
+ * Return true if any message in the array contains a toolUse or toolResult block.
+ * Bedrock requires toolConfig to be present whenever the message history contains
+ * these blocks, even if we don't want to offer new tools this turn.
+ */
+function historyHasToolBlocks(messages: Message[]): boolean {
+  return messages.some(m =>
+    (m.content ?? []).some(b => 'toolUse' in b || 'toolResult' in b)
+  )
+}
+
+/**
  * Build the system prompt array with a trailing cachePoint.
  * Returns undefined when systemPrompt is empty (no dangling cachePoint).
  */
@@ -154,12 +165,15 @@ async function* streamOneTurn(
   settings: ModelSettings,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk, TurnResult> {
+  // Only attach toolConfig when there is at least one real toolSpec — a list
+  // containing only CACHE_POINT_TOOL (no toolSpec) is treated as empty.
+  const hasRealTools = tools.some(t => 'toolSpec' in (t as object))
   const cmd = new ConverseStreamCommand({
     modelId,
     system: buildSystemWithCache(systemPrompt),
     messages,
     ...buildInferenceParams(modelId, settings),
-    ...(tools.length > 0 ? { toolConfig: { tools } } : {}),
+    ...(hasRealTools ? { toolConfig: { tools } } : {}),
   })
 
   const res = await bedrockClient.send(cmd, ...(abortSignal ? [{ abortSignal }] : []))
@@ -318,7 +332,13 @@ export async function* converseStream(
   ctx?: ToolContext,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
-  const tools = buildToolsWithCache(settings)
+  let tools = buildToolsWithCache(settings)
+  // If tools are disabled (both webSearch and memory off) but the replayed history
+  // contains toolUse/toolResult blocks, Bedrock still requires a non-empty toolConfig.
+  // Re-offer the full tool set so toolConfig is present and valid for the history.
+  if (tools.length === 0 && historyHasToolBlocks(messages)) {
+    tools = [...WEB_TOOLS, MEMORY_TOOL, CACHE_POINT_TOOL]
+  }
   // Base messages are the incoming history (verbatim blocks replayed as-is)
   const baseMessages: Message[] = [...messages]
   // New messages added this session (grows with each tool-use round)
@@ -402,10 +422,12 @@ export async function* converseStream(
 
   if (abortSignal?.aborted) return
 
-  // Exhausted tool-use rounds: make one final call with no tools so the model
-  // must produce a text answer rather than keep requesting tool use.
+  // Exhausted tool-use rounds: make one final call. We keep toolConfig present
+  // (history contains toolUse/toolResult blocks and Bedrock requires it) but pass
+  // the same tools list — the loop is already done after this single call regardless
+  // of stopReason, so no infinite-tool-use risk.
   const builtMessages = buildMessagesWithCache(baseMessages, newMessages)
-  const finalGen = streamOneTurn(modelId, systemPrompt, builtMessages, [], settings, abortSignal)
+  const finalGen = streamOneTurn(modelId, systemPrompt, builtMessages, tools, settings, abortSignal)
   let finalResult: TurnResult | undefined
 
   while (true) {

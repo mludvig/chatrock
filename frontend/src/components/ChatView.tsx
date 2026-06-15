@@ -26,7 +26,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const {
     chats, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
-    addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream,
+    addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream,
     renameChat, removeChat, sending, setSending, pushToast,
     userPreferences, triggerMemoryRefresh,
     draftModelSettings, draftSystemPrompt,
@@ -291,12 +291,20 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         pushToast({ kind: 'info', text: evt.count > 1 ? `Memory updated (${evt.count} new facts)` : 'Memory updated' })
       } else if (evt.type === 'error') {
         clearIdleTimer()
-        clearStream()
+        // Preserve the partial streaming bubble (not clearStream) so the user
+        // sees what was generated before the error and can Continue from it.
+        finalizeStreamErrored()
         setSending(false)
         setErrorMsg(evt.message)
+        // Reload to hydrate the real msgId/parentId/errored flag from DDB
+        // (backend now persists the partial turn and advances activeLeafId on error)
+        const currentId = chatIdRef.current
+        if (currentId && currentId !== 'new') {
+          reloadMessages(currentId)
+        }
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -504,6 +512,31 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
   }, [activeChat, creatingChat, messages, chatId, accessToken, draftModelSettings, startStream])
+
+  const handleContinue = useCallback(async (msgId: string) => {
+    if (!activeChat || useChatStore.getState().sending || creatingChat) return
+    streamCancelledRef.current = false
+    setSending(true)
+    setErrorMsg(null)
+    setLastTurnUsage(null)
+    startStream()
+    pendingScrollTopRef.current = true
+
+    try {
+      await ensureConnected(accessToken)
+      sendMessage({
+        chatId: chatId!,
+        model: activeChat.model,
+        systemPrompt: activeChat.systemPrompt,
+        modelSettings: draftModelSettings,
+        parentId: msgId,
+        continue: true,
+      })
+    } catch (err) {
+      setSending(false)
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    }
+  }, [activeChat, creatingChat, chatId, accessToken, draftModelSettings, startStream])
 
   const stepHasContent = (st: Step) =>
     (st.kind === 'text' && st.text.trim() !== '') ||
@@ -748,6 +781,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               ref={el => { bubbleRefsRef.current[i] = el }}
               message={m}
               onRerun={!isNew ? handleRerun : undefined}
+              onContinue={!isNew ? handleContinue : undefined}
               onNavigate={!isNew ? handleNavigate : undefined}
               onEditRequest={!isNew ? handleEditRequest : undefined}
               onForkToHere={!isNew ? handleForkToHere : undefined}

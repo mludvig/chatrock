@@ -501,6 +501,100 @@ test('memoryChanged NOT yielded when manage_memory returns error', async () => {
   expect(memChunk).toBeUndefined()
 })
 
+// ── Part 1 fix: toolConfig present on the forced-final call after MAX rounds ──
+//
+// Before the fix, the forced-final call passed tools=[] which stripped toolConfig
+// while the message history contained toolUse/toolResult blocks → ValidationException.
+// After the fix, the final call must include a non-empty toolConfig.
+
+test('part1a: forced-final call after max rounds has non-empty toolConfig in its Bedrock request', async () => {
+  const MAX = 8
+
+  for (let i = 0; i < MAX; i++) {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: `tu-${i}`, name: 'web_search' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"x"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({ toolUseId: `tu-${i}`, content: [{ text: 'result' }], status: 'success' })
+  }
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Final answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 50, outputTokens: 10 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {})) { /* drain */ }
+
+  // The final (MAX+1-th) send call must have toolConfig defined with real tools
+  const finalCallInput = getMockSend().mock.calls[MAX][0].input as Record<string, unknown>
+  const tc = finalCallInput.toolConfig as { tools: Array<{ toolSpec?: unknown }> } | undefined
+  expect(tc).toBeDefined()
+  expect(tc!.tools.filter(t => t.toolSpec).length).toBeGreaterThan(0)
+})
+
+// ── Part 1 fix: toolConfig required when disabled-tools but history has tool blocks ──
+//
+// If webSearch and memory are both off but the replayed history already contains
+// toolUse/toolResult blocks, the first round still needs a toolConfig or Bedrock
+// throws ValidationException.
+
+test('part1b: history with toolResult blocks forces toolConfig even when webSearch+memory disabled', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // Prior history that contains a toolResult block (as would be replayed from a chat
+  // that used tools but whose current settings have tools disabled)
+  const historyWithToolBlock = [
+    {
+      role: 'user' as const,
+      content: [{ toolResult: { toolUseId: 'old-tu', content: [{ text: 'old result' }], status: 'success' as const } }],
+    },
+  ]
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream(
+    'test-model', '', historyWithToolBlock, { webSearch: false, memoryEnabled: false },
+  )) { /* drain */ }
+
+  // toolConfig MUST be defined (history forces it)
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeDefined()
+  const tools = (cmdInput.toolConfig as { tools: Array<{ toolSpec?: unknown }> }).tools
+  expect(tools.filter(t => t.toolSpec).length).toBeGreaterThan(0)
+})
+
+// ── Confirm non-regression: clean history + tools disabled still sends no toolConfig ──
+
+test('part1c: clean history with webSearch+memory disabled still sends no toolConfig', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream(
+    'test-model', '', [], { webSearch: false, memoryEnabled: false },
+  )) { /* drain */ }
+
+  // No tool blocks in history → no toolConfig needed (same as before)
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeUndefined()
+})
+
 // ── Test 5: existing UI chunks still flow through ────────────────────────────
 
 test('still emits thinking_delta, thinking_done, delta, tool_call_start, tool_call, tool_result, stop', async () => {

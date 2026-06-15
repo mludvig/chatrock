@@ -13,7 +13,7 @@ export type WSEvent =
   | { type: 'cancelled' }
   | { type: 'titleUpdated';   chatId: string; title: string }
   | { type: 'memoryUpdated';  count: number }
-  | { type: 'error';          message: string }
+  | { type: 'error';          message: string; responseId?: string; leafId?: string }
 
 type EventHandler = (evt: WSEvent) => void
 
@@ -58,6 +58,7 @@ export function sendMessage(payload: {
   systemPrompt: string
   modelSettings?: ModelSettings
   parentId?: string | null
+  continue?: boolean
   attachments?: Array<{
     s3Key: string
     contentType: string

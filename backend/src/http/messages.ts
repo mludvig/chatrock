@@ -60,6 +60,7 @@ interface RawBubble {
   usage?: TokenUsage
   thinkingEffort?: string
   webSearch?: boolean
+  errored?: boolean
 }
 
 // External shape sent to the client (includes sibling metadata)
@@ -90,6 +91,7 @@ interface TurnRow {
   usage?: TokenUsage
   thinkingEffort?: string
   webSearch?: boolean
+  incomplete?: boolean
 }
 
 // ── groupTurnsToBubbles ───────────────────────────────────────────────────────
@@ -147,6 +149,11 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
         }
         currentToolSteps = new Map()
         currentResponseId = row.responseId
+      }
+
+      // If any turn in this response is incomplete (partial error flush), mark bubble errored
+      if (row.incomplete && currentBubble) {
+        currentBubble.errored = true
       }
 
       // Map blocks → ordered steps (never expose signature/redactedContent)

@@ -1237,6 +1237,361 @@ test('mem5: memoryEnabled:false — extractUserFacts NOT called (extraction skip
   expect(events.find(e => e.type === 'memoryUpdated')).toBeUndefined()
 })
 
+// ── Part 2: error-flush — partial work preserved on Bedrock error ─────────────
+//
+// Before the fix, a non-abort Bedrock error discarded partialText and never
+// updated activeLeafId. After the fix, the error branch must:
+//   1. Flush any partial text as an `incomplete:true` assistant turn in DDB.
+//   2. Update activeLeafId to the last persisted turn (even if just the user turn).
+//   3. Send an `error` frame that includes `leafId` (the last msgId on the active path).
+//
+// The fix mirrors the existing cancel-path flush logic.
+
+function errorBase() {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  // NOT a cancel — error path
+  mockDynamo.isStreamCancelled.mockResolvedValue(false)
+}
+
+test('err1: Bedrock error mid-turn — partial text flushed as incomplete assistant turn', async () => {
+  errorBase()
+
+  mockBedrock.converseStream.mockImplementation(() => (async function* () {
+    yield { type: 'delta' as const, text: 'partial ' }
+    yield { type: 'delta' as const, text: 'answer' }
+    throw new Error('ValidationException: toolConfig required')
+  })())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  const partialPut = putCalls.find(r => r.role === 'assistant')
+
+  expect(partialPut).toBeDefined()
+  expect(partialPut!.blocks).toEqual([{ text: 'partial answer' }])
+  expect(partialPut!.incomplete).toBe(true)
+})
+
+test('err2: Bedrock error mid-turn — activeLeafId updated to the flushed partial turn', async () => {
+  errorBase()
+
+  mockBedrock.converseStream.mockImplementation(() => (async function* () {
+    yield { type: 'delta' as const, text: 'some text' }
+    throw new Error('ServiceUnavailableException')
+  })())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  const partialPut = putCalls.find(r => r.role === 'assistant')!
+  const leafArg = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  expect(leafArg).toBe(partialPut.msgId)
+})
+
+test('err3: Bedrock error mid-turn — error frame carries leafId', async () => {
+  errorBase()
+
+  mockBedrock.converseStream.mockImplementation(() => (async function* () {
+    yield { type: 'delta' as const, text: 'hello' }
+    throw new Error('InternalServerError')
+  })())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  const errEvent = events.find(e => e.type === 'error')!
+  expect(errEvent).toBeDefined()
+  expect(typeof errEvent.leafId).toBe('string')
+  expect(errEvent.leafId).toHaveLength(36) // uuid
+
+  // leafId should match the partial assistant turn that was persisted
+  const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  const partialPut = putCalls.find(r => r.role === 'assistant')!
+  expect(errEvent.leafId).toBe(partialPut.msgId)
+})
+
+test('err4: Bedrock error before any output — activeLeafId updated to user turn, no assistant turn written', async () => {
+  errorBase()
+
+  mockBedrock.converseStream.mockImplementation(() => (async function* () {
+    throw new Error('ThrottlingException')
+    // eslint-disable-next-line no-unreachable
+    yield { type: 'delta' as const, text: 'never' }
+  })())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  // Only the user turn — no partial assistant turn
+  expect(putCalls.filter(r => r.role === 'assistant')).toHaveLength(0)
+
+  // activeLeafId still updated (to the user turn)
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const userPut = putCalls.find(r => r.role === 'user')!
+  const leafArg = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  expect(leafArg).toBe(userPut.msgId)
+})
+
+test('err5: Bedrock error after complete turns — survived turns intact, last turn is new active leaf', async () => {
+  errorBase()
+
+  mockBedrock.converseStream.mockImplementation(() => (async function* () {
+    // First tool-use turn fully persisted before error
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' as const } }], turnIndex: 1 }
+    // Then partial text starts streaming and the error fires
+    yield { type: 'delta' as const, text: 'partial result' }
+    throw new Error('ValidationException: toolConfig required')
+  })())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  // user prompt + asst turn 0 + user tool-result turn 1 + flushed partial asst
+  expect(putCalls).toHaveLength(4)
+  const partialPut = putCalls[3]
+  expect(partialPut.role).toBe('assistant')
+  expect(partialPut.blocks).toEqual([{ text: 'partial result' }])
+  expect(partialPut.incomplete).toBe(true)
+
+  // activeLeaf points to the flushed partial
+  const leafArg = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  expect(leafArg).toBe(partialPut.msgId)
+})
+
+// ── Part 3: Continue mechanic ─────────────────────────────────────────────────
+//
+// Continue resumes generation from an errored/incomplete leaf.
+// Payload: { chatId, parentId: <bubbleMsgId>, continue: true, model, ... }
+// (no content field)
+//
+// Behaviour differs from re-run:
+//  - Replay is INCLUSIVE of the leaf (extends from it, not before it).
+//  - New assistant turns chain as CHILD of the leaf (not sibling under a parent).
+//  - New turns reuse the failed response's responseId so groupTurnsToBubbles fuses them.
+//  - No auto-title.
+
+const CONTINUE_PRIOR_ROWS = [
+  { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
+    role: 'user', blocks: [{ text: 'original question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+  { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
+    role: 'assistant', blocks: [{ text: 'partial answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0', incomplete: true },
+]
+
+function continueEvent(overrides: Record<string, unknown> = {}) {
+  return makeEvent({ chatId: 'c1', model: MODEL, systemPrompt: '', parentId: 'a1', continue: true, ...overrides })
+}
+
+function continueBase() {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue(CONTINUE_PRIOR_ROWS)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+}
+
+test('cont1: continue does NOT persist a new user turn', async () => {
+  continueBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(continueEvent())
+
+  const userPuts = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .filter(r => r.role === 'user')
+  expect(userPuts).toHaveLength(0)
+})
+
+test('cont2: continue new assistant turn parentId === the leaf msgId (child, not sibling)', async () => {
+  continueBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(continueEvent())
+
+  const asstPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  // parentId must be the leaf (a1), not the user turn (u1)
+  expect(asstPut.parentId).toBe('a1')
+})
+
+test('cont3: continue new turns reuse the failed responseId so bubbles fuse', async () => {
+  continueBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(continueEvent())
+
+  const asstPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  // responseId must match the failed response's responseId (r0) not a new uuid
+  expect(asstPut.responseId).toBe('r0')
+})
+
+test('cont4: continue replay is INCLUSIVE of the leaf (assistant-terminated history = prefill)', async () => {
+  continueBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(continueEvent())
+
+  const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
+  // Should be: [user-u1, assistant-a1] (leaf included, not just root→parent)
+  expect(passedMessages).toHaveLength(2)
+  expect(passedMessages[0].role).toBe('user')
+  expect(passedMessages[0].content).toEqual([{ text: 'original question' }])
+  expect(passedMessages[1].role).toBe('assistant')
+  expect(passedMessages[1].content).toEqual([{ text: 'partial answer' }])
+})
+
+test('cont5: continue updateChatActiveLeaf called with the new continuation turn msgId', async () => {
+  continueBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(continueEvent())
+
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const newLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const asstPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  expect(newLeaf).toBe(asstPut.msgId)
+})
+
+test('cont6: continue with unknown parentId sends error and does not stream', async () => {
+  continueBase()
+
+  await buildHandler(mockPost)(continueEvent({ parentId: 'nonexistent-id' }))
+
+  const errEvent = mockPost.mock.calls
+    .map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+    .find(d => d.type === 'error')
+  expect(errEvent).toBeDefined()
+  expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+  expect(mockDynamo.putMessage).not.toHaveBeenCalled()
+})
+
+test('cont7: continue does NOT call auto-title even when title is "New Chat"', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue(CONTINUE_PRIOR_ROWS)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(continueEvent())
+
+  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
+  expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+})
+
+test('cont8: continue from toolResult-user leaf — replay ends at user turn (clean continuation)', async () => {
+  // Tree: u1 → a1 (toolUse) → toolResult-u2 (incomplete continuation point)
+  const rows = [
+    { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
+      role: 'user', blocks: [{ text: 'question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
+      role: 'assistant', blocks: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0002#tr1', msgId: 'tr1', parentId: 'a1',
+      role: 'user', blocks: [{ toolResult: { toolUseId: 't1', content: [{ text: 'result' }], status: 'success' as const } }], model: MODEL, createdAt: 't', turnIndex: 2, responseId: 'r0' },
+  ]
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'tr1' })
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'final answer' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', model: MODEL, systemPrompt: '', parentId: 'tr1', continue: true }))
+
+  const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
+  // Replay: u1 (user), a1 (assistant), tr1 (user toolResult) — ends in user = clean
+  expect(passedMessages).toHaveLength(3)
+  expect(passedMessages[2].role).toBe('user')
+
+  // New turn chains from tr1 (the leaf)
+  const asstPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  expect(asstPut.parentId).toBe('tr1')
+  expect(asstPut.responseId).toBe('r0')
+})
+
+test('cont9: continue uses resolveResponseLeaf — bubble msgId (first turn) resolves to deepest turn', async () => {
+  // Tree: u1 → a1 (first asst turn, bubble msgId) → tr1 (toolResult) → a2 (incomplete leaf, deepest)
+  const rows = [
+    { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
+      role: 'user', blocks: [{ text: 'q' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
+      role: 'assistant', blocks: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0002#tr1', msgId: 'tr1', parentId: 'a1',
+      role: 'user', blocks: [{ toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' as const } }], model: MODEL, createdAt: 't', turnIndex: 2, responseId: 'r0' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0003#a2', msgId: 'a2', parentId: 'tr1',
+      role: 'assistant', blocks: [{ text: 'partial' }], model: MODEL, createdAt: 't', turnIndex: 3, responseId: 'r0', incomplete: true },
+  ]
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'a2' })
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'final' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  // Client passes bubble's msgId (a1 = first turn of response), NOT the deepest turn
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', model: MODEL, systemPrompt: '', parentId: 'a1', continue: true }))
+
+  // Backend should resolve to a2 (deepest turn in r0), so replay includes a2 and
+  // new turn chains from a2
+  const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
+  // Full path: u1, a1, tr1, a2 (4 messages)
+  expect(passedMessages).toHaveLength(4)
+
+  const asstPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+  // chains from a2 (the resolved leaf), not a1 (what was passed)
+  expect(asstPut.parentId).toBe('a2')
+  expect(asstPut.responseId).toBe('r0')
+})
+
 // ── Task D: LLM call structured logging ──────────────────────────────────────
 
 test('D1a: llm_call chat log emitted after stop chunk with stopReason and token fields', async () => {

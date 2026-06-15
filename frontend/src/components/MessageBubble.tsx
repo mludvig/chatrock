@@ -45,7 +45,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare,
-  faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile,
+  faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile, faPlay,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import type { StreamingMsg } from '../store/chatStore'
@@ -260,6 +260,7 @@ export function UsageStats({ usage, label }: { usage: TokenUsage; label?: string
 interface Props {
   message: Message | StreamingMsg
   onRerun?: (parentId: string) => void
+  onContinue?: (msgId: string) => void
   onNavigate?: (targetMsgId: string) => void
   onEditRequest?: (message: Message) => void
   onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
@@ -276,7 +277,7 @@ interface Props {
  * This preserves the think → search → think → answer interleaved structure.
  */
 const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBubble(
-  { message, onRerun, onNavigate, onEditRequest, onForkToHere, onDeleteBranch, showTokenStats }, ref,
+  { message, onRerun, onContinue, onNavigate, onEditRequest, onForkToHere, onDeleteBranch, showTokenStats }, ref,
 ) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
@@ -419,9 +420,10 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
           (message as Message).siblingCount! > 1
         const hasEdit = !isAssistant && onEditRequest && 'msgId' in message
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
+        const hasContinue = isAssistant && onContinue && 'msgId' in message && !!(message as Message).errored
         const hasForkCopy = 'msgId' in message
         const hasDelete = onDeleteBranch && 'msgId' in message && (message as Message).parentId != null
-        if (!hasSiblings && !hasEdit && !hasRerun && !hasForkCopy && !hasDelete) return null
+        if (!hasSiblings && !hasEdit && !hasRerun && !hasContinue && !hasForkCopy && !hasDelete) return null
 
         const msg = message as Message
         // Concatenate text steps for copy/fork
@@ -471,6 +473,15 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
                 onClick={() => onRerun!(msg.parentId!)}
               >
                 <FontAwesomeIcon icon={faRotateRight} />
+              </button>
+            )}
+            {hasContinue && (
+              <button
+                className="action-btn"
+                title="Continue this answer"
+                onClick={() => onContinue!(msg.msgId)}
+              >
+                <FontAwesomeIcon icon={faPlay} />
               </button>
             )}
             {hasForkCopy && onForkToHere && (
