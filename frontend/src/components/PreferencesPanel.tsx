@@ -17,7 +17,8 @@ export default function PreferencesPanel() {
   const [prefs, setPrefs] = useState<UserPreferences>(userPreferences)
   const [saved, setSaved] = useState(false)
   const debounceRef = useRef<number | null>(null)
-  const chatDebounceRef = useRef<number | null>(null)
+  const chatInstructionsDebounceRef = useRef<number | null>(null)
+  const chatSettingsDebounceRef = useRef<number | null>(null)
   const initialLoadRef = useRef(false)
 
   // Load preferences from server on mount
@@ -71,8 +72,8 @@ export default function PreferencesPanel() {
       setDraftSystemPrompt(value)
     } else if (currentChatId) {
       updateChatSystemPrompt(currentChatId, value)
-      if (chatDebounceRef.current !== null) clearTimeout(chatDebounceRef.current)
-      chatDebounceRef.current = window.setTimeout(() => {
+      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
+      chatInstructionsDebounceRef.current = window.setTimeout(() => {
         api.updateSystemPrompt(currentChatId, value).catch(() => {})
       }, 800)
     }
@@ -82,12 +83,19 @@ export default function PreferencesPanel() {
     setDraftModelSettings(newSettings)
     if (!isNew && currentChatId) {
       updateChatSettings(currentChatId, newSettings)
-      if (chatDebounceRef.current !== null) clearTimeout(chatDebounceRef.current)
-      chatDebounceRef.current = window.setTimeout(() => {
+      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
+      chatSettingsDebounceRef.current = window.setTimeout(() => {
         api.updateChatSettings(currentChatId, newSettings).catch(() => {})
       }, 800)
     }
   }
+
+  useEffect(() => {
+    return () => {
+      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
+      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
+    }
+  }, [])
 
   return (
     <div className="prefs-panel">
