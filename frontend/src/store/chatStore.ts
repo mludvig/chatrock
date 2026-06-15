@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Chat, Message, Model, Step, TokenUsage, UserPreferences } from '../api/http'
+import type { Chat, Message, Model, ModelSettings, Step, TokenUsage, UserPreferences } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
@@ -82,6 +82,14 @@ interface ChatState {
   setUserPreferences: (p: UserPreferences) => void
   memoryRefreshTick: number
   triggerMemoryRefresh: () => void
+
+  currentChatId: string | null
+  draftModelSettings: ModelSettings
+  draftSystemPrompt: string
+  setCurrentChatId: (id: string | null) => void
+  setDraftModelSettings: (s: ModelSettings) => void
+  setDraftSystemPrompt: (p: string) => void
+  updateChatSettings: (chatId: string, settings: ModelSettings) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -138,6 +146,10 @@ export const useChatStore = create<ChatState>()(
       userPreferences: {},
       toasts: [],
       memoryRefreshTick: 0,
+
+      currentChatId: null,
+      draftModelSettings: {},
+      draftSystemPrompt: '',
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -286,6 +298,13 @@ export const useChatStore = create<ChatState>()(
       setActivePanel: (activePanel) => set({ activePanel }),
       setUserPreferences: (userPreferences) => set({ userPreferences }),
       triggerMemoryRefresh: () => set((s) => ({ memoryRefreshTick: s.memoryRefreshTick + 1 })),
+
+      setCurrentChatId: (id) => set({ currentChatId: id }),
+      setDraftModelSettings: (s) => set({ draftModelSettings: s }),
+      setDraftSystemPrompt: (p) => set({ draftSystemPrompt: p }),
+      updateChatSettings: (chatId, settings) => set((s) => ({
+        chats: s.chats.map(c => c.chatId === chatId ? { ...c, modelSettings: settings } : c),
+      })),
     }),
     {
       name: 'chatrock-store',

@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faGear, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
-import type { Model, ModelSettings, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
+import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
 import { sendMessage, cancelMessage, ensureConnected, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
-import ModelSettingsPanel from './ModelSettingsPanel'
 
 interface Props {
   accessToken: string
@@ -28,18 +27,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     chats, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, clearStream,
-    renameChat, removeChat, sending, setSending, updateChatSystemPrompt, pushToast,
+    renameChat, removeChat, sending, setSending, pushToast,
     userPreferences, triggerMemoryRefresh,
+    draftModelSettings, draftSystemPrompt,
+    setCurrentChatId, setDraftModelSettings, setDraftSystemPrompt,
   } = useChatStore()
 
-  // For /c/new: local model + system prompt state (not yet persisted)
+  // For /c/new: local model state (not yet persisted)
   const [newModel, setNewModel] = useState(defaultModel)
-  const [newSystemPrompt, setNewSystemPrompt] = useState('')
-
-  const [showSettings, setShowSettings] = useState(false)
-
-  // Per-session model settings — derived from selected model's capabilities
-  const [modelSettings, setModelSettings] = useState<ModelSettings>({})
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -189,36 +184,46 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setInput(pendingDraftRef.current)
       pendingDraftRef.current = null
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId])
 
-  // Initialise modelSettings when the current model's capabilities are first known
+  // Seed draftModelSettings when chatId changes
   useEffect(() => {
-    if (currentModelDef) {
-      setModelSettings(s => {
-        // Only re-initialise if settings are empty (first load or model change handled elsewhere)
-        if (Object.keys(s).length === 0) {
-          const base = defaultSettings(currentModelDef.capabilities)
-          // Seed from user preferences where the pref applies to this model's caps
-          return {
-            ...base,
-            ...(userPreferences.webSearch !== undefined ? { webSearch: userPreferences.webSearch } : {}),
-            ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
-              ? { thinkingEffort: userPreferences.thinkingEffort }
-              : {}),
-            ...(currentModelDef.capabilities.temperature && userPreferences.temperature !== undefined
-              ? { temperature: userPreferences.temperature }
-              : {}),
-            ...(currentModelDef.capabilities.topP && userPreferences.topP !== undefined
-              ? { topP: userPreferences.topP }
-              : {}),
-          }
-        }
-        return s
-      })
+    setCurrentChatId(chatId ?? null)
+    if (isNew) {
+      setDraftSystemPrompt('')
+      if (currentModelDef) {
+        const base = defaultSettings(currentModelDef.capabilities)
+        setDraftModelSettings({
+          ...base,
+          ...(userPreferences.webSearch !== undefined ? { webSearch: userPreferences.webSearch } : {}),
+          ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
+            ? { thinkingEffort: userPreferences.thinkingEffort }
+            : {}),
+          ...(currentModelDef.capabilities.temperature && userPreferences.temperature !== undefined
+            ? { temperature: userPreferences.temperature }
+            : {}),
+          ...(currentModelDef.capabilities.topP && userPreferences.topP !== undefined
+            ? { topP: userPreferences.topP }
+            : {}),
+        })
+      }
+    } else {
+      const chat = useChatStore.getState().chats.find(c => c.chatId === chatId)
+      if (chat?.modelSettings && Object.keys(chat.modelSettings).length > 0) {
+        setDraftModelSettings(chat.modelSettings)
+      } else if (currentModelDef) {
+        const base = defaultSettings(currentModelDef.capabilities)
+        setDraftModelSettings({
+          ...base,
+          ...(userPreferences.webSearch !== undefined ? { webSearch: userPreferences.webSearch } : {}),
+          ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
+            ? { thinkingEffort: userPreferences.thinkingEffort }
+            : {}),
+        })
+      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentModelDef])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, isNew])
 
   // Register WS event handler
   useEffect(() => {
@@ -414,6 +419,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         title: `${activeChat.title} (fork)`,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
+        ...(activeChat.modelSettings ? { modelSettings: activeChat.modelSettings } : {}),
         createdAt: now,
         updatedAt: now,
       })
@@ -478,14 +484,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         chatId: chatId!,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
-        modelSettings,
+        modelSettings: draftModelSettings,
         parentId,
       })
     } catch (err) {
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettings, startStream])
+  }, [activeChat, creatingChat, messages, chatId, accessToken, draftModelSettings, startStream])
 
   const stepHasContent = (st: Step) =>
     (st.kind === 'text' && st.text.trim() !== '') ||
@@ -584,7 +590,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (isNew) {
       setCreatingChat(true)
       const model = newModel || defaultModel
-      const systemPrompt = newSystemPrompt
+      const systemPrompt = draftSystemPrompt
 
       setSending(true)
       setMessages([optimisticUser])
@@ -593,7 +599,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
       try {
         const newId = pendingNewChatIdRef.current ?? crypto.randomUUID()
-        const res = await api.createChat(model, systemPrompt, newId)
+        const res = await api.createChat(model, systemPrompt, newId, draftModelSettings)
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
         useChatStore.getState().addChat({
@@ -605,7 +611,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           updatedAt: now,
         })
         await ensureConnected(accessToken)
-        sendMessage({ chatId: res.chatId, content, model, systemPrompt, modelSettings, attachments: attachmentsPayload })
+        sendMessage({ chatId: res.chatId, content, model, systemPrompt, modelSettings: draftModelSettings, attachments: attachmentsPayload })
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
         setSending(false)
@@ -636,7 +642,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           content,
           model: activeChat.model,
           systemPrompt: activeChat.systemPrompt,
-          modelSettings,
+          modelSettings: draftModelSettings,
           parentId: editPid,
           attachments: attachmentsPayload,
         })
@@ -662,7 +668,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         content,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
-        modelSettings,
+        modelSettings: draftModelSettings,
         attachments: attachmentsPayload,
       })
     } catch (err) {
@@ -674,7 +680,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   function handleModelChange(modelId: string) {
     onModelChange(modelId)
     const newCaps = models.find(m => m.id === modelId)?.capabilities
-    if (newCaps) setModelSettings(s => migrateSettings(s, newCaps))
+    if (newCaps) setDraftModelSettings(migrateSettings(draftModelSettings, newCaps))
 
     if (isNew) {
       setNewModel(modelId)
@@ -685,15 +691,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     useChatStore.setState(s => ({
       chats: s.chats.map(c => c.chatId === chatId ? { ...c, model: modelId } : c),
     }))
-  }
-
-  function handleSystemPromptChange(value: string) {
-    if (isNew) {
-      setNewSystemPrompt(value)
-    } else if (chatId) {
-      updateChatSystemPrompt(chatId, value)
-      api.updateSystemPrompt(chatId, value)
-    }
   }
 
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
@@ -716,34 +713,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
-          <button
-            className={`btn-icon${showSettings ? ' active' : ''}`}
-            onClick={() => setShowSettings(s => !s)}
-            title="Chat settings"
-          >
-            <FontAwesomeIcon icon={faGear} />
-          </button>
         </div>
       </div>
-
-      {/* Settings panel — shown for both new and existing chats, live-apply */}
-      {showSettings && (
-        <div className={`settings-panel${isNew ? ' new-chat-settings' : ''}`}>
-          <label>System prompt{isNew && <span className="hint"> (optional)</span>}</label>
-          <textarea
-            className="system-prompt-input"
-            rows={isNew ? 2 : 4}
-            placeholder="You are a helpful assistant…"
-            value={isNew ? newSystemPrompt : (activeChat?.systemPrompt ?? '')}
-            onChange={e => handleSystemPromptChange(e.target.value)}
-          />
-          <ModelSettingsPanel
-            caps={currentCaps}
-            settings={modelSettings}
-            onChange={setModelSettings}
-          />
-        </div>
-      )}
 
       <div className="messages-wrap">
         <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
