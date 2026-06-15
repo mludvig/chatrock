@@ -1237,6 +1237,109 @@ test('mem5: memoryEnabled:false — extractUserFacts NOT called (extraction skip
   expect(events.find(e => e.type === 'memoryUpdated')).toBeUndefined()
 })
 
+// ── Task D: LLM call structured logging ──────────────────────────────────────
+
+test('D1a: llm_call chat log emitted after stop chunk with stopReason and token fields', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'usage' as const, usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 3 } }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+  const logCalls = [...logSpy.mock.calls]
+  logSpy.mockRestore()
+
+  const chatLog = logCalls
+    .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
+    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'chat')
+
+  expect(chatLog).toBeDefined()
+  expect(chatLog!.stopReason).toBe('end_turn')
+  expect(chatLog!.model).toBe(MODEL)
+  expect(chatLog!.chatId).toBe('c1')
+  expect(chatLog!.inputTokens).toBe(10)
+  expect(chatLog!.outputTokens).toBe(5)
+  expect(chatLog!.cacheReadInputTokens).toBe(3)
+})
+
+test('D1b: llm_call title log emitted after auto-title with title value', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.updateChatTitle.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+  mockBedrock.converseOnce.mockResolvedValue('Generated Title')
+
+  const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+  const logCalls = [...logSpy.mock.calls]
+  logSpy.mockRestore()
+
+  const titleLog = logCalls
+    .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
+    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'title')
+
+  expect(titleLog).toBeDefined()
+  expect(titleLog!.title).toBe('Generated Title')
+  expect(titleLog!.chatId).toBe('c1')
+})
+
+test('D1c: llm_call memory_extract log emitted with candidateCount and addedCount', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  // Use 'Existing Chat' title so auto-title is skipped
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing Chat' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.listUserMemories.mockResolvedValue([])
+  mockDynamo.putUserMemory.mockResolvedValue(undefined)
+
+  mockMemory.extractUserFacts.mockResolvedValue([
+    { category: 'identity', text: 'User is from NZ' },
+    { category: 'preference', text: 'User likes Python' },
+  ])
+  mockMemory.reconcile.mockReturnValue([
+    { op: 'ADD', text: 'User is from NZ', category: 'identity' },
+    { op: 'ADD', text: 'User likes Python', category: 'preference' },
+  ])
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+  const logCalls = [...logSpy.mock.calls]
+  logSpy.mockRestore()
+
+  const memLog = logCalls
+    .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
+    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'memory_extract')
+
+  expect(memLog).toBeDefined()
+  expect(memLog!.candidateCount).toBe(2)
+  expect(memLog!.addedCount).toBe(2)
+  expect(memLog!.chatId).toBe('c1')
+})
+
 test('memoryChanged chunk from converseStream → postFn called with memoryUpdated event', async () => {
   memoryBase()
 

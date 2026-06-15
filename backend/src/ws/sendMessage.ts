@@ -6,7 +6,7 @@ import { getConnection, getChat, listMessages, putMessage, updateChatTitle, upda
 import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, type TurnRow } from '../lib/tree'
-import { TITLE_MODEL, isValidModelId, type ModelSettings } from '../config/models'
+import { TITLE_MODEL, MEMORY_EXTRACTION_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences } from '../lib/preferences'
 import { assembleSystemPrompt } from '../lib/promptAssembly'
@@ -319,6 +319,19 @@ export const buildHandler = (postFn: PostFn) => async (
             console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
           }
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
+          console.log(JSON.stringify({
+            event: 'llm_call',
+            purpose: 'chat',
+            model,
+            chatId,
+            stopReason: chunk.stopReason,
+            ...(lastUsage ? {
+              inputTokens: lastUsage.inputTokens,
+              outputTokens: lastUsage.outputTokens,
+              ...(lastUsage.cacheReadInputTokens !== undefined ? { cacheReadInputTokens: lastUsage.cacheReadInputTokens } : {}),
+              ...(lastUsage.cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens: lastUsage.cacheWriteInputTokens } : {}),
+            } : {}),
+          }))
           break
       }
     }
@@ -368,13 +381,18 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Auto-title on first normal send only (not re-run, not edit)
   if (!isRerun && !isEdit && chat.title === 'New Chat') {
-    const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content!}`
-    const title = await converseOnce(TITLE_MODEL, '', [
-      { role: 'user', content: [{ text: titlePrompt }] },
-    ])
-    if (title) {
-      await updateChatTitle(sub, chatId, title)
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title }) })
+    try {
+      const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content!}`
+      const title = await converseOnce(TITLE_MODEL, '', [
+        { role: 'user', content: [{ text: titlePrompt }] },
+      ])
+      if (title) {
+        await updateChatTitle(sub, chatId, title)
+        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title }) })
+        console.log(JSON.stringify({ event: 'llm_call', purpose: 'title', model: TITLE_MODEL, chatId, title }))
+      }
+    } catch (err) {
+      console.error(JSON.stringify({ event: 'llm_call_error', purpose: 'title', chatId, error: String(err) }))
     }
   }
 
@@ -414,6 +432,14 @@ export const buildHandler = (postFn: PostFn) => async (
         // UPDATE and DELETE not implemented in Phase 1
       }
       const newCount = ops.filter(o => o.op === 'ADD').length
+      console.log(JSON.stringify({
+        event: 'llm_call',
+        purpose: 'memory_extract',
+        model: MEMORY_EXTRACTION_MODEL,
+        chatId,
+        candidateCount: candidates.length,
+        addedCount: newCount,
+      }))
       if (newCount > 0) {
         await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: newCount }) })
       }

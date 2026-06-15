@@ -168,6 +168,7 @@ export async function executeMemoryTool(
       const addOp = ops.find(o => o.op === 'ADD')
 
       if (!addOp) {
+        console.log(JSON.stringify({ event: 'memory_tool', op: 'remember', result: 'already_known' }))
         return successResult('Already known.')
       }
 
@@ -181,6 +182,7 @@ export async function executeMemoryTool(
         createdAt: now,
         updatedAt: now,
       })
+      console.log(JSON.stringify({ event: 'memory_tool', op: 'remember', result: 'saved' }))
       return successResult('Saved.')
     }
 
@@ -212,6 +214,7 @@ export async function executeMemoryTool(
         createdAt: existing.createdAt as string,
         updatedAt: now,
       })
+      console.log(JSON.stringify({ event: 'memory_tool', op: 'update', result: 'updated' }))
       return successResult('Updated.')
     }
 
@@ -228,6 +231,7 @@ export async function executeMemoryTool(
       }
 
       await deleteUserMemory(ctx.sub, input.memId)
+      console.log(JSON.stringify({ event: 'memory_tool', op: 'forget', result: 'forgotten' }))
       return successResult('Forgotten.')
     }
 
