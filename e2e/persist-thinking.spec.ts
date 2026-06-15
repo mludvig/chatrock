@@ -21,13 +21,17 @@ test('thinking and search results survive page reload', async ({ page }) => {
   const modelSelect = page.locator('.model-select')
   await modelSelect.selectOption({ label: 'Claude Sonnet 4.6' })
 
-  // Open settings and enable a thinking effort so thinking blocks appear
-  await page.locator('button[title="Chat settings"]').click()
+  // Open the Preferences panel → This chat tab to enable thinking effort
+  await page.locator('[data-panel="prefs"]').click()
+  await expect(page.locator('.prefs-panel')).toBeVisible({ timeout: 5_000 })
+  await page.locator('.prefs-tab', { hasText: 'This chat' }).click()
   // Enable thinking by clicking a non-off effort button (e.g. "Low")
-  const lowEffortBtn = page.locator('.effort-btn', { hasText: 'Low' })
+  const lowEffortBtn = page.locator('.model-settings .effort-btn', { hasText: 'Low' })
   if (await lowEffortBtn.isVisible()) {
     await lowEffortBtn.click()
   }
+  // Switch back to chats panel so the message input is accessible
+  await page.locator('[data-panel="chats"]').click()
 
   // Send a prompt that will trigger a web search
   const input = page.locator('.message-input')
