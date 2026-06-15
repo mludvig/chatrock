@@ -1372,7 +1372,6 @@ $mobile: 720px;
     top: #{$header-h};
     bottom: 0;
     z-index: 200;
-    transform: translateX(-100%);
     transition: transform 0.25s ease;
   }
 
@@ -1380,12 +1379,16 @@ $mobile: 720px;
     left: 0;
     width: #{$activity-bar-w};
     box-shadow: none; // panel provides the shadow
+    transform: translateX(-100%);
   }
 
   .sidebar {
     left: #{$activity-bar-w};
     width: min(300px, calc(85vw - #{$activity-bar-w}));
     box-shadow: 4px 0 24px rgba(0,0,0,0.12);
+    // translateX(-100%) only moves sidebar to left:0 — still visible over the activity bar offset.
+    // Extra -$activity-bar-w pushes it fully off-screen.
+    transform: translateX(calc(-100% - #{$activity-bar-w}));
   }
 
   // Slide in both when layout has .sidebar-open
