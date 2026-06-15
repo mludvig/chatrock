@@ -633,6 +633,13 @@ test('B3: PATCH modelSettings with array → 400', async () => {
   expect(res.statusCode).toBe(400)
 })
 
+test('B-null: PATCH modelSettings with null → 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { modelSettings: null }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'modelSettings must be a plain object' })
+})
+
 test('B4: GET /api/chats includes modelSettings when present on chat record', async () => {
   mockDynamo.listChats.mockResolvedValue([
     { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '', modelSettings: { webSearch: false } },

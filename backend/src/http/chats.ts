@@ -67,7 +67,7 @@ export const handler = async (
       title: 'New Chat',
       model,
       systemPrompt: (body.systemPrompt as string | undefined) ?? '',
-      ...(body.modelSettings && typeof body.modelSettings === 'object' && !Array.isArray(body.modelSettings)
+      ...(body.modelSettings !== undefined && typeof body.modelSettings === 'object' && body.modelSettings !== null && !Array.isArray(body.modelSettings)
         ? { modelSettings: body.modelSettings }
         : {}),
       createdAt: now,
