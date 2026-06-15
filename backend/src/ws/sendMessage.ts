@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, buildUserMemKey } from '../lib/dynamo'
 import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
+import type { ToolContext } from '../lib/tools'
 import { buildActivePath, type TurnRow } from '../lib/tree'
 import { TITLE_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
@@ -87,14 +88,18 @@ export const buildHandler = (postFn: PostFn) => async (
   // Assemble the effective system prompt (server-authoritative)
   const now = new Date().toISOString()
   const memoriesForPrompt = memoryEnabled
-    ? userMemoriesRaw.map(i => ({ text: i.text as string, category: i.category as string }))
+    ? userMemoriesRaw.map(i => ({ memId: i.memId as string, text: i.text as string, category: i.category as string }))
     : []
   const effectiveSystemPrompt = assembleSystemPrompt({
     basePrompt: systemPrompt,
     prefs: effectivePrefs,
     memories: memoriesForPrompt,
     now,
+    memoryToolEnabled: memoryEnabled,
   })
+
+  // Build tool context for manage_memory (sub from authenticated connection, never from client)
+  const toolCtx: ToolContext = { sub }
 
   // Capture the response start time once — all turns of this response share it
   // so their SKs (MSG#<ts>#<seq>#<id>) sort together in order.
@@ -233,7 +238,7 @@ export const buildHandler = (postFn: PostFn) => async (
   let assistantTextForMemory = ''
 
   try {
-    for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, abortController.signal)) {
+    for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, toolCtx, abortController.signal)) {
       switch (chunk.type) {
         case 'thinking_delta':
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
@@ -300,6 +305,10 @@ export const buildHandler = (postFn: PostFn) => async (
           lastUsage = chunk.usage
           // Forward as a compact WS event for live token stats display
           await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'usage', usage: chunk.usage }) })
+          break
+        case 'memoryChanged':
+          // Tool loop signalled that manage_memory succeeded — notify the client
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: 1 }) })
           break
         case 'stop':
           // Update activeLeafId before sending 'done' so the client's

@@ -1,4 +1,11 @@
 import type { Tool, ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import { executeMemoryTool } from './memory'
+
+// ── Tool execution context ────────────────────────────────────────────────────
+
+export interface ToolContext {
+  sub: string
+}
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
 
@@ -35,12 +42,50 @@ export const WEB_TOOLS: Tool[] = [
   },
 ]
 
+// ── Memory tool spec ──────────────────────────────────────────────────────────
+
+export const MEMORY_TOOL: Tool = {
+  toolSpec: {
+    name: 'manage_memory',
+    description: "Manage your long-term memory of the user. Use operation 'remember' to save a new durable personal fact (name, location, profession, stated preferences, communication style). Use 'update' with a memId to correct an existing fact. Use 'forget' with a memId to remove a fact. The memId values are shown in brackets next to each memory in your memory list. Do NOT store task-specific or temporary details. Save facts the user would expect you to recall in future conversations.",
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          operation: {
+            type: 'string',
+            enum: ['remember', 'update', 'forget'],
+            description: "remember = save a new durable fact; update = correct an existing fact by id; forget = delete a fact by id",
+          },
+          text: {
+            type: 'string',
+            description: 'The durable fact about the user, concise. Required for remember and update.',
+          },
+          category: {
+            type: 'string',
+            enum: ['identity', 'preference', 'style', 'other'],
+            description: 'Category of the fact. Required for remember; optional for update.',
+          },
+          memId: {
+            type: 'string',
+            description: 'Id of an existing memory (from the [memId] markers in the memory list). Required for update and forget.',
+          },
+        },
+        required: ['operation'],
+      },
+    },
+  },
+}
+
 // ── Tool executors ────────────────────────────────────────────────────────────
 
 const JINA_KEY = process.env.JINA_API_KEY ?? ''
 
-export async function executeTool(name: string, input: Record<string, string>): Promise<ToolResultBlock> {
+export async function executeTool(name: string, input: Record<string, string>, ctx: ToolContext): Promise<ToolResultBlock> {
   try {
+    if (name === 'manage_memory') {
+      return await executeMemoryTool(input, ctx)
+    }
     if (name === 'web_search') {
       const result = await jinaSearch(input.query)
       return { toolUseId: '', content: [{ text: result }], status: 'success' }

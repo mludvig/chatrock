@@ -8,7 +8,7 @@ import {
   type SystemContentBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
-import { executeTool, WEB_TOOLS } from './tools'
+import { executeTool, WEB_TOOLS, MEMORY_TOOL, type ToolContext } from './tools'
 import { capToolResultText } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 
@@ -30,6 +30,8 @@ export type StreamChunk =
   | { type: 'turn'; role: 'user' | 'assistant'; content: ContentBlock[]; turnIndex: number }
   // Forwarded as a compact WS event for live display
   | { type: 'usage'; usage: TokenUsage }
+  // Emitted when manage_memory tool succeeds — triggers memoryUpdated WS event
+  | { type: 'memoryChanged' }
 
 export interface TokenUsage {
   inputTokens: number
@@ -83,9 +85,14 @@ const CACHE_POINT_CONTENT = { cachePoint: { type: 'default' as const } } as unkn
 /**
  * Build the tools list with a trailing cachePoint so the tool definitions
  * (which are stable across all turns) get cached on first use.
+ * Gate web tools and memory tool independently.
  */
-function buildToolsWithCache(): Tool[] {
-  return [...WEB_TOOLS, CACHE_POINT_TOOL]
+function buildToolsWithCache(settings: ModelSettings): Tool[] {
+  const list: Tool[] = []
+  if (settings.webSearch !== false) list.push(...WEB_TOOLS)
+  if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
+  if (list.length === 0) return []
+  return [...list, CACHE_POINT_TOOL]
 }
 
 /**
@@ -308,9 +315,10 @@ export async function* converseStream(
   systemPrompt: string,
   messages: Message[],
   settings: ModelSettings = {},
+  ctx?: ToolContext,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
-  const tools = settings.webSearch === false ? [] : buildToolsWithCache()
+  const tools = buildToolsWithCache(settings)
   // Base messages are the incoming history (verbatim blocks replayed as-is)
   const baseMessages: Message[] = [...messages]
   // New messages added this session (grows with each tool-use round)
@@ -360,13 +368,18 @@ export async function* converseStream(
     const toolResults: ContentBlock[] = []
     for (const tu of result.toolUses) {
       const input = (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })()
-      const toolResult = await executeTool(tu.name, input)
+      const toolResult = await executeTool(tu.name, input, ctx ?? { sub: '' })
       const rawContent = toolResult.content?.[0] && 'text' in toolResult.content[0]
         ? (toolResult.content[0].text ?? '')
         : ''
       // Cap BEFORE storing (so stored == sent → cache-safe, no replay drift)
       const cappedContent = capToolResultText(rawContent)
       const isError = toolResult.status === 'error'
+
+      // Emit memoryChanged when manage_memory succeeds (triggers WS memoryUpdated event)
+      if (tu.name === 'manage_memory' && toolResult.status === 'success') {
+        yield { type: 'memoryChanged' as const }
+      }
 
       yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedContent, isError }
 

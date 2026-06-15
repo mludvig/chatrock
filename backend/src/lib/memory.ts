@@ -1,5 +1,8 @@
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL } from '../config/models'
+import type { ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import { listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey } from './dynamo'
+import { v4 as uuidv4 } from 'uuid'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -118,4 +121,118 @@ export function reconcile(
   }
 
   return ops
+}
+
+// ── Memory tool executor ──────────────────────────────────────────────────────
+
+const VALID_CATEGORIES = new Set<string>(['identity', 'preference', 'style', 'other'])
+
+function errorResult(message: string): ToolResultBlock {
+  return { toolUseId: '', content: [{ text: message }], status: 'error' }
+}
+
+function successResult(message: string): ToolResultBlock {
+  return { toolUseId: '', content: [{ text: message }], status: 'success' }
+}
+
+/**
+ * Execute the manage_memory tool operation.
+ * ctx: { sub: string } — user identity from authenticated context, NOT from model input.
+ * Never throws — always returns a ToolResultBlock.
+ */
+export async function executeMemoryTool(
+  input: Record<string, string>,
+  ctx: { sub: string },
+): Promise<ToolResultBlock> {
+  try {
+    const { operation } = input
+
+    if (operation === 'remember') {
+      if (!input.text || !input.text.trim()) {
+        return errorResult('text is required for remember operation.')
+      }
+      if (!VALID_CATEGORIES.has(input.category)) {
+        return errorResult(`category must be one of: identity, preference, style, other.`)
+      }
+
+      const existingRaw = await listUserMemories(ctx.sub)
+      const existing: UserMemory[] = existingRaw.map(i => ({
+        memId: i.memId as string,
+        text: i.text as string,
+        category: i.category as UserMemory['category'],
+        createdAt: i.createdAt as string,
+        updatedAt: i.updatedAt as string,
+      }))
+
+      const ops = reconcile([{ category: input.category as UserMemory['category'], text: input.text }], existing)
+      const addOp = ops.find(o => o.op === 'ADD')
+
+      if (!addOp) {
+        return successResult('Already known.')
+      }
+
+      const memId = uuidv4()
+      const now = new Date().toISOString()
+      await putUserMemory({
+        ...buildUserMemKey(ctx.sub, memId),
+        memId,
+        text: input.text,
+        category: input.category,
+        createdAt: now,
+        updatedAt: now,
+      })
+      return successResult('Saved.')
+    }
+
+    if (operation === 'update') {
+      if (!input.memId) {
+        return errorResult('memId is required for update operation.')
+      }
+      if (!input.text || !input.text.trim()) {
+        return errorResult('text is required for update operation.')
+      }
+
+      const existingRaw = await listUserMemories(ctx.sub)
+      const existing = existingRaw.find(i => (i.memId as string) === input.memId)
+
+      if (!existing) {
+        return errorResult(`Memory not found. Use 'remember' to save a new fact.`)
+      }
+
+      const now = new Date().toISOString()
+      const newCategory = (input.category && VALID_CATEGORIES.has(input.category))
+        ? input.category
+        : (existing.category as string)
+
+      await putUserMemory({
+        ...buildUserMemKey(ctx.sub, input.memId),
+        memId: input.memId,
+        text: input.text,
+        category: newCategory,
+        createdAt: existing.createdAt as string,
+        updatedAt: now,
+      })
+      return successResult('Updated.')
+    }
+
+    if (operation === 'forget') {
+      if (!input.memId) {
+        return errorResult('memId is required for forget operation.')
+      }
+
+      const existingRaw = await listUserMemories(ctx.sub)
+      const existing = existingRaw.find(i => (i.memId as string) === input.memId)
+
+      if (!existing) {
+        return errorResult(`Memory not found.`)
+      }
+
+      await deleteUserMemory(ctx.sub, input.memId)
+      return successResult('Forgotten.')
+    }
+
+    return errorResult(`Unknown operation: ${operation}. Must be one of: remember, update, forget.`)
+  } catch (err) {
+    return errorResult(`Memory tool error: ${String(err)}`)
+  }
 }
