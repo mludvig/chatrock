@@ -225,6 +225,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
 
+  // Backfill: if chats were not loaded when the seed effect ran (cold navigation),
+  // fill draftModelSettings once the chat record arrives in the store.
+  useEffect(() => {
+    if (isNew || !chatId) return
+    if (Object.keys(draftModelSettings).length > 0) return  // already seeded
+    const chat = chats.find(c => c.chatId === chatId)
+    if (chat?.modelSettings && Object.keys(chat.modelSettings).length > 0) {
+      setDraftModelSettings(chat.modelSettings)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chats, chatId, isNew])
+
   // Register WS event handler
   useEffect(() => {
     setWSHandlers((evt: WSEvent) => {
@@ -607,6 +619,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           title: 'New Chat',
           model,
           systemPrompt,
+          ...(Object.keys(draftModelSettings).length > 0 ? { modelSettings: draftModelSettings } : {}),
           createdAt: now,
           updatedAt: now,
         })
