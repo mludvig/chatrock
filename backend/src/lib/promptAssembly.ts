@@ -11,7 +11,8 @@ export interface AssembleInput {
 export function assembleSystemPrompt(input: AssembleInput): string {
   const parts: string[] = []
 
-  // 1. Effective custom instructions — per-chat replaces global default when non-empty
+  // 1. Effective custom instructions — per-chat basePrompt takes priority;
+  //    falls back to global persona when basePrompt is empty/absent.
   const effectiveInstructions = input.basePrompt.trim() || input.prefs.persona?.trim() || ''
   if (effectiveInstructions) {
     parts.push(effectiveInstructions)
