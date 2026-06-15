@@ -2,8 +2,12 @@ import type { APIGatewayProxyStructuredResultV2 } from 'aws-lambda'
 import { handler } from '../../src/http/chats'
 import * as dynamo from '../../src/lib/dynamo'
 import * as attachmentsMod from '../../src/lib/attachments'
+import * as bedrock from '../../src/lib/bedrock'
 
 jest.mock('../../src/lib/dynamo')
+jest.mock('../../src/lib/bedrock', () => ({
+  converseOnce: jest.fn(),
+}))
 jest.mock('../../src/lib/attachments', () => ({
   validateAttachment: jest.fn(),
   presignPut: jest.fn().mockResolvedValue('https://s3.example.com/presigned-put'),
@@ -14,6 +18,7 @@ jest.mock('../../src/lib/attachments', () => ({
 }))
 
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
+const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockAttachments = attachmentsMod as jest.Mocked<typeof attachmentsMod>
 
 // Helper: build a minimal turn row mock for listMessages responses
@@ -728,4 +733,50 @@ test('inc6: original chat rows are not modified (no writes to original CHAT#c1 p
   for (const row of cloned) {
     expect(row.PK).not.toBe('CHAT#c1')
   }
+})
+
+// ── Retitle ────────────────────────────────────────────────────────────────────
+
+test('retitle: generates title from blocks[] and persists it', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'Old Title', model: 'x',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  mockDynamo.listMessages.mockResolvedValue([
+    { PK: 'CHAT#c1', SK: 'MSG#t#0#u1', msgId: 'u1', parentId: null, role: 'user',
+      blocks: [{ text: 'What is the capital of France?' }],
+      model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#1#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
+      blocks: [{ text: 'The capital of France is Paris.' }],
+      model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+  ])
+  mockBedrock.converseOnce.mockResolvedValue('Capital of France')
+  mockDynamo.updateChatTitle.mockResolvedValue(undefined)
+
+  const res = result(await handler(
+    makeEvent('POST', '/api/chats/{chatId}/retitle', undefined, { chatId: 'c1' }) as any
+  ))
+  expect(res.statusCode).toBe(200)
+  expect(JSON.parse(res.body ?? '{}')).toEqual({ title: 'Capital of France' })
+  expect(mockDynamo.updateChatTitle).toHaveBeenCalledWith('user-1', 'c1', 'Capital of France')
+
+  // Verify transcript passed to converseOnce contained block text (not m.content)
+  const callArgs = mockBedrock.converseOnce.mock.calls[0]
+  const msgContent = callArgs[2]![0]!.content as Array<{ text?: string }>
+  const prompt = msgContent[0]!.text ?? ''
+  expect(prompt).toContain('What is the capital of France?')
+  expect(prompt).toContain('The capital of France is Paris.')
+})
+
+test('retitle: returns 400 when chat has no messages', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+  })
+  mockDynamo.listMessages.mockResolvedValue([])
+
+  const res = result(await handler(
+    makeEvent('POST', '/api/chats/{chatId}/retitle', undefined, { chatId: 'c1' }) as any
+  ))
+  expect(res.statusCode).toBe(400)
 })
