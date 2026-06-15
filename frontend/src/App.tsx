@@ -107,7 +107,19 @@ function AuthedApp() {
 export default function App() {
   const auth = useAuth()
 
-  if (auth.isLoading) {
+  // If the access token expired but we have a refresh token, renew silently before
+  // falling through to the login screen. This covers the common case of returning to
+  // the app after >1 hour — the refresh token is still valid (30-day window) so the
+  // user should never see the login prompt.
+  useEffect(() => {
+    if (!auth.isLoading && !auth.isAuthenticated && !auth.activeNavigator && !auth.error) {
+      if (auth.user?.refresh_token) {
+        void auth.signinSilent()
+      }
+    }
+  }, [auth])
+
+  if (auth.isLoading || (!auth.isAuthenticated && auth.user?.refresh_token && !auth.error)) {
     return <div className="splash">Loading…</div>
   }
 
