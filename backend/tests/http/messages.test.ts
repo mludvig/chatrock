@@ -473,3 +473,37 @@ describe('attachment steps in messages', () => {
     expect(docStep!.url).toContain('cdn.example.com')  // signed URL still present
   })
 })
+
+// ── Part 4: incomplete turn → errored bubble ──────────────────────────────────
+//
+// An assistant turn row with incomplete:true marks a partial flush from an error.
+// groupTurnsToBubbles must surface this as errored:true on the assembled bubble
+// so the frontend Continue button can appear even after a page reload.
+
+test('part4: assistant bubble has errored:true when any of its turns has incomplete:true', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'question' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'partial answer' }], responseId: 'r0', turnIndex: 1, incomplete: true }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  const asstBubble = body.bubbles.find(b => b.role === 'assistant')
+  expect(asstBubble).toBeDefined()
+  expect(asstBubble!.errored).toBe(true)
+})
+
+test('part4b: assistant bubble has no errored field when no turns have incomplete:true', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'question' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'complete answer' }], responseId: 'r0', turnIndex: 1 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  const asstBubble = body.bubbles.find(b => b.role === 'assistant')
+  expect(asstBubble).toBeDefined()
+  expect(asstBubble!.errored).toBeUndefined()
+})

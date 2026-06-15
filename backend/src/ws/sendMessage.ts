@@ -5,7 +5,7 @@ import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, buildUserMemKey } from '../lib/dynamo'
 import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
-import { buildActivePath, type TurnRow } from '../lib/tree'
+import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
 import { TITLE_MODEL, MEMORY_EXTRACTION_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences } from '../lib/preferences'
@@ -42,12 +42,15 @@ export const buildHandler = (postFn: PostFn) => async (
     modelSettings?: ModelSettings
     parentId?: string | null
     attachments?: AttachmentMeta[]
+    continue?: boolean
   }
   const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId, attachments = [] } = body
-  // Detect edit/re-run by key presence (not value) so parentId: null (root edit) is handled.
+  // Detect edit/re-run/continue by key presence (not value) so parentId: null (root edit) is handled.
   const hasParentId = 'parentId' in body
-  // Re-run: parentId key present and no content = regenerate answer as a sibling
-  const isRerun = hasParentId && !content
+  // Continue: parentId key present, no content, and continue:true flag — resume from leaf
+  const isContinue = hasParentId && !content && body.continue === true
+  // Re-run: parentId key present and no content (and not continue) = regenerate as a sibling
+  const isRerun = hasParentId && !content && !isContinue
   // Edit: parentId key present and content present = new user-turn sibling with edited content
   const isEdit = hasParentId && !!content
 
@@ -106,6 +109,9 @@ export const buildHandler = (postFn: PostFn) => async (
   const responseStartTs = new Date().toISOString()
   const responseId = uuidv4()
   let seq = 0
+  // For Continue: reuse the failed response's responseId so groupTurnsToBubbles fuses
+  // the partial + continuation into one seamless bubble.
+  let continueResponseId: string | undefined
 
   // Load prior turn history before any writes (avoids a second DDB round-trip
   // and works correctly when tests mock listMessages).
@@ -114,7 +120,32 @@ export const buildHandler = (postFn: PostFn) => async (
   let lastTurnMsgId: string
   let bedrockMessages: Message[]
 
-  if (isRerun) {
+  if (isContinue) {
+    // ── Continue path: resume generation from an errored/incomplete leaf ────────
+    // The client passes the bubble's msgId (first turn of the response).
+    // We resolve to the deepest turn within that response group (resolveResponseLeaf)
+    // so the replay is always inclusive of the true leaf.
+    const priorById = new Map((priorRows as unknown as TurnRow[]).map(r => [r.msgId, r]))
+    if (!priorById.has(rerunParentId!)) {
+      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Continue parentId not found' }) })
+      return { statusCode: 200, body: '' }
+    }
+    // Resolve bubble msgId → deepest turn within its responseId group
+    const leafId = resolveResponseLeaf(priorRows as unknown as TurnRow[], rerunParentId!)
+    const leafRow = priorById.get(leafId)!
+    continueResponseId = leafRow.responseId as string
+
+    // Replay root→leaf INCLUSIVE (continuation extends from the leaf)
+    const replayPath = buildActivePath(priorRows as unknown as TurnRow[], leafId)
+    bedrockMessages = await Promise.all(
+      replayPath.map(async m => ({
+        role: m.role as 'user' | 'assistant',
+        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+      }))
+    )
+    // New turns chain as CHILD of the leaf
+    lastTurnMsgId = leafId
+  } else if (isRerun) {
     // ── Re-run path: generate a sibling answer for the given parentId ──────────
     // Validate: parentId must resolve to a known row
     const priorById = new Map((priorRows as unknown as TurnRow[]).map(r => [r.msgId, r]))
@@ -240,6 +271,30 @@ export const buildHandler = (postFn: PostFn) => async (
   // Prevents a second memoryUpdated toast from the passive extractor on the same turn.
   let memoryChangedDuringStream = false
 
+  // Helper: flush any partial text accumulated mid-turn as an incomplete assistant turn.
+  // Called from both the cancel path and the error path so partial work is never discarded.
+  const flushPartial = async () => {
+    if (!partialText) return
+    const turnMsgId = uuidv4()
+    const turnTs = new Date().toISOString()
+    await putMessage({
+      ...buildTurnKey(chatId, responseStartTs, seq, turnMsgId),
+      msgId: turnMsgId,
+      parentId: lastTurnMsgId,
+      role: 'assistant',
+      blocks: [{ text: partialText }],
+      model,
+      createdAt: turnTs,
+      turnIndex: partialTurnIndex,
+      responseId: continueResponseId ?? responseId,
+      incomplete: true,
+    })
+    lastTurnMsgId = turnMsgId
+  }
+
+  let errored = false
+  let errorMessage = ''
+
   try {
     for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, toolCtx, abortController.signal)) {
       switch (chunk.type) {
@@ -291,7 +346,8 @@ export const buildHandler = (postFn: PostFn) => async (
             model,
             createdAt: turnTs,
             turnIndex: chunk.turnIndex,
-            responseId,
+            // Continue reuses the failed response's responseId so bubbles fuse
+            responseId: continueResponseId ?? responseId,
             ...(chunk.role === 'assistant' && lastUsage ? { usage: lastUsage } : {}),
             ...(chunk.role === 'assistant' && effectiveModelSettings.thinkingEffort !== undefined
               ? { thinkingEffort: effectiveModelSettings.thinkingEffort } : {}),
@@ -344,32 +400,33 @@ export const buildHandler = (postFn: PostFn) => async (
     const wasAborted = abortController.signal.aborted || await isStreamCancelled(connId)
     if (wasAborted) {
       cancelled = true
-      // Flush any partial text accumulated before the abort
-      if (partialText) {
-        const turnMsgId = uuidv4()
-        const turnTs = new Date().toISOString()
-        await putMessage({
-          ...buildTurnKey(chatId, responseStartTs, seq, turnMsgId),
-          msgId: turnMsgId,
-          parentId: lastTurnMsgId,
-          role: 'assistant',
-          blocks: [{ text: partialText }],
-          model,
-          createdAt: turnTs,
-          turnIndex: partialTurnIndex,
-          responseId,
-        })
-        lastTurnMsgId = turnMsgId
-      }
+      await flushPartial()
     } else {
-      clearTimeout(pollTimer)
-      console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: String(err) }))
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: String(err) }) })
-      return { statusCode: 200, body: '' }
+      errored = true
+      errorMessage = String(err)
+      console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: errorMessage }))
+      await flushPartial()
     }
   }
 
   clearTimeout(pollTimer)
+
+  if (errored) {
+    // Advance activeLeafId to the last persisted turn (partial or prior round) so
+    // the active path is correct for a Continue operation or page reload.
+    try {
+      await updateChatActiveLeaf(sub, chatId, lastTurnMsgId)
+    } catch (e) {
+      console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
+    }
+    await postFn({ ConnectionId: connId, Data: JSON.stringify({
+      type: 'error',
+      message: errorMessage,
+      responseId,
+      leafId: lastTurnMsgId,
+    }) })
+    return { statusCode: 200, body: '' }
+  }
 
   if (cancelled) {
     try {
@@ -383,8 +440,8 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // Auto-title on first normal send only (not re-run, not edit)
-  if (!isRerun && !isEdit && chat.title === 'New Chat') {
+  // Auto-title on first normal send only (not re-run, not edit, not continue)
+  if (!isRerun && !isEdit && !isContinue && chat.title === 'New Chat') {
     try {
       const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content!}`
       const title = await converseOnce(TITLE_MODEL, '', [

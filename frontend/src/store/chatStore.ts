@@ -72,6 +72,8 @@ interface ChatState {
   setStreamIdle: (idle: boolean) => void
   /** Move streamingMsg to messages[] as a DisplayBubble */
   finalizeStream: () => void
+  /** Move streamingMsg to messages[] tagged as errored (partial answer from a stream error) */
+  finalizeStreamErrored: () => void
   clearStream: () => void
   setModels: (models: Model[]) => void
   setLoading: (v: boolean) => void
@@ -280,6 +282,32 @@ export const useChatStore = create<ChatState>()(
               model: '',
               createdAt: new Date().toISOString(),
               usage: s.streamingMsg.usage,
+            } satisfies Message,
+          ],
+          streamingMsg: null,
+        }
+      }),
+
+      finalizeStreamErrored: () => set((s) => {
+        if (!s.streamingMsg) return {}
+        // Same as finalizeStream but tags the resulting message as errored so
+        // the Continue button can appear on the preserved partial bubble.
+        const cleanSteps = s.streamingMsg.steps.map(step => {
+          const { _done, ...rest } = step as Step & { _done?: boolean }
+          void _done
+          return rest as Step
+        })
+        return {
+          messages: [
+            ...s.messages,
+            {
+              msgId: crypto.randomUUID(),
+              role: 'assistant' as const,
+              steps: cleanSteps,
+              model: '',
+              createdAt: new Date().toISOString(),
+              usage: s.streamingMsg.usage,
+              errored: true,
             } satisfies Message,
           ],
           streamingMsg: null,
