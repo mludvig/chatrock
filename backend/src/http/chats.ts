@@ -172,7 +172,11 @@ export const handler = async (
     if (messages.length === 0) return err(400, 'No messages to generate title from')
     const transcript = messages
       .slice(-10)
-      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${(m.content as string).slice(0, 300)}`)
+      .map(m => {
+        const blocks = (m.blocks as Array<{ text?: string }> | undefined) ?? []
+        const text = blocks.map(b => b.text ?? '').join(' ').slice(0, 300)
+        return `${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`
+      })
       .join('\n')
     const titlePrompt = `Generate a very short chat title (max 6 words) that captures the main topic of this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\n${transcript}`
     const title = await converseOnce(TITLE_MODEL, '', [
