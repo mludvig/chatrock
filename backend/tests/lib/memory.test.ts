@@ -459,4 +459,92 @@ describe('executeMemoryTool', () => {
 
     expect(result.status).toBe('error')
   })
+
+  // ── logging ───────────────────────────────────────────────────────────────
+
+  test('remember new fact → logs { event: memory_tool, op: remember, result: saved }', async () => {
+    mockDynamo.listUserMemories.mockResolvedValue([])
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    await executeMemoryTool(
+      { operation: 'remember', text: 'I am a developer', category: 'identity' },
+      ctx,
+    )
+    const logCalls = [...logSpy.mock.calls]
+    logSpy.mockRestore()
+
+    const loggedObj = logCalls
+      .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
+      .find(obj => obj?.event === 'memory_tool')
+
+    expect(loggedObj).toBeDefined()
+    expect(loggedObj!.op).toBe('remember')
+    expect(loggedObj!.result).toBe('saved')
+  })
+
+  test('remember duplicate → logs { event: memory_tool, op: remember, result: already_known }', async () => {
+    mockDynamo.listUserMemories.mockResolvedValue([
+      makeRawMemory('existing-id', 'i am a developer', 'identity'),
+    ])
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    await executeMemoryTool(
+      { operation: 'remember', text: 'I Am A Developer', category: 'identity' },
+      ctx,
+    )
+    const logCalls = [...logSpy.mock.calls]
+    logSpy.mockRestore()
+
+    const loggedObj = logCalls
+      .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
+      .find(obj => obj?.event === 'memory_tool')
+
+    expect(loggedObj).toBeDefined()
+    expect(loggedObj!.op).toBe('remember')
+    expect(loggedObj!.result).toBe('already_known')
+  })
+
+  test('update valid memId → logs { event: memory_tool, op: update, result: updated }', async () => {
+    mockDynamo.listUserMemories.mockResolvedValue([
+      makeRawMemory('mem-abc', 'Old fact', 'identity'),
+    ])
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    await executeMemoryTool(
+      { operation: 'update', memId: 'mem-abc', text: 'New fact', category: 'preference' },
+      ctx,
+    )
+    const logCalls = [...logSpy.mock.calls]
+    logSpy.mockRestore()
+
+    const loggedObj = logCalls
+      .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
+      .find(obj => obj?.event === 'memory_tool')
+
+    expect(loggedObj).toBeDefined()
+    expect(loggedObj!.op).toBe('update')
+    expect(loggedObj!.result).toBe('updated')
+  })
+
+  test('forget valid memId → logs { event: memory_tool, op: forget, result: forgotten }', async () => {
+    mockDynamo.listUserMemories.mockResolvedValue([
+      makeRawMemory('mem-del', 'Fact to delete', 'other'),
+    ])
+
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    await executeMemoryTool(
+      { operation: 'forget', memId: 'mem-del' },
+      ctx,
+    )
+    const logCalls = [...logSpy.mock.calls]
+    logSpy.mockRestore()
+
+    const loggedObj = logCalls
+      .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
+      .find(obj => obj?.event === 'memory_tool')
+
+    expect(loggedObj).toBeDefined()
+    expect(loggedObj!.op).toBe('forget')
+    expect(loggedObj!.result).toBe('forgotten')
+  })
 })
