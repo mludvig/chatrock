@@ -18,8 +18,8 @@ test.describe('Preferences panel', () => {
     // Both tabs must be present
     await expect(page.locator('.prefs-tab', { hasText: 'Defaults' })).toBeVisible()
     await expect(page.locator('.prefs-tab', { hasText: 'This chat' })).toBeVisible()
-    // Defaults tab is active by default
-    await expect(page.locator('.prefs-tab.active', { hasText: 'Defaults' })).toBeVisible()
+    // This chat tab is active by default
+    await expect(page.locator('.prefs-tab.active', { hasText: 'This chat' })).toBeVisible()
   })
 
   test('switching to This chat tab shows custom instructions and model settings', async ({ page }) => {
