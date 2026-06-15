@@ -103,6 +103,15 @@ export async function updateChatModel(sub: string, chatId: string, model: string
   }))
 }
 
+export async function updateChatModelSettings(sub: string, chatId: string, modelSettings: Record<string, unknown>) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET modelSettings = :ms, updatedAt = :u',
+    ExpressionAttributeValues: { ':ms': modelSettings, ':u': new Date().toISOString() },
+  }))
+}
+
 export async function deleteChat(sub: string, chatId: string) {
   // Delete all messages for this chat first (cascade)
   const msgs = await ddb.send(new QueryCommand({

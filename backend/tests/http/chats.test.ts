@@ -611,6 +611,96 @@ test('POST /api/chats with duplicate chatId returns 409', async () => {
   expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Chat already exists' })
 })
 
+// ── Part B: modelSettings ─────────────────────────────────────────────────────
+
+test('B1: PATCH modelSettings → updateChatModelSettings called', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.updateChatModelSettings.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { modelSettings: { webSearch: false, thinkingEffort: 'low' } }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateChatModelSettings).toHaveBeenCalledWith('user-1', 'c1', { webSearch: false, thinkingEffort: 'low' })
+})
+
+test('B2: PATCH modelSettings with non-object string → 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { modelSettings: 'bad' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+})
+
+test('B3: PATCH modelSettings with array → 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { modelSettings: [1, 2, 3] }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+})
+
+test('B4: GET /api/chats includes modelSettings when present on chat record', async () => {
+  mockDynamo.listChats.mockResolvedValue([
+    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '', modelSettings: { webSearch: false } },
+  ])
+  const res = result(await handler(makeEvent('GET', '/api/chats') as any))
+  const body = JSON.parse(res.body ?? '{}')
+  expect(body.chats[0].modelSettings).toEqual({ webSearch: false })
+})
+
+test('B5: GET /api/chats omits modelSettings when absent', async () => {
+  mockDynamo.listChats.mockResolvedValue([
+    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '' },
+  ])
+  const res = result(await handler(makeEvent('GET', '/api/chats') as any))
+  const body = JSON.parse(res.body ?? '{}')
+  expect(body.chats[0].modelSettings).toBeUndefined()
+})
+
+test('B6: POST /api/chats with modelSettings persists it', async () => {
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6', modelSettings: { webSearch: false } }) as any))
+  expect(res.statusCode).toBe(201)
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.objectContaining({ modelSettings: { webSearch: false } })
+  )
+})
+
+test('B7: fork carries modelSettings from source chat', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: 'sys', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    modelSettings: { webSearch: false },
+  })
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(201)
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.objectContaining({ modelSettings: { webSearch: false } })
+  )
+})
+
+test('B8: fork without modelSettings does not set it on fork', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
+    // no modelSettings
+  })
+  const rows = [
+    makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
+    makeForkRow('a1', 'u1', { role: 'assistant', responseId: 'r2' }),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any)
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.not.objectContaining({ modelSettings: expect.anything() })
+  )
+})
+
 test('inc6: original chat rows are not modified (no writes to original CHAT#c1 partition)', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',

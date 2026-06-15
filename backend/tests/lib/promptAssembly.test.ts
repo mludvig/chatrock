@@ -2,17 +2,14 @@ import { assembleSystemPrompt } from '../../src/lib/promptAssembly'
 
 // ── assembleSystemPrompt ──────────────────────────────────────────────────────
 
-test('persona is first, base prompt is last', () => {
+test('basePrompt non-empty → basePrompt used as effective instructions, persona NOT appended', () => {
   const result = assembleSystemPrompt({
     basePrompt: 'Base instructions.',
     prefs: { persona: 'You are a pirate.' },
     memories: [],
   })
-  const personaIdx = result.indexOf('You are a pirate.')
-  const baseIdx = result.indexOf('Base instructions.')
-  expect(personaIdx).toBeGreaterThanOrEqual(0)
-  expect(baseIdx).toBeGreaterThanOrEqual(0)
-  expect(personaIdx).toBeLessThan(baseIdx)
+  expect(result).toContain('Base instructions.')
+  expect(result).not.toContain('You are a pirate.')
 })
 
 test('empty persona → persona section absent', () => {
@@ -143,7 +140,7 @@ test('base prompt only → returns base prompt trimmed', () => {
   expect(result).toBe('Only base.')
 })
 
-test('all parts together → correct ordering: persona → date → length → memory → base', () => {
+test('all parts together → correct ordering: effective-instructions → date → length → memory (basePrompt replaces persona when non-empty)', () => {
   const result = assembleSystemPrompt({
     basePrompt: 'Base prompt here.',
     prefs: {
@@ -155,33 +152,35 @@ test('all parts together → correct ordering: persona → date → length → m
     now: '2026-06-14T10:00:00.000Z',
   })
 
-  const personaIdx = result.indexOf('You are an expert.')
+  // basePrompt is non-empty → it replaces persona as effective instructions
+  expect(result).toContain('Base prompt here.')
+  expect(result).not.toContain('You are an expert.')
+
+  const baseIdx = result.indexOf('Base prompt here.')
   const dateIdx = result.indexOf("Today's date is 2026-06-14.")
   const lengthIdx = result.indexOf('concise')
   const memoryIdx = result.indexOf('What you know about the user:')
-  const baseIdx = result.indexOf('Base prompt here.')
 
-  expect(personaIdx).toBeGreaterThanOrEqual(0)
   expect(dateIdx).toBeGreaterThanOrEqual(0)
   expect(lengthIdx).toBeGreaterThanOrEqual(0)
   expect(memoryIdx).toBeGreaterThanOrEqual(0)
-  expect(baseIdx).toBeGreaterThanOrEqual(0)
 
-  expect(personaIdx).toBeLessThan(dateIdx)
+  // effective instructions at the top, then date, length, memory
+  expect(baseIdx).toBeLessThan(dateIdx)
   expect(dateIdx).toBeLessThan(lengthIdx)
   expect(lengthIdx).toBeLessThan(memoryIdx)
-  expect(memoryIdx).toBeLessThan(baseIdx)
 })
 
-test('memory block is placed before base prompt', () => {
+test('effective instructions appear before memory block (basePrompt is effective instruction when non-empty)', () => {
   const result = assembleSystemPrompt({
     basePrompt: 'Base.',
     prefs: {},
     memories: [{ text: 'User prefers brevity', category: 'style' }],
   })
-  const memIdx = result.indexOf('What you know about the user:')
   const baseIdx = result.indexOf('Base.')
-  expect(memIdx).toBeLessThan(baseIdx)
+  const memIdx = result.indexOf('What you know about the user:')
+  // basePrompt is the effective instruction → it appears first, memory follows
+  expect(baseIdx).toBeLessThan(memIdx)
 })
 
 test('date line uses only YYYY-MM-DD portion of ISO string', () => {
@@ -271,4 +270,34 @@ test('empty memories + memoryToolEnabled:false (or absent) → memory block abse
   expect(result).not.toContain('What you know about the user:')
   expect(result).not.toContain('currently empty')
   expect(result).not.toContain('manage_memory')
+})
+
+// ── Part B: effective instructions collapse (persona + basePrompt) ────────────
+
+test('B-prompt1: per-chat basePrompt non-empty → used as effective instructions, persona NOT appended', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: 'Chat instructions.',
+    prefs: { persona: 'Global persona.' },
+    memories: [],
+  })
+  expect(result).toContain('Chat instructions.')
+  expect(result).not.toContain('Global persona.')
+})
+
+test('B-prompt2: basePrompt empty → persona is used as effective instructions', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: { persona: 'Global persona.' },
+    memories: [],
+  })
+  expect(result).toContain('Global persona.')
+})
+
+test('B-prompt3: both basePrompt and persona empty → no instructions block, returns empty string', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: { persona: '' },
+    memories: [],
+  })
+  expect(result).toBe('')
 })
