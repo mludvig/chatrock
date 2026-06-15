@@ -16,6 +16,7 @@ export interface ModelSettings {
   topK?: number                                     // 1–500 (integer)
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearch?: boolean                               // false disables web tools
+  memoryEnabled?: boolean                           // false skips injection + extraction
 }
 
 // ── Model registry ────────────────────────────────────────────────────────────

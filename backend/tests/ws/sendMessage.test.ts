@@ -1176,3 +1176,63 @@ test('mem3: user memories are injected into assembled prompt', async () => {
   expect(typeof passedSystemPrompt).toBe('string')
   expect(passedSystemPrompt as string).toContain('User is a software engineer')
 })
+
+// ── memoryEnabled toggle ──────────────────────────────────────────────────────
+
+test('mem4: memoryEnabled:false — listUserMemories NOT called and memory text absent from system prompt', async () => {
+  memoryBase()
+  mockDynamo.listUserMemories.mockResolvedValue([
+    {
+      PK: 'USER#user-1',
+      SK: 'MEM#USER#mem-1',
+      memId: 'mem-1',
+      text: 'User is a software engineer',
+      category: 'identity',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    },
+  ])
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '',
+    modelSettings: { memoryEnabled: false },
+  }))
+
+  // listUserMemories must NOT be called (memory fetch skipped entirely)
+  expect(mockDynamo.listUserMemories).not.toHaveBeenCalled()
+
+  // The system prompt passed to converseStream must NOT contain the memory text
+  const [, passedSystemPrompt] = mockBedrock.converseStream.mock.calls[0]
+  expect(passedSystemPrompt as string).not.toContain('User is a software engineer')
+})
+
+test('mem5: memoryEnabled:false — extractUserFacts NOT called (extraction skipped)', async () => {
+  memoryBase()
+  mockMemory.extractUserFacts.mockResolvedValue([{ category: 'identity', text: 'User is from NZ' }])
+  mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
+
+  async function* fakeStream() {
+    yield { type: 'delta' as const, text: 'Hello' }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Hello' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Hi', model: MODEL, systemPrompt: '',
+    modelSettings: { memoryEnabled: false },
+  }))
+
+  // extractUserFacts must NOT be called when memory is disabled
+  expect(mockMemory.extractUserFacts).not.toHaveBeenCalled()
+
+  // No memoryUpdated WS frame emitted
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  expect(events.find(e => e.type === 'memoryUpdated')).toBeUndefined()
+})
