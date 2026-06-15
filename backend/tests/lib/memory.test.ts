@@ -442,11 +442,11 @@ describe('executeMemoryTool', () => {
 
     // listUserMemories must be called with ctx.sub, not input.sub
     expect(mockDynamo.listUserMemories).toHaveBeenCalledWith('real-user-sub')
-    // putUserMemory key must use ctx.sub
-    if (mockDynamo.putUserMemory.mock.calls.length > 0) {
-      const arg = mockDynamo.putUserMemory.mock.calls[0][0] as Record<string, unknown>
-      expect(arg.PK).toBe('USER#real-user-sub')
-    }
+    // putUserMemory must have been called (the remember op should succeed)
+    expect(mockDynamo.putUserMemory).toHaveBeenCalledTimes(1)
+    // and the key must use ctx.sub — never the attacker-supplied input.sub
+    const arg = mockDynamo.putUserMemory.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.PK).toBe('USER#real-user-sub')
   })
 
   // ── unknown operation ─────────────────────────────────────────────────────
