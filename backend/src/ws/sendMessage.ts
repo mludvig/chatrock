@@ -65,10 +65,11 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // Load and resolve user preferences + memories in parallel
+  // Load and resolve user preferences (+ memories only when memoryEnabled)
+  const memoryEnabled = modelSettings.memoryEnabled !== false
   const [userPrefs, userMemoriesRaw] = await Promise.all([
     getUserPrefs(sub),
-    listUserMemories(sub),
+    memoryEnabled ? listUserMemories(sub) : Promise.resolve([]),
   ])
   const effectivePrefs = resolvePreferences({ user: userPrefs })
 
@@ -85,10 +86,9 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Assemble the effective system prompt (server-authoritative)
   const now = new Date().toISOString()
-  const memoriesForPrompt = userMemoriesRaw.map(i => ({
-    text: i.text as string,
-    category: i.category as string,
-  }))
+  const memoriesForPrompt = memoryEnabled
+    ? userMemoriesRaw.map(i => ({ text: i.text as string, category: i.category as string }))
+    : []
   const effectiveSystemPrompt = assembleSystemPrompt({
     basePrompt: systemPrompt,
     prefs: effectivePrefs,
@@ -372,43 +372,46 @@ export const buildHandler = (postFn: PostFn) => async (
   // ── Post-turn memory extraction (non-blocking) ────────────────────────────
   // Runs after the turn is fully persisted and the client has its response.
   // Errors are swallowed — memory failure must never break the chat turn.
-  try {
-    const transcript = [
-      `User: ${content ?? ''}`,
-      `Assistant: ${assistantTextForMemory}`,
-    ].join('\n')
-    const existing = await listUserMemories(sub)
-    const existingMemories: UserMemory[] = existing.map(i => ({
-      memId: i.memId as string,
-      text: i.text as string,
-      category: i.category as UserMemory['category'],
-      createdAt: i.createdAt as string,
-      updatedAt: i.updatedAt as string,
-    }))
-    const candidates = await extractUserFacts(transcript)
-    const ops = reconcile(candidates, existingMemories)
-    const memNow = new Date().toISOString()
-    for (const op of ops) {
-      if (op.op === 'ADD') {
-        const memId = uuidv4()
-        await putUserMemory({
-          ...buildUserMemKey(sub, memId),
-          memId,
-          text: op.text,
-          category: op.category,
-          createdAt: memNow,
-          updatedAt: memNow,
-        })
+  // Skipped entirely when memoryEnabled is false.
+  if (memoryEnabled) {
+    try {
+      const transcript = [
+        `User: ${content ?? ''}`,
+        `Assistant: ${assistantTextForMemory}`,
+      ].join('\n')
+      const existing = await listUserMemories(sub)
+      const existingMemories: UserMemory[] = existing.map(i => ({
+        memId: i.memId as string,
+        text: i.text as string,
+        category: i.category as UserMemory['category'],
+        createdAt: i.createdAt as string,
+        updatedAt: i.updatedAt as string,
+      }))
+      const candidates = await extractUserFacts(transcript)
+      const ops = reconcile(candidates, existingMemories)
+      const memNow = new Date().toISOString()
+      for (const op of ops) {
+        if (op.op === 'ADD') {
+          const memId = uuidv4()
+          await putUserMemory({
+            ...buildUserMemKey(sub, memId),
+            memId,
+            text: op.text,
+            category: op.category,
+            createdAt: memNow,
+            updatedAt: memNow,
+          })
+        }
+        // UPDATE and DELETE not implemented in Phase 1
       }
-      // UPDATE and DELETE not implemented in Phase 1
+      const newCount = ops.filter(o => o.op === 'ADD').length
+      if (newCount > 0) {
+        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: newCount }) })
+      }
+    } catch (err) {
+      console.error(JSON.stringify({ event: 'memory_extraction_error', chatId, error: String(err) }))
+      // Swallow: memory extraction failure must never break a chat turn
     }
-    const newCount = ops.filter(o => o.op === 'ADD').length
-    if (newCount > 0) {
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: newCount }) })
-    }
-  } catch (err) {
-    console.error(JSON.stringify({ event: 'memory_extraction_error', chatId, error: String(err) }))
-    // Swallow: memory extraction failure must never break a chat turn
   }
 
   return { statusCode: 200, body: '' }

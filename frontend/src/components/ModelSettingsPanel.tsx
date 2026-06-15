@@ -1,5 +1,5 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBrain, faGlobe, faTemperatureHalf, faSlidersH } from '@fortawesome/free-solid-svg-icons'
+import { faBrain, faGlobe, faTemperatureHalf, faSlidersH, faMemory } from '@fortawesome/free-solid-svg-icons'
 import type { ModelCapabilities, ModelSettings } from '../api/http'
 import { THINKING_EFFORTS } from '../api/http'
 
@@ -89,6 +89,19 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
           title="Toggle web search"
         >
           {settings.webSearch !== false ? 'On' : 'Off'}
+        </button>
+      </div>
+      <div className="model-setting-row model-setting-row--inline">
+        <label className="setting-label" title="Toggle memory. When off, your saved memories are not injected into the system prompt and no new memories are extracted from this chat.">
+          <FontAwesomeIcon icon={faMemory} />
+          <span>Memory</span>
+        </label>
+        <button
+          className={`toggle-btn${settings.memoryEnabled !== false ? ' active' : ''}`}
+          onClick={() => set({ memoryEnabled: settings.memoryEnabled === false ? true : false })}
+          title="Toggle memory"
+        >
+          {settings.memoryEnabled !== false ? 'On' : 'Off'}
         </button>
       </div>
     </div>

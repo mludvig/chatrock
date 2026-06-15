@@ -83,6 +83,7 @@ export interface ModelSettings {
   topK?: number
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearch?: boolean
+  memoryEnabled?: boolean
 }
 
 export interface UserMemory {
@@ -130,6 +131,7 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
     ...(caps.thinking !== 'none' ? { thinkingEffort: prev.thinkingEffort ?? defaults.thinkingEffort } : {}),
     webSearch: prev.webSearch ?? true,
+    memoryEnabled: prev.memoryEnabled ?? true,
   }
 }
 
