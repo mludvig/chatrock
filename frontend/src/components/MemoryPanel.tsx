@@ -36,10 +36,13 @@ export default function MemoryPanel() {
         <FontAwesomeIcon icon={faBrain} />
         <span>Memory</span>
       </div>
+      <p className="memory-hint">
+        Ask in any chat to add, correct, or remove a memory (e.g. "remember I'm in Wellington" or "correct my location").
+      </p>
       {loading ? (
         <div className="panel-loading">Loading…</div>
       ) : memories.length === 0 ? (
-        <div className="panel-empty">No memories yet. Chat to build up facts.</div>
+        <div className="panel-empty">No memories yet. Chat with the assistant to build up facts — just say "remember that…".</div>
       ) : (
         <div className="memory-list">
           {categories.map(cat => {
