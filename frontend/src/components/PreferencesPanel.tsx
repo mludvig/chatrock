@@ -13,7 +13,7 @@ export default function PreferencesPanel() {
     updateChatSettings, updateChatSystemPrompt, chats,
   } = useChatStore()
 
-  const [tab, setTab] = useState<'defaults' | 'chat'>('defaults')
+  const [tab, setTab] = useState<'defaults' | 'chat'>('chat')
   const [prefs, setPrefs] = useState<UserPreferences>(userPreferences)
   const [saved, setSaved] = useState(false)
   const debounceRef = useRef<number | null>(null)

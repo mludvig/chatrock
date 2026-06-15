@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faComments } from '@fortawesome/free-solid-svg-icons'
+import { faComments, faPlus } from '@fortawesome/free-solid-svg-icons'
 import { api, setAccessToken } from './api/http'
 import { useChatStore } from './store/chatStore'
 import ActivityBar from './components/ActivityBar'
@@ -73,12 +73,25 @@ function AuthedApp() {
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}
+      <div className="sidebar-global-header" onClick={() => navigate('/c/new')} title="New chat">
+        <span className="sidebar-brand">
+          <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
+          Chatrock
+        </span>
+        <button
+          className="btn-new"
+          onClick={e => { e.stopPropagation(); navigate('/c/new') }}
+          title="New chat"
+          tabIndex={-1}
+        >
+          <FontAwesomeIcon icon={faPlus} />
+        </button>
+      </div>
       <ActivityBar
         userName={userName}
         onSignOut={() => auth.signoutRedirect()}
       />
       <Sidebar
-        onNewChat={() => navigate('/c/new')}
         onRenameChat={renameChat}
       />
       <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />

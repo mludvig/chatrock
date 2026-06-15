@@ -1,17 +1,16 @@
 import { useState } from 'react'
 import { useNavigate, useMatch } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faPenToSquare, faTrash, faWandMagicSparkles, faComments } from '@fortawesome/free-solid-svg-icons'
+import { faPenToSquare, faTrash, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import type { Chat } from '../api/http'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 
 interface Props {
-  onNewChat: () => void
   onRenameChat: (chatId: string, title: string) => void
 }
 
-export default function ChatsPanel({ onNewChat, onRenameChat }: Props) {
+export default function ChatsPanel({ onRenameChat }: Props) {
   const navigate = useNavigate()
   const match = useMatch('/c/:chatId')
   const activeChatId = match?.params.chatId
@@ -66,21 +65,6 @@ export default function ChatsPanel({ onNewChat, onRenameChat }: Props) {
 
   return (
     <>
-      <div className="sidebar-header sidebar-header--clickable" onClick={onNewChat} title="New chat">
-        <span className="sidebar-brand">
-          <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
-          Chatrock
-        </span>
-        <button
-          className="btn-new"
-          onClick={e => { e.stopPropagation(); onNewChat() }}
-          title="New chat"
-          tabIndex={-1}
-        >
-          <FontAwesomeIcon icon={faPlus} />
-        </button>
-      </div>
-
       <div className="chat-list">
         {sorted.map(chat => (
           <div
