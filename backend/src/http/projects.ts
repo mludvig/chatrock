@@ -7,7 +7,7 @@ import {
   updateProjectFields,
   deleteProject,
   listChats,
-  updateChatProject,
+  deleteChat,
   batchDeleteKeys,
   buildProjectKey,
   listProjectMemories,
@@ -24,7 +24,7 @@ import {
 import { subFromClaims } from '../lib/auth'
 import { QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { summarizeFile } from '../lib/projectFiles'
-import { validateAttachment, presignPut, projectFilePrefix, deleteProjectObjects, deleteS3Objects } from '../lib/attachments'
+import { validateAttachment, presignPut, projectFilePrefix, deleteProjectObjects, deleteChatObjects, deleteS3Objects } from '../lib/attachments'
 import { enrichChatForProject } from '../lib/enrichment'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
@@ -173,13 +173,14 @@ export const handler = async (
     const project = await getProject(sub, projectId)
     if (!project) return err(404, 'Not found')
 
-    // 1. Unassign all chats from this project (do NOT delete them)
+    // 1. Delete all chats in this project (records + S3 attachments)
     const allChats = await listChats(sub)
     const projectChats = allChats.filter(c => c.projectId === projectId)
     await Promise.all(
-      projectChats.map(c => {
+      projectChats.map(async c => {
         const chatId = (c.SK as string).replace('CHAT#', '')
-        return updateChatProject(sub, chatId, null)
+        await deleteChat(sub, chatId)
+        await deleteChatObjects(sub, chatId)
       }),
     )
 

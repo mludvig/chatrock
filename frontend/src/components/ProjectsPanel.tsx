@@ -17,7 +17,7 @@ export default function ProjectsPanel() {
   const matchProject = useMatch('/p/:projectId')
   const activeProjectId = matchProject?.params.projectId
 
-  const { projects, chats, addProject, updateProject, removeProject, pushToast, mergeProjectFiles, addChat, userPreferences, models } = useChatStore()
+  const { projects, chats, addProject, updateProject, removeProject, removeChat, pushToast, mergeProjectFiles, addChat, userPreferences, models } = useChatStore()
   const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
 
   // URL-driven when on /p/:projectId; stays open when navigating into a chat
@@ -74,8 +74,14 @@ export default function ProjectsPanel() {
 
   async function handleDeleteProject(e: React.MouseEvent, projectId: string) {
     e.stopPropagation()
-    if (!confirm('Delete project? Chats will not be deleted but will be removed from the project.')) return
+    const projectChats = chats.filter(c => c.projectId === projectId)
+    const chatCount = projectChats.length
+    const msg = chatCount > 0
+      ? `Delete project? This will permanently delete the project, all its files, memories, and ${chatCount} chat${chatCount === 1 ? '' : 's'}.`
+      : 'Delete project? This will permanently delete the project, all its files, and memories.'
+    if (!confirm(msg)) return
     removeProject(projectId)
+    projectChats.forEach(c => removeChat(c.chatId))
     if (activeProjectId === projectId) navigate('/c/new')
     try {
       await api.deleteProject(projectId)
