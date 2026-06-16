@@ -49,7 +49,8 @@ export async function summarizeFile(params: {
       microLabel: `${filename} (binary)`,
       summary: 'Unsummarized binary file. Contents unknown.',
     }
-  } catch {
+  } catch (e) {
+    console.error(JSON.stringify({ event: 'summarize_file_error', s3Key, contentType, error: String(e) }))
     return {
       microLabel: filename.slice(0, 60),
       summary: 'Summary generation failed.',
@@ -99,13 +100,16 @@ async function summarizeTextFile(s3Key: string, contentType: string, filename: s
 
   const result = await callSummaryModel([{
     role: 'user',
-    content: [{
-      document: {
-        format: contentType === 'text/csv' ? 'csv' : 'txt',
-        name: filename.replace(/\.[^.]+$/, '').slice(0, 200) || 'file',
-        source: { bytes: new TextEncoder().encode(text) },
-      },
-    } as unknown as ContentBlock],
+    content: [
+      {
+        document: {
+          format: contentType === 'text/csv' ? 'csv' : 'txt',
+          name: filename.replace(/\.[^.]+$/, '').slice(0, 200) || 'file',
+          source: { bytes: new TextEncoder().encode(text) },
+        },
+      } as unknown as ContentBlock,
+      { text: 'Analyze this file and produce the JSON summary.' } as ContentBlock,
+    ],
   }])
 
   // Store the extracted text for L2 reads
@@ -143,13 +147,16 @@ async function summarizePdfFile(s3Key: string, filename: string): Promise<FileSu
 
   const result = await callSummaryModel([{
     role: 'user',
-    content: [{
-      document: {
-        format: 'pdf',
-        name: docName,
-        source: { bytes },
-      },
-    } as unknown as ContentBlock],
+    content: [
+      {
+        document: {
+          format: 'pdf',
+          name: docName,
+          source: { bytes },
+        },
+      } as unknown as ContentBlock,
+      { text: 'Analyze this file and produce the JSON summary.' } as ContentBlock,
+    ],
   }])
 
   return result  // No extractedTextKey for PDFs — L2 reads use original bytes
