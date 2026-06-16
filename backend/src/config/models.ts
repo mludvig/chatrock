@@ -30,11 +30,11 @@ export interface Model {
 // Global cross-region inference profiles — available in ap-southeast-2
 // Verified via: aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED
 export const MODELS: Model[] = [
-  {
-    id: 'global.anthropic.claude-fable-5',
-    name: 'Claude Fable 5',
-    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
-  },
+// {
+//   id: 'global.anthropic.claude-fable-5',
+//   name: 'Claude Fable 5',
+//   capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
+// },
   {
     id: 'global.anthropic.claude-opus-4-8',
     name: 'Claude Opus 4.8',
@@ -58,9 +58,7 @@ export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-4-6'
 export const TITLE_MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
 
 // Model used for background memory extraction after each turn.
-// Independently configurable from TITLE_MODEL so it can be changed to a
-// stronger model if extraction quality needs improvement.
-export const MEMORY_EXTRACTION_MODEL = TITLE_MODEL
+export const MEMORY_EXTRACTION_MODEL = DEFAULT_CHAT_MODEL
 
 // ── Capability helpers ────────────────────────────────────────────────────────
 
