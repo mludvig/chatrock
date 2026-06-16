@@ -30,6 +30,7 @@ jest.mock('../../src/lib/dynamo', () => ({
   getProject: jest.fn().mockResolvedValue(undefined),
   listProjectMemories: jest.fn().mockResolvedValue([]),
   putProjectMemory: jest.fn().mockResolvedValue(undefined),
+  deleteProjectMemory: jest.fn().mockResolvedValue(undefined),
   updateChatSummary: jest.fn().mockResolvedValue(undefined),
   listProjectFiles: jest.fn().mockResolvedValue([]),
   listChats: jest.fn().mockResolvedValue([]),
@@ -42,10 +43,11 @@ jest.mock('../../src/lib/projectFiles', () => ({
 }))
 jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/lib/memory', () => ({
-  reconcile: jest.fn().mockReturnValue([]),
+  reconcileMemoryList: jest.fn().mockReturnValue([]),
 }))
 jest.mock('../../src/lib/enrichment', () => ({
-  enrichTurn: jest.fn().mockResolvedValue({ userFacts: [] }),
+  enrichUserFacts: jest.fn().mockResolvedValue({ memories: [] }),
+  enrichProjectFacts: jest.fn().mockResolvedValue({ memories: [] }),
 }))
 
 const mockDynamo  = dynamo  as jest.Mocked<typeof dynamo>
@@ -68,7 +70,8 @@ const makeEvent = (body: object) => ({
 beforeEach(() => {
   jest.clearAllMocks()
   mockPost.mockResolvedValue(undefined)
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
+  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [] })
+  mockEnrichment.enrichProjectFacts.mockResolvedValue({ memories: [] })
 })
 
 // ── Slice 3: per-turn persistence with format-C records ───────────────────────
@@ -298,8 +301,8 @@ test('sends titleUpdated event on first exchange', async () => {
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichTurn returns a title when needTitle=true (first normal send with title='New Chat')
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [], title: 'My Title' })
+  // enrichUserFacts returns a title when needTitle=true (first normal send with title='New Chat')
+  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [], title: 'My Title' })
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
@@ -319,13 +322,10 @@ test('does not re-title when chat already has a title', async () => {
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichTurn returns no title when needTitle=false (existing title)
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
-
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
-  // enrichTurn is called (for user facts + no title), but NOT converseOnce directly
+  // enrichUserFacts is called (via mock), but NOT converseOnce directly
   expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
 })
 
@@ -596,13 +596,10 @@ test('inc3: re-run does NOT call auto-title even when title is "New Chat"', asyn
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichTurn is called (memory extraction) but must NOT return a title for re-runs
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
-
   await buildHandler(mockPost)(rerunEvent())
 
-  // enrichTurn is called with needTitle:false for re-runs
-  expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(expect.objectContaining({ needTitle: false }))
+  // enrichUserFacts is called with needTitle=false for re-runs
+  expect(mockEnrichment.enrichUserFacts).toHaveBeenCalledWith(expect.anything(), expect.anything(), false)
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -731,13 +728,10 @@ test('inc5: edit does NOT call auto-title when title is "New Chat"', async () =>
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichTurn is called (memory extraction) but must NOT return a title for edits
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
-
   await buildHandler(mockPost)(editEvent())
 
-  // enrichTurn is called with needTitle:false for edits
-  expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(expect.objectContaining({ needTitle: false }))
+  // enrichUserFacts is called with needTitle=false for edits
+  expect(mockEnrichment.enrichUserFacts).toHaveBeenCalledWith(expect.anything(), expect.anything(), false)
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -1122,15 +1116,15 @@ function memoryBase() {
   mockDynamo.getUserPrefs.mockResolvedValue({})
   mockDynamo.listUserMemories.mockResolvedValue([])
   mockDynamo.putUserMemory.mockResolvedValue(undefined)
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
-  mockMemory.reconcile.mockReturnValue([])
+  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [] })
+  mockMemory.reconcileMemoryList.mockReturnValue([])
 }
 
 test('mem1: memory extraction runs after assistant message persisted — putUserMemory called and memoryUpdated frame emitted', async () => {
   memoryBase()
-  // enrichTurn returns a user fact; reconcile produces an ADD op
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [{ category: 'identity', text: 'User is from NZ' }] })
-  mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
+  // enrichUserFacts returns a new item; reconcileMemoryList produces an ADD op
+  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [{ memId: null, category: 'identity', text: 'User is from NZ' }] })
+  mockMemory.reconcileMemoryList.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Hello from NZ' }
@@ -1157,8 +1151,8 @@ test('mem1: memory extraction runs after assistant message persisted — putUser
 
 test('mem2: memory extraction failure is swallowed — chat turn completes normally', async () => {
   memoryBase()
-  // enrichTurn throws; handler should swallow the error and emit a warning
-  mockEnrichment.enrichTurn.mockRejectedValue(new Error('Bedrock timeout'))
+  // enrichUserFacts throws; handler should swallow the error and emit a warning
+  mockEnrichment.enrichUserFacts.mockRejectedValue(new Error('Bedrock timeout'))
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'ok' }
@@ -1259,8 +1253,8 @@ test('mem5: memoryEnabled:false — enrichTurn NOT called (extraction skipped)',
     modelSettings: { memoryEnabled: false },
   }))
 
-  // enrichTurn must NOT be called when memory is disabled
-  expect(mockEnrichment.enrichTurn).not.toHaveBeenCalled()
+  // enrichUserFacts must NOT be called when memory is disabled
+  expect(mockEnrichment.enrichUserFacts).not.toHaveBeenCalled()
 
   // No memoryUpdated WS frame emitted
   const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
@@ -1537,13 +1531,10 @@ test('cont7: continue does NOT call auto-title even when title is "New Chat"', a
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichTurn is called (memory extraction) but must NOT return a title for continues
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
-
   await buildHandler(mockPost)(continueEvent())
 
-  // enrichTurn is called with needTitle:false for continues
-  expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(expect.objectContaining({ needTitle: false }))
+  // enrichUserFacts is called with needTitle=false for continues
+  expect(mockEnrichment.enrichUserFacts).toHaveBeenCalledWith(expect.anything(), expect.anything(), false)
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -1672,8 +1663,8 @@ test('D1b: llm_call enrich_turn log emitted after enrichTurn call', async () => 
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichTurn returns a title (first normal send with title='New Chat')
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [], title: 'Generated Title' })
+  // enrichUserFacts returns a title (first normal send with title='New Chat')
+  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [], title: 'Generated Title' })
 
   const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
@@ -1700,14 +1691,14 @@ test('D1c: llm_call enrich_turn log emitted and user facts persisted via reconci
   mockDynamo.listUserMemories.mockResolvedValue([])
   mockDynamo.putUserMemory.mockResolvedValue(undefined)
 
-  // enrichTurn returns 2 user facts; reconcile ADD-deduplicates them
-  mockEnrichment.enrichTurn.mockResolvedValue({
-    userFacts: [
-      { category: 'identity', text: 'User is from NZ' },
-      { category: 'preference', text: 'User likes Python' },
+  // enrichUserFacts returns 2 new items; reconcileMemoryList produces 2 ADD ops
+  mockEnrichment.enrichUserFacts.mockResolvedValue({
+    memories: [
+      { memId: null, category: 'identity', text: 'User is from NZ' },
+      { memId: null, category: 'preference', text: 'User likes Python' },
     ],
   })
-  mockMemory.reconcile.mockReturnValue([
+  mockMemory.reconcileMemoryList.mockReturnValue([
     { op: 'ADD', text: 'User is from NZ', category: 'identity' },
     { op: 'ADD', text: 'User likes Python', category: 'preference' },
   ])
@@ -1756,9 +1747,9 @@ test('memoryChanged during stream suppresses passive-extractor memoryUpdated to 
   // Both the tool loop (memoryChanged) AND passive extraction would fire.
   // Only one memoryUpdated frame should reach the client.
   memoryBase()
-  // enrichTurn (passive extractor) will find a new fact via reconcile ADD
-  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [{ category: 'identity', text: 'User is from NZ' }] })
-  mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
+  // enrichUserFacts (passive extractor) returns a new item; reconcileMemoryList produces ADD
+  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [{ memId: null, category: 'identity', text: 'User is from NZ' }] })
+  mockMemory.reconcileMemoryList.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Noted' }
@@ -1799,10 +1790,10 @@ describe('project chat enrichment', () => {
     mockDynamo.updateChatSummary.mockResolvedValue(undefined)
     mockDynamo.listProjectFiles.mockResolvedValue([])
     mockDynamo.listChats.mockResolvedValue([])
-    mockMemory.reconcile.mockReturnValue([])
-    mockEnrichment.enrichTurn.mockResolvedValue({
-      userFacts: [{ category: 'identity', text: 'Alice' }],
-      projectFacts: [{ category: 'decision', text: 'Deploy via deploy.sh' }],
+    mockMemory.reconcileMemoryList.mockReturnValue([])
+    mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [{ memId: null, category: 'identity', text: 'Alice' }] })
+    mockEnrichment.enrichProjectFacts.mockResolvedValue({
+      memories: [{ memId: null, category: 'decision', text: 'Deploy via deploy.sh' }],
       summary: 'Deployment chat',
     })
   }
@@ -1816,24 +1807,21 @@ describe('project chat enrichment', () => {
     mockBedrock.converseStream.mockReturnValue(gen())
   }
 
-  test('P1: project chat — enrichTurn called with isProject:true', async () => {
+  test('P1: project chat — enrichProjectFacts called (project-specific enrichment)', async () => {
     projectBase()
     simpleStream()
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
-    expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ isProject: true }),
-    )
+    expect(mockEnrichment.enrichProjectFacts).toHaveBeenCalled()
   })
 
   test('P2: project chat — putProjectMemory called for new project fact ADD', async () => {
     projectBase()
     simpleStream()
-    // reconcile returns ADD for projectFacts (and nothing for userFacts to isolate the assertion)
-    // 'other' is shared between UserMemory and ProjectMemory category types
-    mockMemory.reconcile
-      .mockReturnValueOnce([])  // first call: user facts → no adds
+    // reconcileMemoryList returns ADD for project facts (nothing for user facts)
+    mockMemory.reconcileMemoryList
+      .mockReturnValueOnce([])  // first call: user facts → no ops
       .mockReturnValueOnce([{ op: 'ADD', text: 'Deploy via deploy.sh', category: 'other' }])  // second call: project facts → ADD
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
@@ -1878,15 +1866,12 @@ describe('project chat enrichment', () => {
     mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
     mockDynamo.getUserPrefs.mockResolvedValue({})
     mockDynamo.listUserMemories.mockResolvedValue([])
-    mockMemory.reconcile.mockReturnValue([])
-    mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
+    mockMemory.reconcileMemoryList.mockReturnValue([])
     simpleStream()
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
-    expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(
-      expect.objectContaining({ isProject: false }),
-    )
+    expect(mockEnrichment.enrichProjectFacts).not.toHaveBeenCalled()
     expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
     expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
   })

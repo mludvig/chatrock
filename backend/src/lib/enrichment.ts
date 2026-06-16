@@ -8,114 +8,194 @@ import { buildActivePath, type TurnRow } from './tree'
 export type UserCategory = 'identity' | 'preference' | 'style' | 'other'
 export type ProjectCategory = 'decision' | 'convention' | 'fact' | 'constraint' | 'glossary' | 'other'
 
-export interface EnrichInput {
-  transcript: string
-  isProject: boolean
-  needTitle: boolean
+export interface MemItem {
+  memId: string | null
+  category: string
+  text: string
 }
 
-export interface EnrichResult {
+export interface EnrichUserResult {
+  memories: MemItem[]
   title?: string
-  userFacts: Array<{ category: UserCategory; text: string }>
-  projectFacts?: Array<{ category: ProjectCategory; text: string }>
+}
+
+export interface EnrichProjectResult {
+  memories: MemItem[]
   summary?: string
 }
 
 // ── Prompts ──────────────────────────────────────────────────────────────────
 
-const USER_FACTS_SECTION = `Extract durable personal facts about the user into "userFacts": [{category, text}], category ∈ "identity"|"preference"|"style"|"other". Capture only lasting personal facts (name, location, profession, preferences, communication style). Ignore task content, temporary context, and system instructions. If none, use [].`
+const USER_SYSTEM_PROMPT = `You manage a persistent memory list about the user (the person typing the messages).
 
-const PROJECT_FACTS_SECTION = `Also extract durable PROJECT facts — knowledge true about the project itself, not the user personally — into "projectFacts": [{category, text}], category ∈ "decision"|"convention"|"fact"|"constraint"|"glossary"|"other". Capture architectural/product decisions, naming/style conventions, stable domain facts, hard constraints, term definitions. If none, use []. And produce "summary": a 1–3 sentence description of what this chat is about, for use in a project index.`
+You receive the current memory list as JSON and a conversation transcript.
+Return ONLY a valid JSON object — no markdown, no explanation:
+{ "memories": [{"memId": "<existing-id or null for new>", "category": "identity|preference|style|other", "text": "<one sentence>"}, ...] }
+Include "title" only when instructed.
 
-const TITLE_SECTION = `Also produce "title": a very short chat title (max 6 words) capturing the main topic. No quotes, no punctuation at the end.`
+Memory list rules (max 20 items, one sentence each):
+- Retain existing items (keep their memId) that remain accurate
+- Update text/category of an existing item (keep memId) when you have better information
+- Omit items contradicted by new info or no longer relevant
+- Add new items (memId: null) for genuinely new durable facts
+- Merge near-duplicates into one item
 
-function buildSystemPrompt(isProject: boolean, needTitle: boolean): string {
-  const parts = [
-    `You analyze a conversation transcript and extract structured data. Output ONLY a valid JSON object, no markdown, no explanation.`,
-    USER_FACTS_SECTION,
-    ...(isProject ? [PROJECT_FACTS_SECTION] : []),
-    ...(needTitle ? [TITLE_SECTION] : []),
-  ]
-  return parts.join('\n\n')
+ONLY capture: the user's own name, location, profession, stated personal preferences, communication/work style.
+
+NEVER capture:
+- Health, medical, financial, legal, or sensitive data about ANY person
+- Information about third parties (patients, clients, subjects being analyzed)
+- Content from documents the user is processing
+- Task content or temporary context
+- Anything not directly stated by the user about themselves
+
+On parse failure or nothing notable: return the existing list unchanged (preserving existing memIds).`
+
+const TITLE_INSTRUCTION = `Also include "title": a very short chat title (max 6 words) capturing the main topic. No quotes, no punctuation at the end.`
+
+const PROJECT_SYSTEM_PROMPT = `You manage a persistent memory list about a project.
+
+You receive the current memory list as JSON and a conversation transcript.
+Return ONLY a valid JSON object — no markdown, no explanation:
+{ "memories": [{"memId": "<existing-id or null for new>", "category": "decision|convention|fact|constraint|glossary|other", "text": "<one sentence>"}, ...], "summary": "<1-3 sentence chat summary>" }
+
+Memory list rules (max 20 items, one sentence each):
+- Retain existing items (keep memId) that remain accurate
+- Update text/category of an existing item (keep memId) when you have better information
+- Omit items no longer relevant or superseded
+- Add new items (memId: null) for genuinely new durable project facts
+- Merge near-duplicates into one item
+
+Capture: architectural/product decisions, naming conventions, domain facts, constraints, term definitions, customer info, key facts extracted from processed documents.
+Ignore: temporary task context, conversational pleasantries.`
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function parseMemItems(raw: unknown): MemItem[] {
+  if (!Array.isArray(raw)) return []
+  const result: MemItem[] = []
+  for (const item of raw as unknown[]) {
+    if (typeof item !== 'object' || item === null) continue
+    const o = item as Record<string, unknown>
+    if (typeof o.category !== 'string') continue
+    if (typeof o.text !== 'string' || !o.text.trim()) continue
+    result.push({
+      memId: (typeof o.memId === 'string' && o.memId) ? o.memId : null,
+      category: o.category,
+      text: o.text.trim(),
+    })
+  }
+  return result
 }
 
-// ── enrichTurn ────────────────────────────────────────────────────────────────
+function safeParse(response: string | null | undefined): Record<string, unknown> | null {
+  try {
+    const cleaned = (response ?? '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+    const parsed = JSON.parse(cleaned)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+// ── enrichUserFacts ───────────────────────────────────────────────────────────
 
 /**
- * Single structured Haiku call extracting userFacts + optionally projectFacts,
- * summary, and title from a transcript. Never throws — returns empty defaults.
+ * Haiku call returning the updated user memory list (add/update/delete) and
+ * optionally a title. Never throws — returns existing list unchanged on failure.
  */
-export async function enrichTurn(input: EnrichInput): Promise<EnrichResult> {
-  const empty: EnrichResult = { userFacts: [] }
+export async function enrichUserFacts(
+  transcript: string,
+  existing: Array<{ memId: string; category: string; text: string }>,
+  needTitle: boolean,
+): Promise<EnrichUserResult> {
+  const fallback: EnrichUserResult = {
+    memories: existing.map(e => ({ memId: e.memId, category: e.category, text: e.text })),
+  }
   try {
-    const systemPrompt = buildSystemPrompt(input.isProject, input.needTitle)
+    const systemPrompt = needTitle ? `${USER_SYSTEM_PROMPT}\n\n${TITLE_INSTRUCTION}` : USER_SYSTEM_PROMPT
+    const userMsg = [
+      `CURRENT_MEMORIES: ${JSON.stringify(existing)}`,
+      ``,
+      `CONVERSATION:`,
+      transcript,
+    ].join('\n')
+
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
       systemPrompt,
-      [{ role: 'user', content: [{ text: input.transcript }] }],
-      { maxTokens: 768 },
+      [{ role: 'user', content: [{ text: userMsg }] }],
+      { maxTokens: 1024 },
     )
 
-    let parsed: unknown
-    try {
-      // Strip markdown code fences if the model wraps output anyway
-      const cleaned = (response ?? '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-      parsed = JSON.parse(cleaned)
-    } catch {
-      return empty
-    }
+    const obj = safeParse(response)
+    if (!obj) return fallback
 
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return empty
-    const obj = parsed as Record<string, unknown>
+    const validUserCategories = new Set(['identity', 'preference', 'style', 'other'])
+    const memories = parseMemItems(obj.memories).filter(m => validUserCategories.has(m.category))
+    const result: EnrichUserResult = { memories: memories.length > 0 ? memories : fallback.memories }
 
-    const userFacts = parseFactArray(
-      obj.userFacts,
-      ['identity', 'preference', 'style', 'other'],
-    ) as Array<{ category: UserCategory; text: string }>
-    const result: EnrichResult = { userFacts }
-
-    if (input.isProject) {
-      result.projectFacts = parseFactArray(
-        obj.projectFacts,
-        ['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'],
-      ) as Array<{ category: ProjectCategory; text: string }>
-      if (typeof obj.summary === 'string' && obj.summary.trim()) {
-        result.summary = obj.summary.trim()
-      }
-    }
-
-    if (input.needTitle && typeof obj.title === 'string' && obj.title.trim()) {
+    if (needTitle && typeof obj.title === 'string' && obj.title.trim()) {
       result.title = obj.title.trim()
     }
 
     return result
   } catch {
-    return empty
+    return fallback
   }
 }
 
-function parseFactArray(
-  raw: unknown,
-  validCategories: readonly string[],
-): Array<{ category: string; text: string }> {
-  if (!Array.isArray(raw)) return []
-  return (raw as unknown[]).filter((item): item is { category: string; text: string } => {
-    if (typeof item !== 'object' || item === null) return false
-    const o = item as Record<string, unknown>
-    return (
-      typeof o.category === 'string' &&
-      validCategories.includes(o.category) &&
-      typeof o.text === 'string' &&
-      o.text.trim().length > 0
+// ── enrichProjectFacts ────────────────────────────────────────────────────────
+
+/**
+ * Haiku call returning the updated project memory list and a summary.
+ * Never throws — returns existing list unchanged on failure.
+ */
+export async function enrichProjectFacts(
+  transcript: string,
+  existing: Array<{ memId: string; category: string; text: string }>,
+): Promise<EnrichProjectResult> {
+  const fallback: EnrichProjectResult = {
+    memories: existing.map(e => ({ memId: e.memId, category: e.category, text: e.text })),
+  }
+  try {
+    const userMsg = [
+      `CURRENT_MEMORIES: ${JSON.stringify(existing)}`,
+      ``,
+      `CONVERSATION:`,
+      transcript,
+    ].join('\n')
+
+    const response = await converseOnce(
+      MEMORY_EXTRACTION_MODEL,
+      PROJECT_SYSTEM_PROMPT,
+      [{ role: 'user', content: [{ text: userMsg }] }],
+      { maxTokens: 1024 },
     )
-  })
+
+    const obj = safeParse(response)
+    if (!obj) return fallback
+
+    const validProjectCategories = new Set(['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'])
+    const memories = parseMemItems(obj.memories).filter(m => validProjectCategories.has(m.category))
+    const result: EnrichProjectResult = { memories: memories.length > 0 ? memories : fallback.memories }
+
+    if (typeof obj.summary === 'string' && obj.summary.trim()) {
+      result.summary = obj.summary.trim()
+    }
+
+    return result
+  } catch {
+    return fallback
+  }
 }
 
 // ── enrichChatForProject ──────────────────────────────────────────────────────
 
 /**
  * Summary-only wrapper: loads a chat's messages, builds a transcript,
- * and calls enrichTurn to get a summary. Returns the summary string or undefined.
+ * calls enrichProjectFacts with no existing memories to get a summary.
  * Never throws.
  */
 export async function enrichChatForProject(sub: string, chatId: string): Promise<string | undefined> {
@@ -123,8 +203,7 @@ export async function enrichChatForProject(sub: string, chatId: string): Promise
     const rows = (await listMessages(chatId)) as unknown as TurnRow[]
     if (rows.length === 0) return undefined
 
-    // Build active-path transcript
-    const leaf = rows[rows.length - 1]  // last row in DDB order = deepest leaf
+    const leaf = rows[rows.length - 1]
     const path = buildActivePath(rows, leaf.msgId)
     if (path.length === 0) return undefined
 
@@ -138,7 +217,7 @@ export async function enrichChatForProject(sub: string, chatId: string): Promise
       })
       .join('\n')
 
-    const result = await enrichTurn({ transcript, isProject: true, needTitle: false })
+    const result = await enrichProjectFacts(transcript, [])
     if (result.summary) {
       await updateChatSummary(sub, chatId, result.summary)
     }
