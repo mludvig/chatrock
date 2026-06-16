@@ -17,7 +17,7 @@ export default function ProjectView({ defaultModel }: Props) {
   const { projectId } = useParams<{ projectId: string }>()
   const navigate = useNavigate()
 
-  const { projects, updateProject, addChat, updateChatProjectId, pushToast, userPreferences, models } = useChatStore()
+  const { projects, updateProject, addChat, updateChatProjectId, pushToast, userPreferences, models, mergeProjectFiles } = useChatStore()
   const memoryRefreshTick = useChatStore(s => s.memoryRefreshTick)
   const project = projects.find(p => p.projectId === projectId)
 
@@ -58,10 +58,10 @@ export default function ProjectView({ defaultModel }: Props) {
     if (!projectId) return
     setFilesLoading(true)
     api.listProjectFiles(projectId)
-      .then(r => setProjectFiles(r.files))
+      .then(r => { setProjectFiles(r.files); mergeProjectFiles(r.files) })
       .catch(() => {})
       .finally(() => setFilesLoading(false))
-  }, [projectId])
+  }, [projectId, mergeProjectFiles])
 
   async function handleRename() {
     setEditingName(false)

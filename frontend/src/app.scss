@@ -183,7 +183,6 @@ $header-h: 45px;
   cursor: pointer;
   border-radius: 8px;
   margin: 1px 6px;
-  overflow: hidden;
   transition: background 0.12s;
 
   &:hover { background: $surface2; }
@@ -195,12 +194,12 @@ $header-h: 45px;
     padding-left: 9px; // compensate for the 3px border (12px - 3px)
     font-weight: 600;
 
-    .chat-actions { opacity: 1; }
+    .chat-actions { max-width: 120px; }
 
     &:hover { background: rgba($accent, 0.18); }
   }
 
-  &:hover .chat-actions { opacity: 1; }
+  &:hover .chat-actions { max-width: 120px; }
 }
 
 .chat-item-content {
@@ -234,8 +233,10 @@ $header-h: 45px;
 .chat-actions {
   display: flex;
   gap: 2px;
-  opacity: 0;
-  transition: opacity 0.15s;
+  flex-shrink: 0;
+  max-width: 0;
+  overflow: hidden;
+  transition: max-width 0.15s ease;
 
   button {
     background: none;
@@ -1861,15 +1862,18 @@ $mobile: 720px;
   padding: 4px 0;
 }
 
+.project-tree-item {
+  // wrapper for project row + subtree
+}
+
 .project-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 9px 12px;
+  gap: 5px;
+  padding: 7px 10px 7px 6px;
   cursor: pointer;
   border-radius: 8px;
   margin: 1px 6px;
-  overflow: hidden;
   transition: background 0.12s;
 
   &:hover { background: $surface2; }
@@ -1880,8 +1884,31 @@ $mobile: 720px;
     color: $accent;
   }
 
-  &:hover .project-actions { opacity: 1; }
-  &.active .project-actions { opacity: 1; }
+  &:hover .project-actions { max-width: 60px; }
+  &.active .project-actions { max-width: 60px; }
+
+  &--editing {
+    padding: 4px 10px;
+    .rename-input { width: 100%; }
+  }
+}
+
+.project-chevron {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: $muted;
+  font-size: 10px;
+  padding: 0 2px;
+  flex-shrink: 0;
+  opacity: 0.6;
+  &:hover { opacity: 1; }
+}
+
+.project-folder-icon {
+  color: $accent;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 .project-title {
@@ -1895,8 +1922,10 @@ $mobile: 720px;
 .project-actions {
   display: flex;
   gap: 2px;
-  opacity: 0;
-  transition: opacity 0.15s;
+  flex-shrink: 0;
+  max-width: 0;
+  overflow: hidden;
+  transition: max-width 0.15s ease;
 
   button {
     background: none;
@@ -1910,6 +1939,110 @@ $mobile: 720px;
 
     &:hover { opacity: 1; }
   }
+}
+
+// Project subtree (chats, files, memory)
+.project-subtree {
+  margin: 0 6px 4px 16px;
+  border-left: 1px solid $border;
+  padding-left: 8px;
+}
+
+.project-subtree-empty {
+  font-size: 12px;
+  color: $muted;
+  padding: 3px 6px;
+}
+
+.project-chat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 0.12s;
+  font-size: 13px;
+
+  &:hover { background: $surface2; }
+  &.active {
+    background: rgba($accent, 0.13);
+    color: $accent;
+    font-weight: 500;
+  }
+}
+
+.project-chat-icon {
+  font-size: 11px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.project-chat-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-sub-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  margin-top: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  color: $muted;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  transition: background 0.1s;
+
+  &:hover { background: $surface2; color: $text; }
+}
+
+.project-sub-chevron {
+  font-size: 9px;
+  opacity: 0.6;
+}
+
+.project-sub-icon {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.project-sub-items {
+  padding: 2px 0 4px 4px;
+}
+
+.project-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px;
+  font-size: 12px;
+  border-radius: 4px;
+  overflow: hidden;
+
+  &:hover { background: $surface2; }
+}
+
+.project-sub-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-sub-item-label {
+  font-size: 11px;
+  color: $muted;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
 }
 
 // New project input
