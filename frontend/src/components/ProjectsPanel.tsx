@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useMatch } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -19,6 +19,12 @@ export default function ProjectsPanel() {
 
   const { projects, chats, addProject, updateProject, removeProject, pushToast, mergeProjectFiles, addChat, userPreferences, models } = useChatStore()
   const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
+
+  // URL-driven when on /p/:projectId; stays open when navigating into a chat
+  const [expandedProjectId, setExpandedProjectId] = useState<string | undefined>(activeProjectId)
+  useEffect(() => {
+    if (activeProjectId) setExpandedProjectId(activeProjectId)
+  }, [activeProjectId])
 
   const [showNewInput, setShowNewInput] = useState(false)
   const [newName, setNewName] = useState('')
@@ -160,12 +166,22 @@ export default function ProjectsPanel() {
           <p className="empty-hint">No projects yet.</p>
         )}
         {projects.map(project => {
-          const isExpanded = project.projectId === activeProjectId
+          const isExpanded = project.projectId === expandedProjectId
           const sections = expandedSections[project.projectId] ?? new Set<'files' | 'memory'>()
           const projectChats = chats.filter(c => c.projectId === project.projectId)
           const files = loadedFiles[project.projectId] ?? []
           const memories = loadedMemories[project.projectId] ?? []
           const isLoading = loadingData.has(project.projectId)
+
+          function toggleExpand(e: React.MouseEvent) {
+            e.stopPropagation()
+            if (isExpanded) {
+              setExpandedProjectId(undefined)
+            } else {
+              setExpandedProjectId(project.projectId)
+              navigate(`/p/${project.projectId}`)
+            }
+          }
 
           return (
             <div key={project.projectId} className="project-tree-item">
@@ -192,8 +208,8 @@ export default function ProjectsPanel() {
                 >
                   <button
                     className="project-chevron"
-                    onClick={e => { e.stopPropagation(); navigate(`/p/${project.projectId}`) }}
-                    title={isExpanded ? 'View project' : 'Expand project'}
+                    onClick={toggleExpand}
+                    title={isExpanded ? 'Collapse' : 'Expand project'}
                   >
                     <FontAwesomeIcon icon={isExpanded ? faChevronDown : faChevronRight} />
                   </button>
