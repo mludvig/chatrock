@@ -169,6 +169,29 @@ $header-h: 45px;
   &:hover { background: $accent-h; }
 }
 
+.chat-list-header {
+  padding: 4px 8px;
+  border-bottom: 1px solid $border;
+  flex-shrink: 0;
+}
+
+.chat-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: $muted;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  width: 100%;
+
+  &:hover { background: $surface2; color: $text; }
+  &.active { color: $accent; }
+}
+
 .chat-list {
   flex: 1;
   overflow-y: auto;
@@ -1884,8 +1907,8 @@ $mobile: 720px;
     color: $accent;
   }
 
-  &:hover .project-actions { max-width: 60px; }
-  &.active .project-actions { max-width: 60px; }
+  &:hover .project-actions { max-width: 90px; }
+  &.active .project-actions { max-width: 90px; }
 
   &--editing {
     padding: 4px 10px;
@@ -1970,6 +1993,9 @@ $mobile: 720px;
     color: $accent;
     font-weight: 500;
   }
+
+  &:hover .chat-actions { max-width: 80px; }
+  &.active .chat-actions { max-width: 80px; }
 }
 
 .project-chat-icon {
@@ -2027,6 +2053,10 @@ $mobile: 720px;
   overflow: hidden;
 
   &:hover { background: $surface2; }
+
+  &--clickable {
+    cursor: pointer;
+  }
 }
 
 .project-sub-item-name {
@@ -2170,6 +2200,11 @@ $mobile: 720px;
 
   .project-file-item {
     cursor: default;
+
+    &--selected {
+      background: $accent-light;
+      border-left: 2px solid $accent;
+    }
 
     .project-file-main {
       display: flex;

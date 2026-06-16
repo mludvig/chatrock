@@ -15,7 +15,7 @@ import './app.scss'
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects } = useChatStore()
+  const { setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const auth = useAuth()
@@ -93,9 +93,7 @@ function AuthedApp() {
         userName={userName}
         onSignOut={() => auth.signoutRedirect()}
       />
-      <Sidebar
-        onRenameChat={renameChat}
-      />
+      <Sidebar />
       <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />
       <main className="main">
         <Routes>
