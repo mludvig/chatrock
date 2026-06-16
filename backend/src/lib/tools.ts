@@ -1,10 +1,13 @@
 import type { Tool, ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
-import { executeMemoryTool } from './memory'
+import { executeMemoryTool, executeProjectMemoryTool } from './memory'
+import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
 
 // ── Tool execution context ────────────────────────────────────────────────────
 
 export interface ToolContext {
   sub: string
+  projectId?: string
+  chatId?: string
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -77,6 +80,83 @@ export const MEMORY_TOOL: Tool = {
   },
 }
 
+// ── Project memory tool spec ──────────────────────────────────────────────────
+
+export const MANAGE_PROJECT_MEMORY_TOOL: Tool = {
+  toolSpec: {
+    name: 'manage_project_memory',
+    description: "Manage your long-term memory of this project. Use operation 'remember' to save a new durable project fact (architectural decisions, naming conventions, stable domain facts, constraints, glossary terms). Use 'update' with a memId to correct an existing fact. Use 'forget' with a memId to remove a fact. The memId values are shown in brackets next to each memory in your project memory list. Do NOT store personal user facts here — those belong in manage_memory.",
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          operation: {
+            type: 'string',
+            enum: ['remember', 'update', 'forget'],
+          },
+          text: {
+            type: 'string',
+            description: 'The durable project fact, concise. Required for remember and update.',
+          },
+          category: {
+            type: 'string',
+            enum: ['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'],
+          },
+          memId: {
+            type: 'string',
+            description: 'Id of an existing project memory. Required for update and forget.',
+          },
+        },
+        required: ['operation'],
+      },
+    },
+  },
+}
+
+// ── Project read tool specs ───────────────────────────────────────────────────
+
+export const READ_PROJECT_FILE_TOOL: Tool = {
+  toolSpec: {
+    name: 'read_project_file',
+    description: "Read a file from the current project. Use detail:'summary' first to get the detailed summary — use this to decide if the full file is needed. Use detail:'full' to get the complete file content. Always prefer 'summary' before 'full'. The fileId values are shown in brackets in the project file manifest.",
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          fileId: { type: 'string', description: 'The file id from the project manifest (in [brackets]).' },
+          detail: {
+            type: 'string',
+            enum: ['summary', 'full'],
+            description: "'summary' = detailed description (decide if you need more). 'full' = complete content.",
+          },
+        },
+        required: ['fileId', 'detail'],
+      },
+    },
+  },
+}
+
+export const READ_PROJECT_CHAT_TOOL: Tool = {
+  toolSpec: {
+    name: 'read_project_chat',
+    description: "Read another chat from the current project. Use detail:'summary' first to get the chat summary — use this to decide if the full transcript is needed. Use detail:'full' to get the complete chat transcript. Always prefer 'summary' before 'full'. The chatId values are shown in brackets in the project chat manifest.",
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          chatId: { type: 'string', description: 'The chat id from the project manifest (in [brackets]).' },
+          detail: {
+            type: 'string',
+            enum: ['summary', 'full'],
+            description: "'summary' = 1-3 sentence overview (decide if you need more). 'full' = complete transcript.",
+          },
+        },
+        required: ['chatId', 'detail'],
+      },
+    },
+  },
+}
+
 // ── Tool executors ────────────────────────────────────────────────────────────
 
 const JINA_KEY = process.env.JINA_API_KEY ?? ''
@@ -85,6 +165,18 @@ export async function executeTool(name: string, input: Record<string, string>, c
   try {
     if (name === 'manage_memory') {
       return await executeMemoryTool(input, ctx)
+    }
+    if (name === 'manage_project_memory') {
+      if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
+      return await executeProjectMemoryTool(input, { projectId: ctx.projectId })
+    }
+    if (name === 'read_project_file') {
+      if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
+      return await executeProjectReadFileTool(input, ctx)
+    }
+    if (name === 'read_project_chat') {
+      if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
+      return await executeProjectReadChatTool(input, ctx)
     }
     if (name === 'web_search') {
       const result = await jinaSearch(input.query)

@@ -8,13 +8,14 @@ import { useChatStore } from './store/chatStore'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
 import ChatView from './components/ChatView'
+import ProjectView from './components/ProjectView'
 import Toaster from './components/Toaster'
 import './app.scss'
 
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences } = useChatStore()
+  const { setChats, setModels, models, setLoading, renameChat, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const auth = useAuth()
@@ -29,17 +30,18 @@ function AuthedApp() {
   useEffect(() => {
     if (!auth.isAuthenticated || !accessToken) return
     setLoading(true)
-    Promise.all([api.listChats(), api.listModels(), api.getPreferences()])
-      .then(([chatsRes, modelsRes, prefsRes]) => {
+    Promise.all([api.listChats(), api.listModels(), api.getPreferences(), api.listProjects()])
+      .then(([chatsRes, modelsRes, prefsRes, projectsRes]) => {
         const sorted = chatsRes.chats.sort(
           (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
         )
         setChats(sorted)
         setModels(modelsRes.models)
         setUserPreferences(prefsRes.preferences)
+        setProjects(projectsRes.projects)
       })
       .finally(() => setLoading(false))
-  }, [auth.isAuthenticated, accessToken, setChats, setModels, setLoading, setUserPreferences])
+  }, [auth.isAuthenticated, accessToken, setChats, setModels, setLoading, setUserPreferences, setProjects])
 
   // Auto-close sidebar on navigation (mobile)
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
@@ -110,6 +112,7 @@ function AuthedApp() {
               />
             }
           />
+          <Route path="/p/:projectId" element={<ProjectView defaultModel={defaultModel} />} />
           <Route path="*" element={<Navigate to="/c/new" replace />} />
         </Routes>
       </main>

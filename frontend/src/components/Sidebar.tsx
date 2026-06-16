@@ -2,6 +2,7 @@ import { useChatStore } from '../store/chatStore'
 import ChatsPanel from './ChatsPanel'
 import MemoryPanel from './MemoryPanel'
 import PreferencesPanel from './PreferencesPanel'
+import ProjectsPanel from './ProjectsPanel'
 
 interface Props {
   onRenameChat: (chatId: string, title: string) => void
@@ -20,6 +21,9 @@ export default function Sidebar({ onRenameChat }: Props) {
       )}
       {activePanel === 'prefs' && (
         <PreferencesPanel />
+      )}
+      {activePanel === 'projects' && (
+        <ProjectsPanel />
       )}
     </aside>
   )

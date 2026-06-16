@@ -2,6 +2,8 @@ import { buildHandler } from '../../src/ws/sendMessage'
 import * as dynamo from '../../src/lib/dynamo'
 import * as bedrock from '../../src/lib/bedrock'
 import * as memoryLib from '../../src/lib/memory'
+import * as enrichmentLib from '../../src/lib/enrichment'
+import * as projectFilesMod from '../../src/lib/projectFiles'
 
 jest.mock('../../src/lib/attachments', () => ({
   attachmentBlock: jest.fn().mockReturnValue({ image: { format: 'png', source: { s3Location: { uri: 's3://bucket/key.png' } } } }),
@@ -25,16 +27,32 @@ jest.mock('../../src/lib/dynamo', () => ({
   listUserMemories: jest.fn().mockResolvedValue([]),
   putUserMemory: jest.fn().mockResolvedValue(undefined),
   deleteUserMemory: jest.fn().mockResolvedValue(undefined),
+  getProject: jest.fn().mockResolvedValue(undefined),
+  listProjectMemories: jest.fn().mockResolvedValue([]),
+  putProjectMemory: jest.fn().mockResolvedValue(undefined),
+  updateChatSummary: jest.fn().mockResolvedValue(undefined),
+  listProjectFiles: jest.fn().mockResolvedValue([]),
+  listChats: jest.fn().mockResolvedValue([]),
+}))
+
+jest.mock('../../src/lib/projectFiles', () => ({
+  fetchS3Text: jest.fn().mockResolvedValue(''),
+  fetchS3Bytes: jest.fn().mockResolvedValue(new Uint8Array()),
+  summarizeFile: jest.fn().mockResolvedValue({ microLabel: 'File', summary: 'A file.' }),
 }))
 jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/lib/memory', () => ({
-  extractUserFacts: jest.fn().mockResolvedValue([]),
   reconcile: jest.fn().mockReturnValue([]),
+}))
+jest.mock('../../src/lib/enrichment', () => ({
+  enrichTurn: jest.fn().mockResolvedValue({ userFacts: [] }),
 }))
 
 const mockDynamo  = dynamo  as jest.Mocked<typeof dynamo>
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockMemory  = memoryLib as jest.Mocked<typeof memoryLib>
+const mockEnrichment = enrichmentLib as jest.Mocked<typeof enrichmentLib>
+const mockProjectFiles = projectFilesMod as jest.Mocked<typeof projectFilesMod>
 
 const mockPost = jest.fn().mockResolvedValue(undefined)
 
@@ -50,6 +68,7 @@ const makeEvent = (body: object) => ({
 beforeEach(() => {
   jest.clearAllMocks()
   mockPost.mockResolvedValue(undefined)
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
 })
 
 // ── Slice 3: per-turn persistence with format-C records ───────────────────────
@@ -279,7 +298,8 @@ test('sends titleUpdated event on first exchange', async () => {
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  mockBedrock.converseOnce.mockResolvedValue('My Title')
+  // enrichTurn returns a title when needTitle=true (first normal send with title='New Chat')
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [], title: 'My Title' })
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
@@ -299,10 +319,13 @@ test('does not re-title when chat already has a title', async () => {
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
+  // enrichTurn returns no title when needTitle=false (existing title)
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+  // enrichTurn is called (for user facts + no title), but NOT converseOnce directly
   expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
 })
 
@@ -573,10 +596,13 @@ test('inc3: re-run does NOT call auto-title even when title is "New Chat"', asyn
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
+  // enrichTurn is called (memory extraction) but must NOT return a title for re-runs
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
 
   await buildHandler(mockPost)(rerunEvent())
 
-  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
+  // enrichTurn is called with needTitle:false for re-runs
+  expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(expect.objectContaining({ needTitle: false }))
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -705,10 +731,13 @@ test('inc5: edit does NOT call auto-title when title is "New Chat"', async () =>
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
+  // enrichTurn is called (memory extraction) but must NOT return a title for edits
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
 
   await buildHandler(mockPost)(editEvent())
 
-  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
+  // enrichTurn is called with needTitle:false for edits
+  expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(expect.objectContaining({ needTitle: false }))
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -1093,13 +1122,14 @@ function memoryBase() {
   mockDynamo.getUserPrefs.mockResolvedValue({})
   mockDynamo.listUserMemories.mockResolvedValue([])
   mockDynamo.putUserMemory.mockResolvedValue(undefined)
-  mockMemory.extractUserFacts.mockResolvedValue([])
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
   mockMemory.reconcile.mockReturnValue([])
 }
 
 test('mem1: memory extraction runs after assistant message persisted — putUserMemory called and memoryUpdated frame emitted', async () => {
   memoryBase()
-  mockMemory.extractUserFacts.mockResolvedValue([{ category: 'identity', text: 'User is from NZ' }])
+  // enrichTurn returns a user fact; reconcile produces an ADD op
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [{ category: 'identity', text: 'User is from NZ' }] })
   mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
 
   async function* fakeStream() {
@@ -1127,7 +1157,8 @@ test('mem1: memory extraction runs after assistant message persisted — putUser
 
 test('mem2: memory extraction failure is swallowed — chat turn completes normally', async () => {
   memoryBase()
-  mockMemory.extractUserFacts.mockRejectedValue(new Error('Bedrock timeout'))
+  // enrichTurn throws; handler should swallow the error and emit a warning
+  mockEnrichment.enrichTurn.mockRejectedValue(new Error('Bedrock timeout'))
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'ok' }
@@ -1145,8 +1176,9 @@ test('mem2: memory extraction failure is swallowed — chat turn completes norma
   const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
   expect(events.find(e => e.type === 'done')).toBeDefined()
 
-  // No memoryUpdated frame (extraction failed)
+  // No memoryUpdated frame (extraction failed), but a warning frame is emitted
   expect(events.find(e => e.type === 'memoryUpdated')).toBeUndefined()
+  expect(events.find(e => e.type === 'warning')).toBeDefined()
 })
 
 test('mem3: user memories are injected into assembled prompt', async () => {
@@ -1212,10 +1244,8 @@ test('mem4: memoryEnabled:false — listUserMemories NOT called and memory text 
   expect(passedSystemPrompt as string).not.toContain('User is a software engineer')
 })
 
-test('mem5: memoryEnabled:false — extractUserFacts NOT called (extraction skipped)', async () => {
+test('mem5: memoryEnabled:false — enrichTurn NOT called (extraction skipped)', async () => {
   memoryBase()
-  mockMemory.extractUserFacts.mockResolvedValue([{ category: 'identity', text: 'User is from NZ' }])
-  mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Hello' }
@@ -1229,8 +1259,8 @@ test('mem5: memoryEnabled:false — extractUserFacts NOT called (extraction skip
     modelSettings: { memoryEnabled: false },
   }))
 
-  // extractUserFacts must NOT be called when memory is disabled
-  expect(mockMemory.extractUserFacts).not.toHaveBeenCalled()
+  // enrichTurn must NOT be called when memory is disabled
+  expect(mockEnrichment.enrichTurn).not.toHaveBeenCalled()
 
   // No memoryUpdated WS frame emitted
   const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
@@ -1507,10 +1537,13 @@ test('cont7: continue does NOT call auto-title even when title is "New Chat"', a
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
+  // enrichTurn is called (memory extraction) but must NOT return a title for continues
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
 
   await buildHandler(mockPost)(continueEvent())
 
-  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
+  // enrichTurn is called with needTitle:false for continues
+  expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(expect.objectContaining({ needTitle: false }))
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -1626,7 +1659,7 @@ test('D1a: llm_call chat log emitted after stop chunk with stopReason and token 
   expect(chatLog!.cacheReadInputTokens).toBe(3)
 })
 
-test('D1b: llm_call title log emitted after auto-title with title value', async () => {
+test('D1b: llm_call enrich_turn log emitted after enrichTurn call', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
   mockDynamo.listMessages.mockResolvedValue([])
@@ -1639,25 +1672,27 @@ test('D1b: llm_call title log emitted after auto-title with title value', async 
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  mockBedrock.converseOnce.mockResolvedValue('Generated Title')
+  // enrichTurn returns a title (first normal send with title='New Chat')
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [], title: 'Generated Title' })
 
   const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
   const logCalls = [...logSpy.mock.calls]
   logSpy.mockRestore()
 
-  const titleLog = logCalls
+  const enrichLog = logCalls
     .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
-    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'title')
+    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'enrich_turn')
 
-  expect(titleLog).toBeDefined()
-  expect(titleLog!.title).toBe('Generated Title')
-  expect(titleLog!.chatId).toBe('c1')
+  expect(enrichLog).toBeDefined()
+  expect(enrichLog!.chatId).toBe('c1')
+  // Verify the title was also applied
+  expect(mockDynamo.updateChatTitle).toHaveBeenCalledWith('user-1', 'c1', 'Generated Title')
 })
 
-test('D1c: llm_call memory_extract log emitted with candidateCount and addedCount', async () => {
+test('D1c: llm_call enrich_turn log emitted and user facts persisted via reconcile', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  // Use 'Existing Chat' title so auto-title is skipped
+  // Use 'Existing Chat' title so needTitle=false
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing Chat' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
@@ -1665,10 +1700,13 @@ test('D1c: llm_call memory_extract log emitted with candidateCount and addedCoun
   mockDynamo.listUserMemories.mockResolvedValue([])
   mockDynamo.putUserMemory.mockResolvedValue(undefined)
 
-  mockMemory.extractUserFacts.mockResolvedValue([
-    { category: 'identity', text: 'User is from NZ' },
-    { category: 'preference', text: 'User likes Python' },
-  ])
+  // enrichTurn returns 2 user facts; reconcile ADD-deduplicates them
+  mockEnrichment.enrichTurn.mockResolvedValue({
+    userFacts: [
+      { category: 'identity', text: 'User is from NZ' },
+      { category: 'preference', text: 'User likes Python' },
+    ],
+  })
   mockMemory.reconcile.mockReturnValue([
     { op: 'ADD', text: 'User is from NZ', category: 'identity' },
     { op: 'ADD', text: 'User likes Python', category: 'preference' },
@@ -1685,14 +1723,14 @@ test('D1c: llm_call memory_extract log emitted with candidateCount and addedCoun
   const logCalls = [...logSpy.mock.calls]
   logSpy.mockRestore()
 
-  const memLog = logCalls
+  const enrichLog = logCalls
     .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
-    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'memory_extract')
+    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'enrich_turn')
 
-  expect(memLog).toBeDefined()
-  expect(memLog!.candidateCount).toBe(2)
-  expect(memLog!.addedCount).toBe(2)
-  expect(memLog!.chatId).toBe('c1')
+  expect(enrichLog).toBeDefined()
+  expect(enrichLog!.chatId).toBe('c1')
+  // Both facts were persisted via putUserMemory
+  expect(mockDynamo.putUserMemory).toHaveBeenCalledTimes(2)
 })
 
 test('memoryChanged chunk from converseStream → postFn called with memoryUpdated event', async () => {
@@ -1718,8 +1756,8 @@ test('memoryChanged during stream suppresses passive-extractor memoryUpdated to 
   // Both the tool loop (memoryChanged) AND passive extraction would fire.
   // Only one memoryUpdated frame should reach the client.
   memoryBase()
-  // Passive extractor will find a new fact
-  mockMemory.extractUserFacts.mockResolvedValue([{ category: 'identity', text: 'User is from NZ' }])
+  // enrichTurn (passive extractor) will find a new fact via reconcile ADD
+  mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [{ category: 'identity', text: 'User is from NZ' }] })
   mockMemory.reconcile.mockReturnValue([{ op: 'ADD', text: 'User is from NZ', category: 'identity' }])
 
   async function* fakeStream() {
@@ -1738,4 +1776,306 @@ test('memoryChanged during stream suppresses passive-extractor memoryUpdated to 
   // The passive-extractor postFn call must be suppressed
   expect(memEvents).toHaveLength(1)
   expect(memEvents[0].count).toBe(1)
+})
+
+// ── Project chat enrichment ───────────────────────────────────────────────────
+
+describe('project chat enrichment', () => {
+  function projectBase() {
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing',
+      projectId: 'proj-1',
+    })
+    mockDynamo.listMessages.mockResolvedValue([])
+    mockDynamo.putMessage.mockResolvedValue(undefined)
+    mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+    mockDynamo.getUserPrefs.mockResolvedValue({})
+    mockDynamo.listUserMemories.mockResolvedValue([])
+    mockDynamo.putUserMemory.mockResolvedValue(undefined)
+    mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJ#proj-1', projectId: 'proj-1', name: 'My Project', instructions: 'Always use TypeScript' })
+    mockDynamo.listProjectMemories.mockResolvedValue([])
+    mockDynamo.putProjectMemory.mockResolvedValue(undefined)
+    mockDynamo.updateChatSummary.mockResolvedValue(undefined)
+    mockDynamo.listProjectFiles.mockResolvedValue([])
+    mockDynamo.listChats.mockResolvedValue([])
+    mockMemory.reconcile.mockReturnValue([])
+    mockEnrichment.enrichTurn.mockResolvedValue({
+      userFacts: [{ category: 'identity', text: 'Alice' }],
+      projectFacts: [{ category: 'decision', text: 'Deploy via deploy.sh' }],
+      summary: 'Deployment chat',
+    })
+  }
+
+  function simpleStream() {
+    async function* gen() {
+      yield { type: 'delta' as const, text: 'ok' }
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(gen())
+  }
+
+  test('P1: project chat — enrichTurn called with isProject:true', async () => {
+    projectBase()
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ isProject: true }),
+    )
+  })
+
+  test('P2: project chat — putProjectMemory called for new project fact ADD', async () => {
+    projectBase()
+    simpleStream()
+    // reconcile returns ADD for projectFacts (and nothing for userFacts to isolate the assertion)
+    // 'other' is shared between UserMemory and ProjectMemory category types
+    mockMemory.reconcile
+      .mockReturnValueOnce([])  // first call: user facts → no adds
+      .mockReturnValueOnce([{ op: 'ADD', text: 'Deploy via deploy.sh', category: 'other' }])  // second call: project facts → ADD
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockDynamo.putProjectMemory).toHaveBeenCalledTimes(1)
+    const arg = mockDynamo.putProjectMemory.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.text).toBe('Deploy via deploy.sh')
+    expect(arg.category).toBe('other')
+  })
+
+  test('P3: project chat — updateChatSummary called with summary from enrichResult', async () => {
+    projectBase()
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockDynamo.updateChatSummary).toHaveBeenCalledTimes(1)
+    expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'c1', 'Deployment chat')
+  })
+
+  test('P4: project chat — project instructions included in assembled system prompt', async () => {
+    projectBase()
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    // converseStream receives the assembled system prompt; it should contain project instructions
+    const [, passedSystemPrompt] = mockBedrock.converseStream.mock.calls[0]
+    expect(typeof passedSystemPrompt).toBe('string')
+    expect(passedSystemPrompt as string).toContain('Always use TypeScript')
+  })
+
+  test('P5: non-project chat — enrichTurn called with isProject:false, no putProjectMemory or updateChatSummary', async () => {
+    // Chat with no projectId
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing',
+      // no projectId field
+    })
+    mockDynamo.listMessages.mockResolvedValue([])
+    mockDynamo.putMessage.mockResolvedValue(undefined)
+    mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+    mockDynamo.getUserPrefs.mockResolvedValue({})
+    mockDynamo.listUserMemories.mockResolvedValue([])
+    mockMemory.reconcile.mockReturnValue([])
+    mockEnrichment.enrichTurn.mockResolvedValue({ userFacts: [] })
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockEnrichment.enrichTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ isProject: false }),
+    )
+    expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
+    expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
+  })
+
+  test('P6: project chat — manifest files included in system prompt', async () => {
+    projectBase()
+    mockDynamo.listProjectFiles.mockResolvedValue([
+      { fileId: 'f1', filename: 'spec.md', contentType: 'text/markdown', status: 'ready', inclusion: 'auto', microLabel: 'Project spec', s3Key: 'k/spec.md' } as Record<string, unknown>,
+    ])
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
+    expect(sysPrompt as string).toContain('f1')
+    expect(sysPrompt as string).toContain('spec.md')
+    expect(sysPrompt as string).toContain('Project spec')
+    expect(sysPrompt as string).toContain('NAVIGATIONAL ONLY')
+  })
+
+  test('P7: never-inclusion file excluded from manifest', async () => {
+    projectBase()
+    mockDynamo.listProjectFiles.mockResolvedValue([
+      { fileId: 'f1', filename: 'secret.txt', contentType: 'text/plain', status: 'ready', inclusion: 'never', microLabel: 'Secret', s3Key: 'k/secret.txt' } as Record<string, unknown>,
+    ])
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
+    expect(sysPrompt as string).not.toContain('secret.txt')
+  })
+
+  test('P8: always-inclusion text file → fetchS3Text called, content in system prompt', async () => {
+    projectBase()
+    mockDynamo.listProjectFiles.mockResolvedValue([
+      { fileId: 'f2', filename: 'rules.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/rules.txt' } as Record<string, unknown>,
+    ])
+    mockProjectFiles.fetchS3Text.mockResolvedValue('Always follow these rules.')
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockProjectFiles.fetchS3Text).toHaveBeenCalledWith('k/rules.txt')
+    const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
+    expect(sysPrompt as string).toContain('Always follow these rules.')
+    expect(sysPrompt as string).toContain('Always-included project files')
+  })
+
+  test('P9: sibling chat appears in manifest; current chat excluded', async () => {
+    projectBase()
+    mockDynamo.listChats.mockResolvedValue([
+      { SK: 'CHAT#c1', projectId: 'proj-1', title: 'Current Chat' } as Record<string, unknown>,
+      { SK: 'CHAT#c2', projectId: 'proj-1', title: 'Sibling Chat', summary: 'About auth.' } as Record<string, unknown>,
+      { SK: 'CHAT#c3', projectId: 'other-proj', title: 'Other Project Chat' } as Record<string, unknown>,
+    ])
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
+    expect(sysPrompt as string).toContain('c2')
+    expect(sysPrompt as string).toContain('Sibling Chat')
+    expect(sysPrompt as string).not.toContain('c1') // current chat excluded
+    expect(sysPrompt as string).not.toContain('Other Project Chat') // wrong project
+  })
+
+  test('P10: toolCtx includes chatId for project chats', async () => {
+    projectBase()
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    // converseStream receives toolCtx as 5th arg
+    const toolCtxArg = mockBedrock.converseStream.mock.calls[0][4]
+    expect(toolCtxArg).toMatchObject({ sub: 'user-1', projectId: 'proj-1', chatId: 'c1' })
+  })
+
+  test('P11: 55 ready files → manifest capped at 50, manifest_truncated logged', async () => {
+    projectBase()
+    const files = Array.from({ length: 55 }, (_, i) => ({
+      fileId: `f${i}`, filename: `file${i}.txt`, contentType: 'text/plain',
+      status: 'ready', inclusion: 'auto', s3Key: `k/file${i}.txt`,
+    } as Record<string, unknown>))
+    mockDynamo.listProjectFiles.mockResolvedValue(files)
+    simpleStream()
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+      // Find the call to assembleSystemPrompt by inspecting the system prompt passed to converseStream
+      const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
+      // Count occurrences of 'file' in manifest section — should be limited to 50
+      const manifestMatches = (sysPrompt as string).match(/file\d+\.txt/g) ?? []
+      expect(manifestMatches.length).toBeLessThanOrEqual(50)
+
+      const truncatedCall = consoleSpy.mock.calls.find(args =>
+        typeof args[0] === 'string' && args[0].includes('manifest_truncated') && args[0].includes('"kind":"files"')
+      )
+      expect(truncatedCall).toBeDefined()
+      const parsed = JSON.parse(truncatedCall![0] as string)
+      expect(parsed).toMatchObject({
+        event: 'manifest_truncated',
+        kind: 'files',
+        total: 55,
+        kept: 50,
+        projectId: expect.any(String),
+        chatId: expect.any(String),
+      })
+    } finally {
+      consoleSpy.mockRestore()
+    }
+  })
+
+  test('P12: 35 sibling chats → manifest capped at 30', async () => {
+    projectBase()
+    const chats = Array.from({ length: 36 }, (_, i) => ({
+      SK: `CHAT#chat${i}`,
+      projectId: 'proj-1',
+      title: `Chat ${i}`,
+    } as Record<string, unknown>))
+    // First one is c1 (current chat) so it gets excluded; remaining 35 siblings should be capped at 30
+    chats[0] = { SK: 'CHAT#c1', projectId: 'proj-1', title: 'Current Chat' } as Record<string, unknown>
+    mockDynamo.listChats.mockResolvedValue(chats)
+    simpleStream()
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+      const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
+      // Count how many sibling chat IDs appear in the prompt
+      const chatMatches = (sysPrompt as string).match(/chat\d+/g) ?? []
+      expect(chatMatches.length).toBeLessThanOrEqual(30)
+
+      const truncatedCall = consoleSpy.mock.calls.find(args =>
+        typeof args[0] === 'string' && args[0].includes('manifest_truncated') && args[0].includes('"kind":"chats"')
+      )
+      expect(truncatedCall).toBeDefined()
+      const parsed = JSON.parse(truncatedCall![0] as string)
+      expect(parsed).toMatchObject({
+        event: 'manifest_truncated',
+        kind: 'chats',
+        total: 35,
+        kept: 30,
+        projectId: expect.any(String),
+        chatId: expect.any(String),
+      })
+    } finally {
+      consoleSpy.mockRestore()
+    }
+  })
+
+  test('P13: 3 always-files of 40000 chars each → only first two included, forced_files_truncated logged', async () => {
+    projectBase()
+    const alwaysFiles = [
+      { fileId: 'fa1', filename: 'big1.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big1.txt' },
+      { fileId: 'fa2', filename: 'big2.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big2.txt' },
+      { fileId: 'fa3', filename: 'big3.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big3.txt' },
+    ] as Record<string, unknown>[]
+    mockDynamo.listProjectFiles.mockResolvedValue(alwaysFiles)
+    // Each file returns 40000 chars; first two fit (80000 total), third would exceed 80000
+    mockProjectFiles.fetchS3Text.mockResolvedValue('x'.repeat(40000))
+    simpleStream()
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+      const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
+      // The forced-files section starts with "Always-included project files (full content):"
+      const forcedSection = (sysPrompt as string).split('Always-included project files (full content):')[1] ?? ''
+      expect(forcedSection).toContain('big1.txt')
+      expect(forcedSection).toContain('big2.txt')
+      expect(forcedSection).not.toContain('big3.txt')
+
+      const truncatedCall = consoleSpy.mock.calls.find(args =>
+        typeof args[0] === 'string' && args[0].includes('forced_files_truncated')
+      )
+      expect(truncatedCall).toBeDefined()
+      const parsed = JSON.parse(truncatedCall![0] as string)
+      expect(parsed).toMatchObject({
+        event: 'forced_files_truncated',
+        projectId: expect.any(String),
+        chatId: expect.any(String),
+      })
+    } finally {
+      consoleSpy.mockRestore()
+    }
+  })
 })

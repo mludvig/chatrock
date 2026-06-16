@@ -28,6 +28,7 @@ npm --prefix backend run build      # bundle all Lambdas → terraform/dist/*.zi
 npm --prefix backend run typecheck  # tsc --noEmit (no emit, type-check only)
 npm --prefix backend test           # jest (tests in backend/tests/**/*.test.ts)
 npm --prefix backend test -- --testPathPattern=sendMessage  # run a single test file
+npm --prefix backend run db:wipe    # wipe entire DynamoDB table (interactive confirm — dev only)
 ```
 
 ### Frontend
@@ -77,13 +78,22 @@ Browser → CloudFront (single distribution, custom domain)
 ### DynamoDB single-table
 
 Table `chatrock-prod` with PK/SK:
-- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, createdAt, updatedAt, **activeLeafId**
+- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?
 - Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearch?
 - WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL, cancelRequested?
+- User prefs: `PK=USER#<sub>` / `SK=PREF#USER` — `prefs` attribute (`UserPreferences` JSON blob), updatedAt
+- Memory: `PK=USER#<sub>` / `SK=MEM#USER#<memId>` — text, category (`identity|preference|style|other`), createdAt, updatedAt
+- Project: `PK=USER#<sub>` / `SK=PROJECT#<projectId>` — name, description?, instructions?, memoryEnabled?, createdAt, updatedAt
+- Project memory: `PK=PROJECT#<projectId>` / `SK=MEM#<memId>` — text, category (`decision|convention|fact|constraint|glossary|other`), createdAt, updatedAt
+- Project file: `PK=PROJECT#<projectId>` / `SK=FILE#<fileId>` — filename, contentType, sizeBytes, s3Key, status (`uploading|processing|ready|error`), microLabel?, summary?, extractedTextKey?, inclusion (`auto|always|never`), createdAt, updatedAt
+
+S3 project files: `attachments/<sub>/project/<projectId>/<fileId>/<filename>`; extracted sidecar: `attachments/<sub>/project/<projectId>/<fileId>/.extracted.txt`.
 
 Every CRUD handler derives `sub` from the JWT claims — never from client input — so users only ever touch their own partition.
 
 `blocks` is the raw `ContentBlock[]` array from the Bedrock `ConverseStream` response, stored verbatim. It is the canonical source for replay — never synthesize from text.
+
+Attachments are stored in S3 under `attachments/<sub>/<chatId>/<fileId>/<filename>`; blocks reference them as `s3://bucket/key` at rest and are hydrated to bytes before the Bedrock call.
 
 ### Conversation tree model
 
@@ -107,16 +117,28 @@ Key helpers in `backend/src/lib/tree.ts`:
 
 ```
 backend/src/
-  config/models.ts      — model registry with capabilities (temperature/topP/topK/thinking)
-  lib/bedrock.ts        — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8)
-  lib/blocks.ts         — block-level helpers: capToolResultText (30 KB cap)
-  lib/dynamo.ts         — DynamoDB access layer: buildTurnKey/buildChatKey, batchPutMessages, setStreamCancel/isStreamCancelled
-  lib/tools.ts          — Bedrock tool specs + Jina web_search / web_fetch executor
-  lib/tree.ts           — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf
-  http/                 — one file per HTTP API route group (chats, messages, models)
-  ws/sendMessage.ts     — the core streaming handler (the most complex file)
-  ws/cancelMessage.ts   — sets DynamoDB cancel flag; stream loop polls and aborts via AbortController
-  ws/authorizer.ts      — WebSocket Lambda authorizer
+  config/models.ts        — model registry with capabilities (temperature/topP/topK/thinking/attachments)
+  lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8)
+  lib/blocks.ts           — block-level helpers: capToolResultText (30 KB cap)
+  lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, batchPutMessages, setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
+  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL; executeTool dispatcher; ToolContext type
+  lib/tree.ts             — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf
+  lib/memory.ts           — manage_memory + manage_project_memory executors (remember/update/forget); reconcile() ADD-only dedup
+  lib/enrichment.ts       — unified post-turn Haiku call: enrichTurn() returns userFacts + projectFacts + summary + title in one JSON call; enrichChatForProject() summary-only wrapper
+  lib/attachments.ts      — S3 presigned PUT, CloudFront signed display URLs (SSM key), hydrateBlocks, copyChatObjects/rewriteBlockUri for fork; deleteProjectObjects
+  lib/projectFiles.ts     — summarizeFile(): sends file to Bedrock (text/PDF/image) to produce microLabel + summary; stores extracted text sidecar for PDFs
+  lib/projectContext.ts   — executeProjectReadFileTool / executeProjectReadChatTool: ownership validation, progressive detail (summary vs full), capToolResultText applied
+  lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
+  lib/preferences.ts      — UserPreferences type + resolvePreferences() layering
+  http/chats.ts           — chat CRUD, retitle, fork, branch delete, attachment presign; PATCH accepts projectId for project membership
+  http/messages.ts        — GET /messages: tree walk + attachment URL signing
+  http/models.ts          — GET /models
+  http/memory.ts          — GET /memory, DELETE /memory/{memId}
+  http/preferences.ts     — GET /preferences, PUT /preferences
+  http/projects.ts        — project CRUD + project memory + project file routes (single Lambda dispatching on routeKey)
+  ws/sendMessage.ts       — the core streaming handler (the most complex file)
+  ws/cancelMessage.ts     — sets DynamoDB cancel flag; stream loop polls and aborts via AbortController
+  ws/authorizer.ts        — WebSocket Lambda authorizer
 ```
 
 Each Lambda is bundled independently by esbuild into `terraform/dist/<name>.zip`.
@@ -144,31 +166,41 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `usage` | `usage` (inputTokens, outputTokens, cache*) |
 | `titleUpdated` | `chatId`, `title` |
 | `memoryUpdated` | `count` — number of new memories extracted this turn |
+| `warning` | `message` — non-fatal post-turn failure (enrichment DB write failed, etc.) |
 | `error` | `message` |
 
 ### Frontend structure
 
+**Layout**: CSS grid (`display: grid`, columns `48px var(--sidebar-w, 260px) 1fr`, rows `45px 1fr`). Variables: `$activity-bar-w: 48px`, `$header-h: 45px`, `$sidebar-w: 260px`. The global header spans both LHS columns (`grid-column: 1 / 3`). Sidebar width is resizable (drag `.sidebar-resizer`, clamped 180–480 px). Mobile (`max-width: 720px`) switches to `display: flex; flex-direction: column` and the activity bar + sidebar become a fixed slide-in drawer toggled by `.sidebar-open`.
+
 ```
 frontend/src/
-  api/http.ts           — REST client + Model/ModelCapabilities/ModelSettings types + migrateSettings()
-  api/ws.ts             — WebSocket client (connect/send/cancelMessage/event routing)
-  store/chatStore.ts    — Zustand store (messages, streamingMsg with toolCalls/thinking, toasts, lastModel persisted)
-  lib/toolResults.ts    — shared helper: parses web_search JSON into SearchResult[] for cards
-  lib/useAsyncAction.ts — hook: wraps async fn → {run, pending}; errors auto-push to toast store
+  api/http.ts             — REST client; types: Model/ModelCapabilities/ModelSettings/UserPreferences/UserMemory/Project/ProjectMemory/ProjectFile; migrateSettings(); requestUpload/uploadToS3; project + file API methods
+  api/ws.ts               — WebSocket client (connect/send/cancelMessage/event routing); routes 'warning' frame → error toast
+  store/chatStore.ts      — Zustand store; persists lastModel, sidebarWidth, activePanel, userPreferences; projects[] slice
+  lib/toolResults.ts      — shared helper: parses web_search JSON into SearchResult[] for cards
+  lib/useAsyncAction.ts   — hook: wraps async fn → {run, pending}; errors auto-push to toast store
   components/
-    ChatView.tsx         — main chat pane, URL-driven (/c/new or /c/:chatId); stop button, scroll FABs, bubble stepper
-    ModelSettingsPanel.tsx — dynamic settings panel (temperature, topP, thinking effort, web search toggle)
-    MessageBubble.tsx    — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
-    Sidebar.tsx          — chat list with navigate(), retitle wand; off-canvas on mobile
-    Toaster.tsx          — stacked toast notifications (bottom-center), auto-dismiss 3s
-  env.ts                — VITE_* env var access
+    App.tsx                — root layout: global header (brand + new-chat btn), ActivityBar, Sidebar, ChatView; routes /p/:projectId → ProjectView
+    ActivityBar.tsx        — 48 px icon rail; four panel-switch buttons (Chats/Projects/Memory/Preferences) + sign-out
+    Sidebar.tsx            — thin container; renders ChatsPanel | ProjectsPanel | MemoryPanel | PreferencesPanel per activePanel
+    ChatsPanel.tsx         — chat list: navigate, rename, delete, AI retitle; per-item project chip + move-to-project dropdown
+    ProjectsPanel.tsx      — project list: create (inline), rename, delete; click → /p/:projectId
+    ProjectView.tsx        — project detail (/p/:projectId): chats list (with summary), file upload/inclusion/delete, project memory, rename; 'New chat' creates chat in project
+    MemoryPanel.tsx        — user memories grouped by category; delete; refreshes on memoryRefreshTick
+    PreferencesPanel.tsx   — two tabs: Defaults (UserPreferences, 800ms debounce) and This chat (per-chat system prompt + ModelSettings)
+    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project
+    ModelSettingsPanel.tsx — dynamic settings panel (temperature, topP, thinking effort, web search toggle, memory toggle)
+    MessageBubble.tsx      — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
+    Toaster.tsx            — stacked toast notifications (bottom-center), auto-dismiss 3s
+  env.ts                  — VITE_* env var access
 ```
 
-React Router v6: `/` → `/c/new`, `/c/:chatId` for existing chats. Navigation is URL-driven — `useParams` replaces a global active-chat store entry.
+React Router v6: `/` → `/c/new`, `/c/:chatId` for chats, `/p/:projectId` for project views. Navigation is URL-driven — `useParams` replaces a global active-chat store entry.
 
-`lastModel` is the only Zustand state persisted to localStorage. Everything else is ephemeral.
+Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `sidebarWidth`, `activePanel`, `userPreferences`. Everything else is ephemeral.
 
-`ModelSettings.webSearch` defaults to `true`; when `false`, `bedrock.ts` passes an empty tools array so the model cannot call web tools. Per-assistant-turn `thinkingEffort` and `webSearch` are persisted in DynamoDB and surfaced in the bubble metadata line.
+`ModelSettings.webSearch` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. Per-assistant-turn `thinkingEffort` and `webSearch` are persisted in DynamoDB and surfaced in the bubble metadata line.
 
 ### Frontend env vars
 
@@ -182,6 +214,92 @@ VITE_COGNITO_DOMAIN, VITE_APP_URL
 ### Jina web search / fetch
 
 `lib/tools.ts` implements `web_search` (via `s.jina.ai/{query}` with `JINA_API_KEY`) and `web_fetch` (via `r.jina.ai/{url}`, no key). The API key is set in `terraform/terraform.tfvars` as `jina_api_key` and injected into Lambda env. If empty, the tools still appear in the tool spec but requests will 401.
+
+### Memory
+
+Two writers, two stores (user and project):
+- **`manage_memory` tool** (`lib/memory.ts` `executeMemoryTool`): model calls during agentic loop. Operations: `remember`, `update`, `forget`. `sub` from `ToolContext`. On success → `memoryUpdated` WS frame → frontend toasts + refreshes.
+- **`manage_project_memory` tool** (`lib/memory.ts` `executeProjectMemoryTool`): same pattern but scoped to `ctx.projectId`. Project category enum: `decision|convention|fact|constraint|glossary|other`. Only present in the tool list when `ctx.projectId` is set.
+- **Passive enrichment** (`sendMessage.ts` post-turn block, `lib/enrichment.ts`): one Haiku call (`enrichTurn`) per turn when `memoryEnabled`. Returns `{ userFacts[], projectFacts[]?, summary?, title? }` in a single JSON response. The call is parameterised: always has the user-facts section; `isProject:true` adds project-facts + summary sections; `needTitle:true` adds a title section. Post-call: `reconcile()` + `putUserMemory` for user ADDs; if project → `reconcile()` + `putProjectMemory` for project ADDs and `updateChatSummary` when `summary` present; if `title` → `updateChatTitle` + `titleUpdated` frame. Errors in the DB-write phase emit one `warning` WS frame and log `enrich_turn_error`.
+
+`assembleSystemPrompt` (`lib/promptAssembly.ts`) injects user memory as `- [memId] text` lines, project memory in a separate "About this project:" block, and a project manifest (files + sibling chats) for project chats.
+
+`bedrock.ts` builds the tool list via `buildToolsWithCache(settings, ctx?)`: web tools when `webSearch !== false`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`; cachePoint always last.
+
+### User preferences
+
+`lib/preferences.ts` defines `UserPreferences`: `persona` (custom instructions), `defaultModel`, `thinkingEffort`, `webSearch`, `temperature`, `topP`, `topK`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat; project/chat layers not yet used). Stored as a JSON blob in the `prefs` attribute of the `PREF#USER` row.
+
+`http/preferences.ts` handles `GET /api/preferences` and `PUT /api/preferences`.
+
+### Attachments
+
+`lib/attachments.ts` handles the full attachment lifecycle:
+- **Validate**: `validateAttachment(contentType, sizeBytes)` — allowlist: images (png/jpeg/gif/webp ≤5 MB), pdf (≤25 MB), text/csv/md/octet-stream (≤1 MB).
+- **Upload**: `POST /api/attachments` (in `http/chats.ts`) returns `{s3Key, uploadUrl}` (S3 presigned PUT, 15-min expiry). Client uploads directly to S3.
+- **Display**: `signCloudFrontUrl(s3Key)` issues a signed CloudFront URL (1-hour expiry) using an RSA private key loaded from SSM. Called by `GET /messages` to hydrate `attachmentUrl` on each block before returning to the client.
+- **Inference**: `hydrateBlocks(blocks)` fetches bytes from S3 for image/document blocks before the Bedrock call (blocks carry `s3://bucket/key` at rest).
+- **Fork**: `copyChatObjects(sub, srcChatId, dstChatId)` copies S3 objects; `rewriteBlockUri(block, keyMap)` patches the copied blocks to point at the new keys.
+
+### HTTP API routes
+
+| Route | Handler |
+|-------|---------|
+| `GET /api/chats` | list chats (includes `projectId?`) |
+| `POST /api/chats` | create chat (accepts optional `projectId`) |
+| `PATCH /api/chats/{chatId}` | update title / systemPrompt / model / activeLeafId / modelSettings / **projectId** |
+| `DELETE /api/chats/{chatId}` | delete chat + S3 objects |
+| `POST /api/chats/{chatId}/retitle` | AI-generated title via `converseOnce` |
+| `POST /api/chats/{chatId}/fork` | clone active-path into new chat (carries `projectId`) |
+| `DELETE /api/chats/{chatId}/messages/{msgId}` | delete message subtree |
+| `GET /api/chats/{chatId}/messages` | full tree walk + attachment URL signing |
+| `POST /api/attachments` | presign S3 PUT → `{s3Key, uploadUrl}` |
+| `GET /api/models` | list models |
+| `GET /api/memory` | list user memories |
+| `DELETE /api/memory/{memId}` | delete a memory |
+| `GET /api/preferences` | get `UserPreferences` |
+| `PUT /api/preferences` | save `UserPreferences` |
+| `GET /api/projects` | list projects |
+| `POST /api/projects` | create project |
+| `GET /api/projects/{projectId}` | get project + member chats |
+| `PATCH /api/projects/{projectId}` | update project fields |
+| `DELETE /api/projects/{projectId}` | delete project (un-assigns chats, removes memory/files/S3) |
+| `GET /api/projects/{projectId}/memory` | list project memories |
+| `DELETE /api/projects/{projectId}/memory/{memId}` | delete a project memory |
+| `GET /api/projects/{projectId}/files` | list project files |
+| `POST /api/projects/{projectId}/files` | request file upload → `{fileId, s3Key, uploadUrl}` |
+| `PUT /api/projects/{projectId}/files/{fileId}` | finalize/process file → generates microLabel + summary |
+| `PATCH /api/projects/{projectId}/files/{fileId}` | update inclusion mode (`auto|always|never`) |
+| `DELETE /api/projects/{projectId}/files/{fileId}` | delete file + S3 objects |
+
+### CloudWatch logging
+
+All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout (→ CloudWatch):
+
+| `event` | Where | Key fields |
+|---------|-------|-----------|
+| `llm_call` purpose=`chat` | `sendMessage.ts` on stop | model, chatId, stopReason, inputTokens, outputTokens, cacheRead/WriteInputTokens |
+| `llm_call` purpose=`enrich_turn` | `sendMessage.ts` post-turn | model, chatId, userAdded, projectAdded, hasSummary, hasTitle |
+| `llm_call` purpose=`file_summary` | `http/projects.ts` finalize | model, projectId, fileId, filename |
+| `memory_tool` | `memory.ts` per call | op (remember/update/forget), scope (user/project), result |
+| `stream_start` / `stream_error` / `stream_cancelled` | `sendMessage.ts` | — |
+| `enrich_turn_error` | `sendMessage.ts` post-turn | chatId, error |
+| `manifest_truncated` | `sendMessage.ts` manifest build | kind (files/chats), total, kept, projectId, chatId |
+| `forced_files_truncated` | `sendMessage.ts` forced files build | skipped, totalKept, projectId, chatId |
+| `chat_created/updated/deleted/forked`, `branch_deleted` | `http/chats.ts` | — |
+
+### Projects
+
+Projects group related chats + files and give the model project-scoped memory and context via **progressive disclosure**:
+
+- **L0 manifest** (always): system prompt includes a compact list of `[fileId] name — micro-label` and `[chatId] title — summary-snippet` for all non-`never` files and sibling chats (capped at 50 files / 30 chats). Navigational only — model told not to draw conclusions from labels.
+- **L1 summary** (on-demand): `read_project_file` / `read_project_chat` with `detail:'summary'` returns the pre-computed summary.
+- **L2 full** (on-demand): `detail:'full'` returns decoded text (capped via `capToolResultText`), image bytes, or full transcript.
+- **Forced inclusion**: files with `inclusion:'always'` have their content fetched from S3 and injected directly into the system prompt (per-file cap 20 KB, total cap 80 KB). Files with `inclusion:'never'` are excluded from the manifest entirely.
+- **Chat summaries**: `chat.summary` is refreshed post-turn via `enrichTurn` (the same single Haiku call that extracts user/project facts). `enrichChatForProject()` runs immediately when a chat is moved into a project.
+- **File processing**: on finalize (`PUT …/files/{id}`), `summarizeFile()` sends the file to Bedrock to produce `microLabel` + `summary`. PDFs also get an extracted-text sidecar at `.extracted.txt`. Status: `uploading → processing → ready / error`.
+- **Ownership**: all tool executors (`executeProjectReadFileTool`, `executeProjectReadChatTool`, `executeProjectMemoryTool`) validate `ctx.projectId` — never trust model-supplied ids.
+- **Membership**: moving a chat is a single `projectId` attribute write on the `CHAT#` row — no re-keying of messages.
 
 ## Key gotchas
 

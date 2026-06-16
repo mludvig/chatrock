@@ -3,6 +3,7 @@ import { handler } from '../../src/http/chats'
 import * as dynamo from '../../src/lib/dynamo'
 import * as attachmentsMod from '../../src/lib/attachments'
 import * as bedrock from '../../src/lib/bedrock'
+import * as enrichmentLib from '../../src/lib/enrichment'
 
 jest.mock('../../src/lib/dynamo')
 jest.mock('../../src/lib/bedrock', () => ({
@@ -16,10 +17,15 @@ jest.mock('../../src/lib/attachments', () => ({
   rewriteBlockUri: jest.fn((b: unknown) => b),
   s3KeyPrefix: jest.fn((sub: string, chatId: string) => `attachments/${sub}/${chatId}/`),
 }))
+jest.mock('../../src/lib/enrichment', () => ({
+  enrichChatForProject: jest.fn().mockResolvedValue(undefined),
+  enrichTurn: jest.fn().mockResolvedValue({ userFacts: [] }),
+}))
 
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockAttachments = attachmentsMod as jest.Mocked<typeof attachmentsMod>
+const mockEnrichment = enrichmentLib as jest.Mocked<typeof enrichmentLib>
 
 // Helper: build a minimal turn row mock for listMessages responses
 const makeRow = (msgId: string, parentId: string | null) => ({
@@ -779,4 +785,93 @@ test('retitle: returns 400 when chat has no messages', async () => {
     makeEvent('POST', '/api/chats/{chatId}/retitle', undefined, { chatId: 'c1' }) as any
   ))
   expect(res.statusCode).toBe(400)
+})
+
+// ── Project membership (PATCH projectId) ──────────────────────────────────────
+
+test('proj: GET /api/chats includes projectId when set', async () => {
+  mockDynamo.listChats.mockResolvedValue([
+    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '',
+      createdAt: '', updatedAt: '', projectId: 'proj-1' },
+    { PK: 'USER#user-1', SK: 'CHAT#c2', title: 'T2', model: 'x', systemPrompt: '',
+      createdAt: '', updatedAt: '' },
+  ])
+  const res = result(await handler(makeEvent('GET', '/api/chats') as any))
+  const body = JSON.parse(res.body ?? '{}')
+  expect(body.chats[0].projectId).toBe('proj-1')
+  expect(body.chats[1].projectId).toBeUndefined()
+})
+
+test('proj: PATCH projectId associates chat with project → updateChatProject called', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'Test' })
+  mockDynamo.updateChatProject.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'proj-1' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateChatProject).toHaveBeenCalledWith('user-1', 'c1', 'proj-1')
+})
+
+test('proj: PATCH projectId (move in from no project) → enrichChatForProject called', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' }) // no prevProjectId
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'Test' })
+  mockDynamo.updateChatProject.mockResolvedValue(undefined)
+  await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'proj-1' }, { chatId: 'c1' }) as any)
+  expect(mockEnrichment.enrichChatForProject).toHaveBeenCalledWith('user-1', 'c1')
+})
+
+test('proj: PATCH projectId null removes association → updateChatProject(null) called; enrichChatForProject NOT called', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', projectId: 'proj-1' })
+  mockDynamo.updateChatProject.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: null }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateChatProject).toHaveBeenCalledWith('user-1', 'c1', null)
+  expect(mockEnrichment.enrichChatForProject).not.toHaveBeenCalled()
+})
+
+test('proj: PATCH projectId with unknown project → 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.getProject.mockResolvedValue(undefined)  // project not found
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'nonexistent' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+})
+
+test('proj: fork carries projectId from source chat', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '', projectId: 'proj-1',
+  })
+  mockDynamo.listMessages.mockResolvedValue([
+    { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null, role: 'user',
+      blocks: [{ text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
+      blocks: [{ text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
+  ])
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any)
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.objectContaining({ projectId: 'proj-1' })
+  )
+})
+
+test('proj: fork without projectId does not set it on fork', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    systemPrompt: '', createdAt: '', updatedAt: '',
+    // no projectId
+  })
+  mockDynamo.listMessages.mockResolvedValue([
+    { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null, role: 'user',
+      blocks: [{ text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+    { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
+      blocks: [{ text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
+  ])
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  mockDynamo.batchPutMessages.mockResolvedValue(undefined)
+
+  await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any)
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.not.objectContaining({ projectId: expect.anything() })
+  )
 })

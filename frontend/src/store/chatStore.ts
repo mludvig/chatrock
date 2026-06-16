@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Chat, Message, Model, ModelSettings, Step, TokenUsage, UserPreferences } from '../api/http'
+import type { Chat, Message, Model, ModelSettings, Project, Step, TokenUsage, UserPreferences } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
@@ -28,7 +28,7 @@ export interface Toast {
 
 let _toastSeq = 0
 
-export type ActivePanel = 'chats' | 'memory' | 'prefs'
+export type ActivePanel = 'chats' | 'memory' | 'prefs' | 'projects'
 
 interface ChatState {
   chats: Chat[]
@@ -92,6 +92,13 @@ interface ChatState {
   setDraftModelSettings: (s: ModelSettings) => void
   setDraftSystemPrompt: (p: string) => void
   updateChatSettings: (chatId: string, settings: ModelSettings) => void
+
+  projects: Project[]
+  setProjects: (projects: Project[]) => void
+  addProject: (project: Project) => void
+  updateProject: (projectId: string, fields: Partial<Project>) => void
+  removeProject: (projectId: string) => void
+  updateChatProjectId: (chatId: string, projectId: string | null) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -152,6 +159,7 @@ export const useChatStore = create<ChatState>()(
       currentChatId: null,
       draftModelSettings: {},
       draftSystemPrompt: '',
+      projects: [],
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -332,6 +340,18 @@ export const useChatStore = create<ChatState>()(
       setDraftSystemPrompt: (p) => set({ draftSystemPrompt: p }),
       updateChatSettings: (chatId, settings) => set((s) => ({
         chats: s.chats.map(c => c.chatId === chatId ? { ...c, modelSettings: settings } : c),
+      })),
+
+      setProjects: (projects) => set({ projects }),
+      addProject: (project) => set((s) => ({ projects: [...s.projects, project] })),
+      updateProject: (projectId, fields) => set((s) => ({
+        projects: s.projects.map(p => p.projectId === projectId ? { ...p, ...fields } : p),
+      })),
+      removeProject: (projectId) => set((s) => ({
+        projects: s.projects.filter(p => p.projectId !== projectId),
+      })),
+      updateChatProjectId: (chatId, projectId) => set((s) => ({
+        chats: s.chats.map(c => c.chatId === chatId ? { ...c, projectId: projectId ?? undefined } : c),
       })),
     }),
     {

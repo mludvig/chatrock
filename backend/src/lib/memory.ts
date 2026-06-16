@@ -1,7 +1,10 @@
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL } from '../config/models'
 import type { ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
-import { listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey } from './dynamo'
+import {
+  listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey,
+  listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey,
+} from './dynamo'
 import { v4 as uuidv4 } from 'uuid'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -10,6 +13,16 @@ export interface UserMemory {
   memId: string
   text: string
   category: 'identity' | 'preference' | 'style' | 'other'
+  createdAt: string
+  updatedAt: string
+}
+
+export type ProjectCategory = 'decision' | 'convention' | 'fact' | 'constraint' | 'glossary' | 'other'
+
+export interface ProjectMemory {
+  memId: string
+  text: string
+  category: ProjectCategory
   createdAt: string
   updatedAt: string
 }
@@ -238,5 +251,107 @@ export async function executeMemoryTool(
     return errorResult(`Unknown operation: ${operation}. Must be one of: remember, update, forget.`)
   } catch (err) {
     return errorResult(`Memory tool error: ${String(err)}`)
+  }
+}
+
+// ── Project memory tool executor ──────────────────────────────────────────────
+
+const VALID_PROJECT_CATEGORIES = new Set<string>(['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'])
+
+/**
+ * Execute the manage_project_memory tool operation.
+ * ctx: { projectId: string } — project identity from authenticated context, NOT from model input.
+ * Never throws — always returns a ToolResultBlock.
+ */
+export async function executeProjectMemoryTool(
+  input: Record<string, string>,
+  ctx: { projectId: string },
+): Promise<ToolResultBlock> {
+  try {
+    const { operation } = input
+
+    if (operation === 'remember') {
+      if (!input.text || !input.text.trim()) {
+        return errorResult('text is required for remember operation.')
+      }
+      if (!VALID_PROJECT_CATEGORIES.has(input.category)) {
+        return errorResult(`category must be one of: decision, convention, fact, constraint, glossary, other.`)
+      }
+
+      const existingRaw = await listProjectMemories(ctx.projectId)
+      const normalizedNew = input.text.trim().toLowerCase()
+      const isDuplicate = existingRaw.some(i => (i.text as string).trim().toLowerCase() === normalizedNew)
+
+      if (isDuplicate) {
+        console.log(JSON.stringify({ event: 'project_memory_tool', op: 'remember', result: 'already_known' }))
+        return successResult('Already known.')
+      }
+
+      const memId = uuidv4()
+      const now = new Date().toISOString()
+      await putProjectMemory({
+        ...buildProjectMemKey(ctx.projectId, memId),
+        memId,
+        text: input.text,
+        category: input.category,
+        createdAt: now,
+        updatedAt: now,
+      })
+      console.log(JSON.stringify({ event: 'project_memory_tool', op: 'remember', result: 'saved' }))
+      return successResult('Saved.')
+    }
+
+    if (operation === 'update') {
+      if (!input.memId) {
+        return errorResult('memId is required for update operation.')
+      }
+      if (!input.text || !input.text.trim()) {
+        return errorResult('text is required for update operation.')
+      }
+
+      const existingRaw = await listProjectMemories(ctx.projectId)
+      const existing = existingRaw.find(i => (i.memId as string) === input.memId)
+
+      if (!existing) {
+        return errorResult(`Memory not found. Use 'remember' to save a new fact.`)
+      }
+
+      const now = new Date().toISOString()
+      const newCategory = (input.category && VALID_PROJECT_CATEGORIES.has(input.category))
+        ? input.category
+        : (existing.category as string)
+
+      await putProjectMemory({
+        ...buildProjectMemKey(ctx.projectId, input.memId),
+        memId: input.memId,
+        text: input.text,
+        category: newCategory,
+        createdAt: existing.createdAt as string,
+        updatedAt: now,
+      })
+      console.log(JSON.stringify({ event: 'project_memory_tool', op: 'update', result: 'updated' }))
+      return successResult('Updated.')
+    }
+
+    if (operation === 'forget') {
+      if (!input.memId) {
+        return errorResult('memId is required for forget operation.')
+      }
+
+      const existingRaw = await listProjectMemories(ctx.projectId)
+      const existing = existingRaw.find(i => (i.memId as string) === input.memId)
+
+      if (!existing) {
+        return errorResult(`Memory not found.`)
+      }
+
+      await deleteProjectMemory(ctx.projectId, input.memId)
+      console.log(JSON.stringify({ event: 'project_memory_tool', op: 'forget', result: 'forgotten' }))
+      return successResult('Forgotten.')
+    }
+
+    return errorResult(`Unknown operation: ${operation}. Must be one of: remember, update, forget.`)
+  } catch (err) {
+    return errorResult(`Project memory tool error: ${String(err)}`)
   }
 }

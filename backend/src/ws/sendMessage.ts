@@ -2,15 +2,17 @@ import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, buildUserMemKey } from '../lib/dynamo'
-import { converseStream, converseOnce, type TokenUsage } from '../lib/bedrock'
+import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
+import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
-import { TITLE_MODEL, MEMORY_EXTRACTION_MODEL, isValidModelId, type ModelSettings } from '../config/models'
+import { MEMORY_EXTRACTION_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences } from '../lib/preferences'
-import { assembleSystemPrompt } from '../lib/promptAssembly'
-import { extractUserFacts, reconcile, type UserMemory } from '../lib/memory'
+import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
+import { reconcile, type UserMemory, type ProjectMemory } from '../lib/memory'
+import { enrichTurn } from '../lib/enrichment'
+import { fetchS3Text } from '../lib/projectFiles'
 
 function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[]): ContentBlock[] {
   const attachBlocks: ContentBlock[] = attachments.map(a => attachmentBlock(a))
@@ -71,9 +73,14 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Load and resolve user preferences (+ memories only when memoryEnabled)
   const memoryEnabled = modelSettings.memoryEnabled !== false
-  const [userPrefs, userMemoriesRaw] = await Promise.all([
+  const projectId = chat.projectId as string | undefined
+  const [userPrefs, userMemoriesRaw, projectItem, projectMemoriesRaw, projectFilesRaw, allChatsRaw] = await Promise.all([
     getUserPrefs(sub),
     memoryEnabled ? listUserMemories(sub) : Promise.resolve([]),
+    projectId ? getProject(sub, projectId) : Promise.resolve(undefined),
+    (projectId && memoryEnabled) ? listProjectMemories(projectId) : Promise.resolve([]),
+    projectId ? listProjectFiles(projectId) : Promise.resolve([]),
+    projectId ? listChats(sub) : Promise.resolve([]),
   ])
   const effectivePrefs = resolvePreferences({ user: userPrefs })
 
@@ -88,10 +95,83 @@ export const buildHandler = (postFn: PostFn) => async (
     ...modelSettings,  // client values override
   }
 
+  // Build project manifest and forced files (project chats only)
+  let projectManifest: AssembleInput['projectManifest'] | undefined
+  let forcedFiles: Array<{ name: string; content: string }> | undefined
+
+  if (projectId) {
+    const typedFiles = projectFilesRaw as Record<string, unknown>[]
+    const FILE_MANIFEST_CAP = 50
+    const CHAT_MANIFEST_CAP = 30
+
+    const allManifestFiles = typedFiles
+      .filter(f => f.status === 'ready' && f.inclusion !== 'never')
+      .map(f => ({
+        fileId: f.fileId as string,
+        name: f.filename as string,
+        microLabel: f.microLabel as string | undefined,
+        inclusion: f.inclusion as string,
+      }))
+    const manifestFiles = allManifestFiles.length > FILE_MANIFEST_CAP
+      ? (console.log(JSON.stringify({ event: 'manifest_truncated', kind: 'files', total: allManifestFiles.length, kept: FILE_MANIFEST_CAP, projectId, chatId })), allManifestFiles.slice(0, FILE_MANIFEST_CAP))
+      : allManifestFiles
+
+    const allSiblingChats = (allChatsRaw as Record<string, unknown>[])
+      .filter(c => {
+        const cId = (c.SK as string).replace('CHAT#', '')
+        return c.projectId === projectId && cId !== chatId
+      })
+      .map(c => ({
+        chatId: (c.SK as string).replace('CHAT#', ''),
+        title: c.title as string,
+        summary: c.summary as string | undefined,
+      }))
+    const siblingChats = allSiblingChats.length > CHAT_MANIFEST_CAP
+      ? (console.log(JSON.stringify({ event: 'manifest_truncated', kind: 'chats', total: allSiblingChats.length, kept: CHAT_MANIFEST_CAP, projectId, chatId })), allSiblingChats.slice(0, CHAT_MANIFEST_CAP))
+      : allSiblingChats
+
+    projectManifest = { files: manifestFiles, chats: siblingChats }
+
+    // Fetch content of always-inclusion text files for forced injection
+    const FORCED_FILES_TOTAL_CAP = 80000
+    const alwaysFiles = typedFiles.filter(f => f.status === 'ready' && f.inclusion === 'always')
+    if (alwaysFiles.length > 0) {
+      forcedFiles = []
+      let totalForcedChars = 0
+      for (let i = 0; i < alwaysFiles.length; i++) {
+        const f = alwaysFiles[i]
+        const contentType = f.contentType as string
+        const isTextLike = contentType.startsWith('text/') || contentType === 'application/octet-stream'
+        const keyToRead = (f.extractedTextKey ?? f.s3Key) as string
+        if (isTextLike || (contentType === 'application/pdf' && f.extractedTextKey)) {
+          try {
+            const raw = await fetchS3Text(keyToRead)
+            if (totalForcedChars + raw.length > FORCED_FILES_TOTAL_CAP) {
+              const remaining = alwaysFiles.length - i
+              console.log(JSON.stringify({ event: 'forced_files_truncated', skipped: remaining, totalKept: totalForcedChars, projectId, chatId }))
+              break
+            }
+            const capped = raw.length > 20000 ? raw.slice(0, 20000) + '\n\n[... truncated ...]' : raw
+            forcedFiles.push({ name: f.filename as string, content: capped })
+            totalForcedChars += raw.length
+          } catch { /* skip unreadable file */ }
+        }
+        // Images and other binary types are excluded from forced injection
+      }
+    }
+  }
+
   // Assemble the effective system prompt (server-authoritative)
   const now = new Date().toISOString()
   const memoriesForPrompt = memoryEnabled
     ? userMemoriesRaw.map(i => ({ memId: i.memId as string, text: i.text as string, category: i.category as string }))
+    : []
+  const projectMemoriesForPrompt = memoryEnabled && projectId
+    ? (projectMemoriesRaw as Record<string, unknown>[]).map(i => ({
+        memId: i.memId as string,
+        text: i.text as string,
+        category: i.category as string,
+      }))
     : []
   const effectiveSystemPrompt = assembleSystemPrompt({
     basePrompt: systemPrompt,
@@ -99,10 +179,16 @@ export const buildHandler = (postFn: PostFn) => async (
     memories: memoriesForPrompt,
     now,
     memoryToolEnabled: memoryEnabled,
+    projectInstructions: projectItem ? (projectItem.instructions as string | undefined) : undefined,
+    projectMemories: projectId ? projectMemoriesForPrompt : undefined,
+    projectMemoryToolEnabled: !!(projectId && memoryEnabled),
+    projectManifest,
+    forcedFiles: forcedFiles ?? undefined,
+    projectReadToolsEnabled: !!projectId,
   })
 
-  // Build tool context for manage_memory (sub from authenticated connection, never from client)
-  const toolCtx: ToolContext = { sub }
+  // Build tool context for manage_memory / manage_project_memory / read_project_* (from auth, never client)
+  const toolCtx: ToolContext = { sub, ...(projectId ? { projectId, chatId } : {}) }
 
   // Capture the response start time once — all turns of this response share it
   // so their SKs (MSG#<ts>#<seq>#<id>) sort together in order.
@@ -440,73 +526,92 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // Auto-title on first normal send only (not re-run, not edit, not continue)
-  if (!isRerun && !isEdit && !isContinue && chat.title === 'New Chat') {
-    try {
-      const titlePrompt = `Generate a very short chat title (max 6 words) for this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\nUser: ${content!}`
-      const title = await converseOnce(TITLE_MODEL, '', [
-        { role: 'user', content: [{ text: titlePrompt }] },
-      ])
-      if (title) {
-        await updateChatTitle(sub, chatId, title)
-        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title }) })
-        console.log(JSON.stringify({ event: 'llm_call', purpose: 'title', model: TITLE_MODEL, chatId, title }))
-      }
-    } catch (err) {
-      console.error(JSON.stringify({ event: 'llm_call_error', purpose: 'title', chatId, error: String(err) }))
-    }
-  }
-
-  // ── Post-turn memory extraction (non-blocking) ────────────────────────────
-  // Runs after the turn is fully persisted and the client has its response.
-  // Errors are swallowed — memory failure must never break the chat turn.
-  // Skipped entirely when memoryEnabled is false.
+  // ── Post-turn enrichment (one Haiku call: title + user facts + project facts + summary) ──
+  // Skipped when memoryEnabled is false.
   if (memoryEnabled) {
     try {
+      const needTitle = !isRerun && !isEdit && !isContinue && chat.title === 'New Chat'
+      const isProject = !!projectId
+
       const transcript = [
         `User: ${content ?? ''}`,
         `Assistant: ${assistantTextForMemory}`,
       ].join('\n')
-      const existing = await listUserMemories(sub)
-      const existingMemories: UserMemory[] = existing.map(i => ({
+
+      const enrichResult = await enrichTurn({ transcript, isProject, needTitle })
+      const memNow = new Date().toISOString()
+      let totalAdded = 0
+
+      // User facts
+      const existingUserMemsRaw = await listUserMemories(sub)
+      const existingUserMems = existingUserMemsRaw.map(i => ({
         memId: i.memId as string,
         text: i.text as string,
         category: i.category as UserMemory['category'],
         createdAt: i.createdAt as string,
         updatedAt: i.updatedAt as string,
       }))
-      const candidates = await extractUserFacts(transcript)
-      const ops = reconcile(candidates, existingMemories)
-      const memNow = new Date().toISOString()
-      for (const op of ops) {
+      const userOps = reconcile(
+        enrichResult.userFacts as Array<{ category: UserMemory['category']; text: string }>,
+        existingUserMems,
+      )
+      for (const op of userOps) {
         if (op.op === 'ADD') {
           const memId = uuidv4()
           await putUserMemory({
             ...buildUserMemKey(sub, memId),
-            memId,
-            text: op.text,
-            category: op.category,
-            createdAt: memNow,
-            updatedAt: memNow,
+            memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow,
           })
+          totalAdded++
         }
-        // UPDATE and DELETE not implemented in Phase 1
       }
-      const newCount = ops.filter(o => o.op === 'ADD').length
-      console.log(JSON.stringify({
-        event: 'llm_call',
-        purpose: 'memory_extract',
-        model: MEMORY_EXTRACTION_MODEL,
-        chatId,
-        candidateCount: candidates.length,
-        addedCount: newCount,
-      }))
-      if (newCount > 0 && !memoryChangedDuringStream) {
-        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: newCount }) })
+
+      // Project facts + summary
+      if (isProject && projectId) {
+        const existingProjectMemsRaw = await listProjectMemories(projectId)
+        const existingProjectMems = existingProjectMemsRaw.map(i => ({
+          memId: i.memId as string,
+          text: i.text as string,
+          category: i.category as ProjectMemory['category'],
+          createdAt: i.createdAt as string,
+          updatedAt: i.updatedAt as string,
+        }))
+        const projectFacts = (enrichResult.projectFacts ?? []) as Array<{ category: ProjectMemory['category']; text: string }>
+        // Cast to satisfy reconcile's UserMemory-typed signature; category values differ but logic is text-dedup only
+        const projectOps = reconcile(
+          projectFacts as unknown as Array<{ category: UserMemory['category']; text: string }>,
+          existingProjectMems as unknown as UserMemory[],
+        )
+        for (const op of projectOps) {
+          if (op.op === 'ADD') {
+            const memId = uuidv4()
+            await putProjectMemory({
+              ...buildProjectMemKey(projectId, memId),
+              memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow,
+            })
+            totalAdded++
+          }
+        }
+        if (enrichResult.summary) {
+          await updateChatSummary(sub, chatId, enrichResult.summary)
+        }
       }
+
+      // Title
+      if (enrichResult.title) {
+        await updateChatTitle(sub, chatId, enrichResult.title)
+        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title: enrichResult.title }) })
+      }
+
+      if (totalAdded > 0 && !memoryChangedDuringStream) {
+        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalAdded }) })
+      }
+
+      console.log(JSON.stringify({ event: 'llm_call', purpose: 'enrich_turn', model: MEMORY_EXTRACTION_MODEL, chatId }))
     } catch (err) {
-      console.error(JSON.stringify({ event: 'memory_extraction_error', chatId, error: String(err) }))
-      // Swallow: memory extraction failure must never break a chat turn
+      console.error(JSON.stringify({ event: 'enrich_turn_error', chatId, error: String(err) }))
+      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'warning', message: 'Post-turn enrichment failed (memory/summary not updated)' }) })
+      // Never re-throw — enrichment failure must not break the chat turn
     }
   }
 

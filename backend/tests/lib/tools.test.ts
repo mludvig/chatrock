@@ -1,12 +1,24 @@
 import { executeTool } from '../../src/lib/tools'
 import * as memoryLib from '../../src/lib/memory'
+import * as projectContextLib from '../../src/lib/projectContext'
 
-// Mock executeMemoryTool so we can spy on it without real dynamo calls
+// Mock both memory tool executors so we can spy on them without real dynamo calls
 jest.mock('../../src/lib/memory', () => ({
   ...jest.requireActual('../../src/lib/memory'),
   executeMemoryTool: jest.fn(),
+  executeProjectMemoryTool: jest.fn(),
 }))
+
+// Mock project context executors
+jest.mock('../../src/lib/projectContext', () => ({
+  executeProjectReadFileTool: jest.fn(),
+  executeProjectReadChatTool: jest.fn(),
+}))
+
 const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeMemoryTool
+const mockExecuteProjectMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeProjectMemoryTool
+const mockExecuteProjectReadFileTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadFileTool
+const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadChatTool
 
 const TEST_CTX = { sub: 'test-user' }
 
@@ -125,5 +137,145 @@ describe('manage_memory dispatch', () => {
     // The ctx passed to executeMemoryTool must use ctx.sub, not input.sub
     const ctxArg = mockExecuteMemoryTool.mock.calls[0][1] as { sub: string }
     expect(ctxArg.sub).toBe('real-user')
+  })
+})
+
+// ── manage_project_memory dispatch ────────────────────────────────────────────
+
+describe('manage_project_memory dispatch', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('dispatches to executeProjectMemoryTool with ctx.projectId', async () => {
+    mockExecuteProjectMemoryTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: 'Saved.' }],
+      status: 'success',
+    })
+
+    const result = await executeTool(
+      'manage_project_memory',
+      { operation: 'remember', text: 'Use DynamoDB single-table design', category: 'decision' },
+      { sub: 'user-1', projectId: 'proj-abc' },
+    )
+
+    expect(mockExecuteProjectMemoryTool).toHaveBeenCalledTimes(1)
+    expect(mockExecuteProjectMemoryTool).toHaveBeenCalledWith(
+      { operation: 'remember', text: 'Use DynamoDB single-table design', category: 'decision' },
+      { projectId: 'proj-abc' },
+    )
+    expect(result.status).toBe('success')
+  })
+
+  it('returns error when ctx.projectId is missing', async () => {
+    const result = await executeTool(
+      'manage_project_memory',
+      { operation: 'remember', text: 'Use DynamoDB single-table design', category: 'decision' },
+      { sub: 'user-1' }, // no projectId
+    )
+
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toBe('No project context')
+    expect(mockExecuteProjectMemoryTool).not.toHaveBeenCalled()
+  })
+
+  it('manage_memory still dispatches to executeMemoryTool (not project memory)', async () => {
+    mockExecuteMemoryTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: 'Saved.' }],
+      status: 'success',
+    })
+
+    await executeTool(
+      'manage_memory',
+      { operation: 'remember', text: 'I am a developer', category: 'identity' },
+      { sub: 'user-1', projectId: 'proj-abc' },
+    )
+
+    expect(mockExecuteMemoryTool).toHaveBeenCalledTimes(1)
+    expect(mockExecuteProjectMemoryTool).not.toHaveBeenCalled()
+  })
+})
+
+// ── read_project_file dispatch ────────────────────────────────────────────────
+
+describe('read_project_file dispatch', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('dispatches to executeProjectReadFileTool when ctx.projectId set', async () => {
+    mockExecuteProjectReadFileTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: 'File content.' }],
+      status: 'success',
+    })
+
+    const result = await executeTool(
+      'read_project_file',
+      { fileId: 'file1', detail: 'summary' },
+      { sub: 'user-1', projectId: 'proj-abc' },
+    )
+
+    expect(mockExecuteProjectReadFileTool).toHaveBeenCalledTimes(1)
+    expect(mockExecuteProjectReadFileTool).toHaveBeenCalledWith(
+      { fileId: 'file1', detail: 'summary' },
+      { sub: 'user-1', projectId: 'proj-abc' },
+    )
+    expect(result.status).toBe('success')
+  })
+
+  it('returns error when ctx.projectId is missing', async () => {
+    const result = await executeTool(
+      'read_project_file',
+      { fileId: 'file1', detail: 'summary' },
+      { sub: 'user-1' }, // no projectId
+    )
+
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toBe('No project context')
+    expect(mockExecuteProjectReadFileTool).not.toHaveBeenCalled()
+  })
+})
+
+// ── read_project_chat dispatch ────────────────────────────────────────────────
+
+describe('read_project_chat dispatch', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('dispatches to executeProjectReadChatTool when ctx.projectId set', async () => {
+    mockExecuteProjectReadChatTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: 'Chat summary.' }],
+      status: 'success',
+    })
+
+    const result = await executeTool(
+      'read_project_chat',
+      { chatId: 'chat2', detail: 'summary' },
+      { sub: 'user-1', projectId: 'proj-abc' },
+    )
+
+    expect(mockExecuteProjectReadChatTool).toHaveBeenCalledTimes(1)
+    expect(mockExecuteProjectReadChatTool).toHaveBeenCalledWith(
+      { chatId: 'chat2', detail: 'summary' },
+      { sub: 'user-1', projectId: 'proj-abc' },
+    )
+    expect(result.status).toBe('success')
+  })
+
+  it('returns error when ctx.projectId is missing', async () => {
+    const result = await executeTool(
+      'read_project_chat',
+      { chatId: 'chat2', detail: 'summary' },
+      { sub: 'user-1' }, // no projectId
+    )
+
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toBe('No project context')
+    expect(mockExecuteProjectReadChatTool).not.toHaveBeenCalled()
   })
 })

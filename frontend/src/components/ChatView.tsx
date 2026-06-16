@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
@@ -31,6 +31,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     userPreferences, triggerMemoryRefresh,
     draftModelSettings, draftSystemPrompt,
     setCurrentChatId, setDraftModelSettings, setDraftSystemPrompt,
+    projects,
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
@@ -82,6 +83,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const chatIdRef = useRef<string | undefined>(chatId)
 
   const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
+  const chatProject = activeChat?.projectId ? projects.find(p => p.projectId === activeChat.projectId) : null
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
@@ -246,6 +248,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       if (streamCancelledRef.current &&
           evt.type !== 'titleUpdated' &&
           evt.type !== 'error' &&
+          evt.type !== 'warning' &&
           evt.type !== 'cancelled') return
       if (evt.type === 'delta') {
         bumpIdleTimer()
@@ -289,6 +292,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       } else if (evt.type === 'memoryUpdated') {
         triggerMemoryRefresh()
         pushToast({ kind: 'info', text: evt.count > 1 ? `Memory updated (${evt.count} new facts)` : 'Memory updated' })
+      } else if (evt.type === 'warning') {
+        pushToast({ kind: 'error', text: evt.message })
       } else if (evt.type === 'error') {
         clearIdleTimer()
         // Preserve the partial streaming bubble (not clearStream) so the user
@@ -748,6 +753,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           <FontAwesomeIcon icon={faBars} />
         </button>
         <h2>{isNew ? 'New Chat' : (activeChat?.title ?? 'Chat')}</h2>
+        {chatProject && (
+          <span
+            className="project-chip"
+            onClick={() => navigate(`/p/${chatProject.projectId}`)}
+            title="View project"
+          >
+            <FontAwesomeIcon icon={faFolderOpen} /> {chatProject.name}
+          </span>
+        )}
         <div className="header-controls">
           <select
             className="model-select"
