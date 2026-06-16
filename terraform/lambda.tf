@@ -112,6 +112,25 @@ resource "aws_lambda_permission" "http_memory_apigw" {
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
+resource "aws_lambda_function" "http_projects" {
+  function_name    = "chatrock-http-projects-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/http-projects.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/http-projects.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 30
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "http_projects_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.http_projects.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
 # ── WebSocket handlers ──────────────────────────────────────────────────────
 resource "aws_lambda_function" "ws_authorizer" {
   function_name    = "chatrock-ws-authorizer-${var.env}"

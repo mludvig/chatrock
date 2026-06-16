@@ -31,7 +31,7 @@
  */
 
 import * as bedrock from '../../src/lib/bedrock'
-import { extractUserFacts, reconcile, executeMemoryTool } from '../../src/lib/memory'
+import { extractUserFacts, reconcile, executeMemoryTool, executeProjectMemoryTool } from '../../src/lib/memory'
 import type { UserMemory, ReconcileOp } from '../../src/lib/memory'
 import { MEMORY_EXTRACTION_MODEL } from '../../src/config/models'
 import * as dynamoLib from '../../src/lib/dynamo'
@@ -45,6 +45,10 @@ jest.mock('../../src/lib/dynamo', () => ({
   putUserMemory: jest.fn(),
   deleteUserMemory: jest.fn(),
   buildUserMemKey: jest.fn((sub: string, memId: string) => ({ PK: `USER#${sub}`, SK: `MEM#USER#${memId}` })),
+  listProjectMemories: jest.fn(),
+  putProjectMemory: jest.fn(),
+  deleteProjectMemory: jest.fn(),
+  buildProjectMemKey: jest.fn((projectId: string, memId: string) => ({ PK: `PROJECT#${projectId}`, SK: `MEM#${memId}` })),
 }))
 
 const mockDynamo = dynamoLib as jest.Mocked<typeof dynamoLib>
@@ -546,5 +550,184 @@ describe('executeMemoryTool', () => {
     expect(loggedObj).toBeDefined()
     expect(loggedObj!.op).toBe('forget')
     expect(loggedObj!.result).toBe('forgotten')
+  })
+})
+
+// ── executeProjectMemoryTool ──────────────────────────────────────────────────
+
+describe('executeProjectMemoryTool', () => {
+  const projectCtx = { projectId: 'proj-123' }
+
+  const makeRawProjectMemory = (memId: string, text: string, category: string = 'fact') => ({
+    PK: `PROJECT#${projectCtx.projectId}`,
+    SK: `MEM#${memId}`,
+    memId,
+    text,
+    category,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  })
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockDynamo.listProjectMemories.mockResolvedValue([])
+    mockDynamo.putProjectMemory.mockResolvedValue(undefined)
+    mockDynamo.deleteProjectMemory.mockResolvedValue(undefined)
+    mockDynamo.buildProjectMemKey.mockImplementation((projectId: string, memId: string) => ({
+      PK: `PROJECT#${projectId}`,
+      SK: `MEM#${memId}`,
+    }))
+  })
+
+  // ── remember ──────────────────────────────────────────────────────────────
+
+  test('remember new fact → putProjectMemory called with projectId-scoped key (not sub), returns Saved.', async () => {
+    mockDynamo.listProjectMemories.mockResolvedValue([])
+
+    const result = await executeProjectMemoryTool(
+      { operation: 'remember', text: 'We use TypeScript strict mode', category: 'convention' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('success')
+    expect((result.content?.[0] as { text: string }).text).toBe('Saved.')
+    expect(mockDynamo.putProjectMemory).toHaveBeenCalledTimes(1)
+    const arg = mockDynamo.putProjectMemory.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.PK).toBe(`PROJECT#${projectCtx.projectId}`)
+    expect(arg.memId).toBe('new-mem-id')
+    expect(arg.text).toBe('We use TypeScript strict mode')
+    expect(arg.category).toBe('convention')
+  })
+
+  test('remember duplicate (same text, case-insensitive) → putProjectMemory NOT called, returns Already known.', async () => {
+    mockDynamo.listProjectMemories.mockResolvedValue([
+      makeRawProjectMemory('existing-id', 'we use typescript strict mode', 'convention'),
+    ])
+
+    const result = await executeProjectMemoryTool(
+      { operation: 'remember', text: 'We Use TypeScript Strict Mode', category: 'convention' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('success')
+    expect((result.content?.[0] as { text: string }).text).toBe('Already known.')
+    expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
+  })
+
+  test('remember missing text → error result, no dynamo call', async () => {
+    const result = await executeProjectMemoryTool(
+      { operation: 'remember', category: 'decision' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('error')
+    expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
+  })
+
+  test('remember invalid category → error result, no dynamo call', async () => {
+    const result = await executeProjectMemoryTool(
+      { operation: 'remember', text: 'Use React', category: 'preference' }, // 'preference' is not a valid project category
+      projectCtx,
+    )
+
+    expect(result.status).toBe('error')
+    expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
+  })
+
+  // ── update ────────────────────────────────────────────────────────────────
+
+  test('update valid memId → putProjectMemory called with same key/memId/createdAt, new text; returns Updated.', async () => {
+    mockDynamo.listProjectMemories.mockResolvedValue([
+      makeRawProjectMemory('proj-mem-abc', 'Old decision', 'decision'),
+    ])
+
+    const result = await executeProjectMemoryTool(
+      { operation: 'update', memId: 'proj-mem-abc', text: 'Updated decision', category: 'constraint' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('success')
+    expect((result.content?.[0] as { text: string }).text).toBe('Updated.')
+    expect(mockDynamo.putProjectMemory).toHaveBeenCalledTimes(1)
+    const arg = mockDynamo.putProjectMemory.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.PK).toBe(`PROJECT#${projectCtx.projectId}`)
+    expect(arg.SK).toBe('MEM#proj-mem-abc')
+    expect(arg.memId).toBe('proj-mem-abc')
+    expect(arg.createdAt).toBe('2026-01-01T00:00:00.000Z')
+    expect(arg.text).toBe('Updated decision')
+    expect(arg.category).toBe('constraint')
+    expect(arg.updatedAt).not.toBe('2026-01-01T00:00:00.000Z')
+  })
+
+  test('update unknown memId → error result, no putProjectMemory call', async () => {
+    mockDynamo.listProjectMemories.mockResolvedValue([
+      makeRawProjectMemory('proj-mem-abc', 'Some decision', 'decision'),
+    ])
+
+    const result = await executeProjectMemoryTool(
+      { operation: 'update', memId: 'unknown-id', text: 'New text' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toContain('not found')
+    expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
+  })
+
+  // ── forget ────────────────────────────────────────────────────────────────
+
+  test('forget valid memId → deleteProjectMemory(projectId, memId) called; returns Forgotten.', async () => {
+    mockDynamo.listProjectMemories.mockResolvedValue([
+      makeRawProjectMemory('proj-mem-del', 'Fact to delete', 'fact'),
+    ])
+
+    const result = await executeProjectMemoryTool(
+      { operation: 'forget', memId: 'proj-mem-del' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('success')
+    expect((result.content?.[0] as { text: string }).text).toBe('Forgotten.')
+    expect(mockDynamo.deleteProjectMemory).toHaveBeenCalledTimes(1)
+    expect(mockDynamo.deleteProjectMemory).toHaveBeenCalledWith(projectCtx.projectId, 'proj-mem-del')
+  })
+
+  test('forget unknown memId → error result, deleteProjectMemory NOT called', async () => {
+    mockDynamo.listProjectMemories.mockResolvedValue([
+      makeRawProjectMemory('proj-mem-abc', 'Some fact', 'fact'),
+    ])
+
+    const result = await executeProjectMemoryTool(
+      { operation: 'forget', memId: 'unknown-id' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('error')
+    expect(mockDynamo.deleteProjectMemory).not.toHaveBeenCalled()
+  })
+
+  test('unknown operation → error result', async () => {
+    const result = await executeProjectMemoryTool(
+      { operation: 'invalidop' },
+      projectCtx,
+    )
+
+    expect(result.status).toBe('error')
+  })
+
+  // ── security: projectId from ctx, NOT sub ─────────────────────────────────
+
+  test('uses ctx.projectId for all dynamo calls, never sub', async () => {
+    mockDynamo.listProjectMemories.mockResolvedValue([])
+
+    await executeProjectMemoryTool(
+      { operation: 'remember', text: 'Use DynamoDB single-table', category: 'decision' },
+      { projectId: 'real-project-id' },
+    )
+
+    expect(mockDynamo.listProjectMemories).toHaveBeenCalledWith('real-project-id')
+    expect(mockDynamo.putProjectMemory).toHaveBeenCalledTimes(1)
+    const arg = mockDynamo.putProjectMemory.mock.calls[0][0] as Record<string, unknown>
+    expect(arg.PK).toBe('PROJECT#real-project-id')
   })
 })

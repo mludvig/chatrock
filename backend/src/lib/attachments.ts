@@ -54,6 +54,26 @@ export function s3KeyPrefix(sub: string, chatId: string): string {
   return `attachments/${sub}/${chatId}/`
 }
 
+export function projectFilePrefix(sub: string, projectId: string): string {
+  return `attachments/${sub}/project/${projectId}/`
+}
+
+export async function deleteProjectObjects(sub: string, projectId: string): Promise<void> {
+  const prefix = projectFilePrefix(sub, projectId)
+  const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix }))
+  const objects = list.Contents?.map(o => ({ Key: o.Key! }))
+  if (!objects?.length) return
+  await s3.send(new DeleteObjectsCommand({ Bucket: BUCKET, Delete: { Objects: objects, Quiet: true } }))
+}
+
+export async function deleteS3Objects(keys: string[]): Promise<void> {
+  if (keys.length === 0) return
+  await s3.send(new DeleteObjectsCommand({
+    Bucket: BUCKET,
+    Delete: { Objects: keys.map(k => ({ Key: k })), Quiet: true },
+  }))
+}
+
 // ── Presigned PUT (for browser upload) ───────────────────────────────────────
 
 const s3 = new S3Client({})

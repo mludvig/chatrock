@@ -32,6 +32,18 @@ export interface Chat {
   updatedAt: string
   activeLeafId?: string
   modelSettings?: ModelSettings
+  projectId?: string
+  summary?: string
+}
+
+export interface Project {
+  projectId: string
+  name: string
+  description?: string
+  instructions?: string
+  memoryEnabled?: boolean
+  createdAt: string
+  updatedAt: string
 }
 
 // ── Display types returned by GET /messages (format C) ───────────────────────
@@ -97,6 +109,29 @@ export interface UserMemory {
   updatedAt: string
 }
 
+export interface ProjectMemory {
+  memId: string
+  text: string
+  category: 'decision' | 'convention' | 'fact' | 'constraint' | 'glossary' | 'other'
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectFile {
+  fileId: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+  s3Key: string
+  status: 'uploading' | 'processing' | 'ready' | 'error'
+  microLabel?: string
+  summary?: string
+  extractedTextKey?: string
+  inclusion: 'auto' | 'always' | 'never'
+  createdAt: string
+  updatedAt: string
+}
+
 export interface UserPreferences {
   persona?: string
   injectCurrentDate?: boolean
@@ -140,11 +175,12 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
 
 export const api = {
   listChats: ()                        => req<{ chats: Chat[] }>('GET', '/api/chats'),
-  createChat: (model: string, systemPrompt: string, chatId?: string, modelSettings?: ModelSettings) =>
+  createChat: (model: string, systemPrompt: string, chatId?: string, modelSettings?: ModelSettings, projectId?: string) =>
     req<{ chatId: string }>('POST', '/api/chats', {
       model, systemPrompt,
       ...(chatId ? { chatId } : {}),
       ...(modelSettings ? { modelSettings } : {}),
+      ...(projectId ? { projectId } : {}),
     }),
   renameChat: (chatId: string, title: string) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { title }),
@@ -167,6 +203,28 @@ export const api = {
   savePreferences: (prefs: UserPreferences)  => req<{ ok: boolean }>('PUT', '/api/preferences', prefs),
   listMemory: ()                             => req<{ memories: UserMemory[] }>('GET', '/api/memory'),
   deleteMemory: (memId: string)              => req<void>('DELETE', `/api/memory/${memId}`),
+  listProjects: () => req<{ projects: Project[] }>('GET', '/api/projects'),
+  createProject: (name: string) => req<{ projectId: string }>('POST', '/api/projects', { name }),
+  getProject: (projectId: string) => req<{ project: Project; chats: Chat[] }>('GET', `/api/projects/${projectId}`),
+  updateProject: (projectId: string, fields: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'memoryEnabled'>>) =>
+    req<{ ok: boolean }>('PATCH', `/api/projects/${projectId}`, fields),
+  deleteProject: (projectId: string) => req<void>('DELETE', `/api/projects/${projectId}`),
+  moveChatToProject: (chatId: string, projectId: string | null) =>
+    req<void>('PATCH', `/api/chats/${chatId}`, { projectId }),
+  listProjectMemory: (projectId: string) =>
+    req<{ memories: ProjectMemory[] }>('GET', `/api/projects/${projectId}/memory`),
+  deleteProjectMemory: (projectId: string, memId: string) =>
+    req<void>('DELETE', `/api/projects/${projectId}/memory/${memId}`),
+  listProjectFiles: (projectId: string) =>
+    req<{ files: ProjectFile[] }>('GET', `/api/projects/${projectId}/files`),
+  requestProjectFileUpload: (projectId: string, filename: string, contentType: string, sizeBytes: number) =>
+    req<{ fileId: string; s3Key: string; uploadUrl: string }>('POST', `/api/projects/${projectId}/files`, { filename, contentType, sizeBytes }),
+  finalizeProjectFile: (projectId: string, fileId: string) =>
+    req<{ file: ProjectFile }>('PUT', `/api/projects/${projectId}/files/${fileId}`),
+  setFileInclusion: (projectId: string, fileId: string, inclusion: 'auto' | 'always' | 'never') =>
+    req<{ ok: boolean }>('PATCH', `/api/projects/${projectId}/files/${fileId}`, { inclusion }),
+  deleteProjectFile: (projectId: string, fileId: string) =>
+    req<void>('DELETE', `/api/projects/${projectId}/files/${fileId}`),
 }
 
 export interface UploadRequest {

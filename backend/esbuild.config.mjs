@@ -12,6 +12,7 @@ const handlers = [
   { name: 'http-models',      entry: 'src/http/models.ts' },
   { name: 'http-preferences', entry: 'src/http/preferences.ts' },
   { name: 'http-memory',      entry: 'src/http/memory.ts' },
+  { name: 'http-projects',    entry: 'src/http/projects.ts' },
   { name: 'ws-authorizer',    entry: 'src/ws/authorizer.ts' },
   { name: 'ws-connect',       entry: 'src/ws/connect.ts' },
   { name: 'ws-disconnect',    entry: 'src/ws/disconnect.ts' },

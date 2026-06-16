@@ -8,7 +8,7 @@ import {
   type SystemContentBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
-import { executeTool, WEB_TOOLS, MEMORY_TOOL, type ToolContext } from './tools'
+import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, type ToolContext } from './tools'
 import { capToolResultText } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 
@@ -87,10 +87,12 @@ const CACHE_POINT_CONTENT = { cachePoint: { type: 'default' as const } } as unkn
  * (which are stable across all turns) get cached on first use.
  * Gate web tools and memory tool independently.
  */
-function buildToolsWithCache(settings: ModelSettings): Tool[] {
+function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[] {
   const list: Tool[] = []
   if (settings.webSearch !== false) list.push(...WEB_TOOLS)
   if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
+  if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
+  if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
   if (list.length === 0) return []
   return [...list, CACHE_POINT_TOOL]
 }
@@ -332,7 +334,7 @@ export async function* converseStream(
   ctx?: ToolContext,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
-  let tools = buildToolsWithCache(settings)
+  let tools = buildToolsWithCache(settings, ctx)
   // If tools are disabled (both webSearch and memory off) but the replayed history
   // contains toolUse/toolResult blocks, Bedrock still requires a non-empty toolConfig.
   // Re-offer the full tool set so toolConfig is present and valid for the history.

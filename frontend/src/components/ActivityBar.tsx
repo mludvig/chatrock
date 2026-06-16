@@ -1,5 +1,5 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faListUl, faBrain, faSlidersH, faRightFromBracket } from '@fortawesome/free-solid-svg-icons'
+import { faListUl, faBrain, faSlidersH, faRightFromBracket, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import type { ActivePanel } from '../store/chatStore'
 import { useChatStore } from '../store/chatStore'
 
@@ -21,6 +21,14 @@ export default function ActivityBar({ userName, onSignOut }: Props) {
           data-panel="chats"
         >
           <FontAwesomeIcon icon={faListUl} />
+        </button>
+        <button
+          className={`activity-btn${activePanel === 'projects' ? ' active' : ''}`}
+          onClick={() => setActivePanel('projects' as ActivePanel)}
+          title="Projects"
+          data-panel="projects"
+        >
+          <FontAwesomeIcon icon={faFolderOpen} />
         </button>
         <button
           className={`activity-btn${activePanel === 'memory' ? ' active' : ''}`}

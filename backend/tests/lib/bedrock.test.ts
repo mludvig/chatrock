@@ -637,3 +637,140 @@ test('still emits thinking_delta, thinking_done, delta, tool_call_start, tool_ca
   expect(types).toContain('turn')
   expect(types).toContain('usage')
 })
+
+// ── project memory tool inclusion via ctx ─────────────────────────────────────
+
+test('project memory: manage_project_memory tool included when ctx.projectId set and memoryEnabled not false', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeDefined()
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('manage_project_memory')
+  expect(toolNames).toContain('manage_memory')
+})
+
+test('project memory: manage_project_memory tool excluded when no ctx.projectId', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> } | undefined)?.tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).not.toContain('manage_project_memory')
+})
+
+test('project memory: CACHE_POINT_TOOL always last in tool list when project memory present', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolList = (cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string }; cachePoint?: unknown }> }).tools
+  // Last element must be the cachePoint tool (no toolSpec)
+  const lastTool = toolList[toolList.length - 1]
+  expect(lastTool.toolSpec).toBeUndefined()
+  expect(lastTool.cachePoint).toBeDefined()
+})
+
+// ── read_project_file and read_project_chat tool inclusion ───────────────────
+
+test('read tools: read_project_file and read_project_chat included when ctx.projectId set', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  expect(cmdInput.toolConfig).toBeDefined()
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('read_project_file')
+  expect(toolNames).toContain('read_project_chat')
+})
+
+test('read tools: read_project_file and read_project_chat excluded when no ctx.projectId', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> } | undefined)?.tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).not.toContain('read_project_file')
+  expect(toolNames).not.toContain('read_project_chat')
+})
+
+test('read tools: cachePoint is always last when read tools present', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolList = (cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string }; cachePoint?: unknown }> }).tools
+  // Last element must be the cachePoint tool (no toolSpec)
+  const lastTool = toolList[toolList.length - 1]
+  expect(lastTool.toolSpec).toBeUndefined()
+  expect(lastTool.cachePoint).toBeDefined()
+})

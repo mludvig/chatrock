@@ -14,6 +14,7 @@ export type WSEvent =
   | { type: 'titleUpdated';   chatId: string; title: string }
   | { type: 'memoryUpdated';  count: number }
   | { type: 'error';          message: string; responseId?: string; leafId?: string }
+  | { type: 'warning';        message: string }
 
 type EventHandler = (evt: WSEvent) => void
 

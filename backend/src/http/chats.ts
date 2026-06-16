@@ -1,12 +1,13 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
-import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, deleteChatObjects, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import { enrichChatForProject } from '../lib/enrichment'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -37,6 +38,8 @@ export const handler = async (
       updatedAt: i.updatedAt,
       ...(i.activeLeafId !== undefined ? { activeLeafId: i.activeLeafId } : {}),
       ...(i.modelSettings !== undefined ? { modelSettings: i.modelSettings } : {}),
+      ...(i.projectId !== undefined ? { projectId: i.projectId } : {}),
+      ...(i.summary !== undefined ? { summary: i.summary } : {}),
     }))
     return ok({ chats })
   }
@@ -62,6 +65,9 @@ export const handler = async (
     }
     const chatId = clientId ?? uuidv4()
     const now = new Date().toISOString()
+    if (body.projectId !== undefined && body.projectId !== null && typeof body.projectId !== 'string') {
+      return err(400, 'projectId must be a string')
+    }
     await putChat({
       ...buildChatKey(sub, chatId),
       title: 'New Chat',
@@ -70,6 +76,7 @@ export const handler = async (
       ...(body.modelSettings !== undefined && typeof body.modelSettings === 'object' && body.modelSettings !== null && !Array.isArray(body.modelSettings)
         ? { modelSettings: body.modelSettings }
         : {}),
+      ...(body.projectId !== undefined && body.projectId !== null ? { projectId: body.projectId as string } : {}),
       createdAt: now,
       updatedAt: now,
     })
@@ -151,6 +158,20 @@ export const handler = async (
       }
       await updateChatModelSettings(sub, chatId, body.modelSettings as Record<string, unknown>)
       updatedFields.push('modelSettings')
+    }
+    if (body.projectId !== undefined) {
+      const prevProjectId = chat.projectId as string | undefined
+      if (body.projectId === null) {
+        await updateChatProject(sub, chatId, null)
+      } else if (typeof body.projectId === 'string') {
+        const proj = await getProject(sub, body.projectId)
+        if (!proj) return err(400, 'Invalid projectId')
+        await updateChatProject(sub, chatId, body.projectId)
+        if (!prevProjectId) await enrichChatForProject(sub, chatId)
+      } else {
+        return err(400, 'projectId must be a string or null')
+      }
+      updatedFields.push('projectId')
     }
     console.log(JSON.stringify({ event: 'chat_updated', sub, chatId, fields: updatedFields }))
     return ok({ ok: true })
@@ -246,6 +267,7 @@ export const handler = async (
       model: chat.model,
       systemPrompt: (chat.systemPrompt as string | undefined) ?? '',
       ...(chat.modelSettings !== undefined ? { modelSettings: chat.modelSettings } : {}),
+      ...(chat.projectId !== undefined ? { projectId: chat.projectId } : {}),
       createdAt: now,
       updatedAt: now,
       ...(cloned.length ? { activeLeafId: cloned[cloned.length - 1].msgId } : {}),

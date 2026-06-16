@@ -87,6 +87,13 @@ resource "aws_apigatewayv2_integration" "http_memory" {
   payload_format_version = "2.0"
 }
 
+resource "aws_apigatewayv2_integration" "http_projects" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.http_projects.invoke_arn
+  payload_format_version = "2.0"
+}
+
 # ── Routes ──────────────────────────────────────────────────────────────────
 
 # Authenticated CRUD routes
@@ -200,4 +207,100 @@ resource "aws_apigatewayv2_route" "memory_delete" {
   target             = "integrations/${aws_apigatewayv2_integration.http_memory.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "projects_list" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/projects"
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "projects_create" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/projects"
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "projects_get" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/projects/{projectId}"
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "projects_update" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "PATCH /api/projects/{projectId}"
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "projects_delete" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "DELETE /api/projects/{projectId}"
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "get_project_memory" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/projects/{projectId}/memory"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}
+
+resource "aws_apigatewayv2_route" "delete_project_memory" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "DELETE /api/projects/{projectId}/memory/{memId}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}
+
+resource "aws_apigatewayv2_route" "post_project_files" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/projects/{projectId}/files"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}
+
+resource "aws_apigatewayv2_route" "put_project_file" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "PUT /api/projects/{projectId}/files/{fileId}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}
+
+resource "aws_apigatewayv2_route" "get_project_files" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/projects/{projectId}/files"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}
+
+resource "aws_apigatewayv2_route" "patch_project_file" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "PATCH /api/projects/{projectId}/files/{fileId}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}
+
+resource "aws_apigatewayv2_route" "delete_project_file" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "DELETE /api/projects/{projectId}/files/{fileId}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
 }

@@ -273,3 +273,212 @@ export async function deleteUserMemory(sub: string, memId: string): Promise<void
     Key: buildUserMemKey(sub, memId),
   }))
 }
+
+// Project key builders
+export const buildProjectKey = (sub: string, projectId: string) => ({
+  PK: `USER#${sub}`,
+  SK: `PROJECT#${projectId}`,
+})
+
+export const buildProjectMemKey = (projectId: string, memId: string) => ({
+  PK: `PROJECT#${projectId}`,
+  SK: `MEM#${memId}`,
+})
+
+export const buildProjectFileKey = (projectId: string, fileId: string) => ({
+  PK: `PROJECT#${projectId}`,
+  SK: `FILE#${fileId}`,
+})
+
+// Project CRUD
+export async function listProjects(sub: string) {
+  const res = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':prefix': 'PROJECT#' },
+    ScanIndexForward: false,
+  }))
+  return res.Items ?? []
+}
+
+export async function getProject(sub: string, projectId: string) {
+  const res = await ddb.send(new GetCommand({
+    TableName: TABLE,
+    Key: buildProjectKey(sub, projectId),
+  }))
+  return res.Item
+}
+
+export async function putProject(item: Record<string, unknown>) {
+  await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
+}
+
+export async function updateProjectFields(
+  sub: string,
+  projectId: string,
+  fields: Partial<{
+    name: string
+    description: string
+    instructions: string
+    memoryEnabled: boolean
+    updatedAt: string
+  }>,
+): Promise<void> {
+  const updates: string[] = []
+  const names: Record<string, string> = {}
+  const values: Record<string, unknown> = {}
+
+  const fieldMap: Record<string, string> = {
+    name: 'name',
+    description: 'description',
+    instructions: 'instructions',
+    memoryEnabled: 'memoryEnabled',
+  }
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (key === 'updatedAt') continue
+    if (key in fieldMap) {
+      const alias = `#${key}`
+      names[alias] = fieldMap[key]
+      values[`:${key}`] = value
+      updates.push(`${alias} = :${key}`)
+    }
+  }
+
+  // Always set updatedAt
+  updates.push('#updatedAt = :updatedAt')
+  names['#updatedAt'] = 'updatedAt'
+  values[':updatedAt'] = new Date().toISOString()
+
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildProjectKey(sub, projectId),
+    UpdateExpression: `SET ${updates.join(', ')}`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+  }))
+}
+
+export async function deleteProject(sub: string, projectId: string) {
+  await ddb.send(new DeleteCommand({
+    TableName: TABLE,
+    Key: buildProjectKey(sub, projectId),
+  }))
+}
+
+// Chat project membership
+export async function updateChatProject(
+  sub: string,
+  chatId: string,
+  projectId: string | null,
+): Promise<void> {
+  if (projectId === null) {
+    await ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: buildChatKey(sub, chatId),
+      UpdateExpression: 'REMOVE projectId SET updatedAt = :u',
+      ExpressionAttributeValues: { ':u': new Date().toISOString() },
+    }))
+  } else {
+    await ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: buildChatKey(sub, chatId),
+      UpdateExpression: 'SET projectId = :p, updatedAt = :u',
+      ExpressionAttributeValues: { ':p': projectId, ':u': new Date().toISOString() },
+    }))
+  }
+}
+
+export async function updateChatSummary(sub: string, chatId: string, summary: string): Promise<void> {
+  // intentionally omits updatedAt to avoid reordering the chat list
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET summary = :s',
+    ExpressionAttributeValues: { ':s': summary },
+  }))
+}
+
+// ── Project files ─────────────────────────────────────────────────────────────
+
+export async function listProjectFiles(projectId: string) {
+  const result = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `PROJECT#${projectId}`, ':prefix': 'FILE#' },
+  }))
+  return (result.Items ?? []) as Record<string, unknown>[]
+}
+
+export async function getProjectFile(projectId: string, fileId: string) {
+  const result = await ddb.send(new GetCommand({
+    TableName: TABLE,
+    Key: buildProjectFileKey(projectId, fileId),
+  }))
+  return result.Item as Record<string, unknown> | undefined
+}
+
+export async function putProjectFile(item: Record<string, unknown>) {
+  await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
+}
+
+export async function updateProjectFile(
+  projectId: string,
+  fileId: string,
+  fields: Partial<{
+    status: string
+    microLabel: string
+    summary: string
+    extractedTextKey: string
+    inclusion: string
+    updatedAt: string
+  }>,
+) {
+  const updates = Object.entries({ ...fields, updatedAt: new Date().toISOString() })
+    .filter(([, v]) => v !== undefined)
+  if (updates.length === 0) return
+  const sets = updates.map(([_k], i) => `#f${i} = :v${i}`)
+  const names = Object.fromEntries(updates.map(([k], i) => [`#f${i}`, k]))
+  const values = Object.fromEntries(updates.map(([, v], i) => [`:v${i}`, v]))
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildProjectFileKey(projectId, fileId),
+    UpdateExpression: `SET ${sets.join(', ')}`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+  }))
+}
+
+export async function deleteProjectFile(projectId: string, fileId: string) {
+  await ddb.send(new DeleteCommand({
+    TableName: TABLE,
+    Key: buildProjectFileKey(projectId, fileId),
+  }))
+}
+
+// ── Project memory ─────────────────────────────────────────────────────────────
+
+export async function listProjectMemories(projectId: string) {
+  const result = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `PROJECT#${projectId}`, ':prefix': 'MEM#' },
+  }))
+  return (result.Items ?? []) as Record<string, unknown>[]
+}
+
+export async function putProjectMemory(item: Record<string, unknown>): Promise<void> {
+  await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
+}
+
+export async function deleteProjectMemory(projectId: string, memId: string): Promise<void> {
+  await ddb.send(new DeleteCommand({
+    TableName: TABLE,
+    Key: buildProjectMemKey(projectId, memId),
+  }))
+}
+
+// Generic batch delete (reusable for cascading deletes)
+export async function batchDeleteKeys(keys: { PK: string; SK: string }[]): Promise<void> {
+  return batchDeleteMessages(keys)
+}
