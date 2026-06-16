@@ -1,5 +1,5 @@
 locals {
-  lambda_runtime = "nodejs20.x"
+  lambda_runtime = "nodejs24.x"
   lambda_env_base = {
     APP_ENV                             = var.env
     DOMAIN_NAME                         = var.domain_name
