@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useMatch } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPenToSquare, faTrash, faWandMagicSparkles, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
+import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import type { Chat } from '../api/http'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
@@ -140,7 +140,7 @@ export default function ChatsPanel({ onRenameChat }: Props) {
                       className="project-chip"
                       onClick={e => { e.stopPropagation(); navigate(`/p/${chat.projectId}`) }}
                     >
-                      <FontAwesomeIcon icon={faFolderOpen} /> {chatProject.name}
+                      <FontAwesomeIcon icon={faFolder} /> {chatProject.name}
                     </span>
                   )}
                   {movingId === chat.chatId && (
@@ -151,7 +151,7 @@ export default function ChatsPanel({ onRenameChat }: Props) {
                           className={`move-menu-item${chat.projectId === p.projectId ? ' active' : ''}`}
                           onClick={e => handleMove(e, chat.chatId, p.projectId)}
                         >
-                          <FontAwesomeIcon icon={faFolderOpen} style={{ marginRight: 6 }} />
+                          <FontAwesomeIcon icon={faFolder} style={{ marginRight: 6 }} />
                           {p.name}
                         </div>
                       ))}

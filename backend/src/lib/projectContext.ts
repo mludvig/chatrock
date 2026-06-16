@@ -2,7 +2,7 @@ import { getProjectFile, listMessages, getChat } from './dynamo'
 import { buildActivePath, type TurnRow } from './tree'
 import { capToolResultText } from './blocks'
 import { fetchS3Text, fetchS3Bytes } from './projectFiles'
-import type { ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { ContentBlock, ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
 import type { ToolContext } from './tools'
 
 const TRANSCRIPT_TURNS_CAP = 40
@@ -54,11 +54,24 @@ export async function executeProjectReadFileTool(
           const raw = await fetchS3Text(extractedTextKey)
           const capped = capToolResultText(raw)
           return { toolUseId: '', content: [{ text: `File: ${file.filename as string}\n\n${capped}` }], status: 'success' }
-        } catch { /* fall through to summary */ }
+        } catch { /* fall through to raw bytes */ }
       }
-      // No extracted text — return summary with a note
-      const text = `File: ${file.filename as string}\n\nFull text not available for this PDF. Summary:\n${(file.summary as string | undefined) ?? '(no summary)'}`
-      return { toolUseId: '', content: [{ text }], status: 'success' }
+      // No extracted text — send raw PDF bytes as a document block
+      try {
+        const bytes = await fetchS3Bytes(s3Key)
+        const docName = (file.filename as string).replace(/\.pdf$/i, '').slice(0, 200) || 'document'
+        return {
+          toolUseId: '',
+          content: [
+            { document: { format: 'pdf', name: docName, source: { bytes } } } as unknown as ContentBlock,
+            { text: 'The complete PDF is included above.' } as ContentBlock,
+          ] as unknown as Array<{ text: string }>,
+          status: 'success',
+        }
+      } catch {
+        const text = `File: ${file.filename as string}\n\nCould not read PDF content. Summary:\n${(file.summary as string | undefined) ?? '(no summary)'}`
+        return { toolUseId: '', content: [{ text }], status: 'error' }
+      }
     }
 
     if (contentType.startsWith('image/')) {

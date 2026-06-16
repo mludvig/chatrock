@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Chat, Message, Model, ModelSettings, Project, Step, TokenUsage, UserPreferences } from '../api/http'
+import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
@@ -99,6 +99,9 @@ interface ChatState {
   updateProject: (projectId: string, fields: Partial<Project>) => void
   removeProject: (projectId: string) => void
   updateChatProjectId: (chatId: string, projectId: string | null) => void
+
+  projectFilesById: Record<string, ProjectFile>
+  mergeProjectFiles: (files: ProjectFile[]) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -160,6 +163,7 @@ export const useChatStore = create<ChatState>()(
       draftModelSettings: {},
       draftSystemPrompt: '',
       projects: [],
+      projectFilesById: {},
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -352,6 +356,12 @@ export const useChatStore = create<ChatState>()(
       })),
       updateChatProjectId: (chatId, projectId) => set((s) => ({
         chats: s.chats.map(c => c.chatId === chatId ? { ...c, projectId: projectId ?? undefined } : c),
+      })),
+      mergeProjectFiles: (files) => set((s) => ({
+        projectFilesById: {
+          ...s.projectFilesById,
+          ...Object.fromEntries(files.map(f => [f.fileId, f])),
+        },
       })),
     }),
     {

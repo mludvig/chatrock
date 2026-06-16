@@ -48,6 +48,7 @@ import {
   faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile, faPlay,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
+import { useChatStore } from '../store/chatStore'
 import type { StreamingMsg } from '../store/chatStore'
 import type { SearchResult } from '../lib/toolResults'
 
@@ -132,12 +133,29 @@ function SearchResultCard({ r, index }: { r: SearchResult; index: number }) {
 
 function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streaming?: boolean }) {
   const [expanded, setExpanded] = useState(false)
+  const { projectFilesById, chats } = useChatStore()
   const pending = step.result === undefined
   const hasResults = !!step.searchResults?.length
   const icon = pending ? faSpinner : step.isError ? faCircleXmark : faCircleCheck
-  const label = step.name === 'web_search' ? `Search: ${safeInput(step.input, 'query')}`
-              : step.name === 'web_fetch'  ? `Fetch: ${safeInput(step.input, 'url')}`
-              : step.name
+  const label = step.name === 'web_search'
+    ? `Search: ${safeInput(step.input, 'query')}`
+    : step.name === 'web_fetch'
+    ? `Fetch: ${safeInput(step.input, 'url')}`
+    : step.name === 'read_project_file'
+    ? (() => {
+        const fid = safeInput(step.input, 'fileId')
+        const name = projectFilesById[fid]?.filename ?? fid.slice(0, 8)
+        const detail = safeInput(step.input, 'detail')
+        return `File: ${name}${detail === 'summary' ? ' (summary)' : ''}`
+      })()
+    : step.name === 'read_project_chat'
+    ? (() => {
+        const cid = safeInput(step.input, 'chatId')
+        const title = chats.find(c => c.chatId === cid)?.title ?? cid.slice(0, 8)
+        const detail = safeInput(step.input, 'detail')
+        return `Chat: ${title}${detail === 'summary' ? ' (summary)' : ''}`
+      })()
+    : step.name
 
   return (
     <div className={`tool-pill${step.isError ? ' error' : pending ? ' pending' : ''}`}>
