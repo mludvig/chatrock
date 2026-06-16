@@ -445,6 +445,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
         ...(activeChat.modelSettings ? { modelSettings: activeChat.modelSettings } : {}),
+        ...(activeChat.projectId ? { projectId: activeChat.projectId } : {}),
         createdAt: now,
         updatedAt: now,
       })
