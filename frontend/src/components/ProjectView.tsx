@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faArrowRightFromBracket, faSpinner, faTrash,
@@ -16,6 +16,8 @@ interface Props {
 export default function ProjectView({ defaultModel }: Props) {
   const { projectId } = useParams<{ projectId: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const selectedFileId = searchParams.get('file')
 
   const { projects, updateProject, addChat, updateChatProjectId, pushToast, userPreferences, models, mergeProjectFiles } = useChatStore()
   const memoryRefreshTick = useChatStore(s => s.memoryRefreshTick)
@@ -62,6 +64,12 @@ export default function ProjectView({ defaultModel }: Props) {
       .catch(() => {})
       .finally(() => setFilesLoading(false))
   }, [projectId, mergeProjectFiles])
+
+  useEffect(() => {
+    if (selectedFileId) {
+      setExpandedSummaries(prev => new Set([...prev, selectedFileId]))
+    }
+  }, [selectedFileId])
 
   async function handleRename() {
     setEditingName(false)
@@ -267,7 +275,7 @@ export default function ProjectView({ defaultModel }: Props) {
               <div className="panel-empty">Drop files here or click Upload</div>
             ) : (
               projectFiles.map(file => (
-                <div key={file.fileId} className="project-file-item">
+                <div key={file.fileId} className={`project-file-item${file.fileId === selectedFileId ? ' project-file-item--selected' : ''}`}>
                   <div className="project-file-main" onClick={() => file.summary && toggleSummary(file.fileId)}>
                     <FontAwesomeIcon icon={file.status === 'error' ? faExclamationTriangle : faFile}
                       className={`file-icon${file.status === 'error' ? ' file-icon--error' : ''}`} />

@@ -4,27 +4,29 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderTree, faFolderOpen, faFolder, faFolderPlus,
   faPenToSquare, faTrash, faChevronRight, faChevronDown,
-  faComment, faFile, faBrain, faSpinner,
+  faComment, faFile, faBrain, faSpinner, faPlus,
+  faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
 import type { ProjectFile, ProjectMemory } from '../api/http'
 import { useChatStore } from '../store/chatStore'
+import { useChatActions } from '../lib/useChatActions'
 
 export default function ProjectsPanel() {
   const navigate = useNavigate()
   const matchProject = useMatch('/p/:projectId')
-  const matchChat = useMatch('/c/:chatId')
   const activeProjectId = matchProject?.params.projectId
 
-  const { projects, chats, addProject, updateProject, removeProject, pushToast, mergeProjectFiles } = useChatStore()
+  const { projects, chats, addProject, updateProject, removeProject, pushToast, mergeProjectFiles, addChat, userPreferences, models } = useChatStore()
+  const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
 
   const [showNewInput, setShowNewInput] = useState(false)
   const [newName, setNewName] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editName, setEditName] = useState('')
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
+  const [editProjectName, setEditProjectName] = useState('')
+  const [creatingChatInProject, setCreatingChatInProject] = useState<string | null>(null)
 
-  // Tree expansion state
-  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
+  // Sub-section state (per project)
   const [expandedSections, setExpandedSections] = useState<Record<string, Set<'files' | 'memory'>>>({})
   const [loadedFiles, setLoadedFiles] = useState<Record<string, ProjectFile[]>>({})
   const [loadedMemories, setLoadedMemories] = useState<Record<string, ProjectMemory[]>>({})
@@ -46,15 +48,15 @@ export default function ProjectsPanel() {
     }
   }
 
-  function startRename(e: React.MouseEvent, projectId: string, name: string) {
+  function startProjectRename(e: React.MouseEvent, projectId: string, name: string) {
     e.stopPropagation()
-    setEditingId(projectId)
-    setEditName(name)
+    setEditingProjectId(projectId)
+    setEditProjectName(name)
   }
 
-  async function commitRename(projectId: string) {
-    const name = editName.trim()
-    setEditingId(null)
+  async function commitProjectRename(projectId: string) {
+    const name = editProjectName.trim()
+    setEditingProjectId(null)
     if (!name) return
     updateProject(projectId, { name })
     try {
@@ -64,7 +66,7 @@ export default function ProjectsPanel() {
     }
   }
 
-  async function handleDelete(e: React.MouseEvent, projectId: string) {
+  async function handleDeleteProject(e: React.MouseEvent, projectId: string) {
     e.stopPropagation()
     if (!confirm('Delete project? Chats will not be deleted but will be removed from the project.')) return
     removeProject(projectId)
@@ -76,13 +78,20 @@ export default function ProjectsPanel() {
     }
   }
 
-  function toggleProject(e: React.MouseEvent, projectId: string) {
+  async function handleNewChatInProject(e: React.MouseEvent, projectId: string) {
     e.stopPropagation()
-    setExpandedProjects(prev => {
-      const next = new Set(prev)
-      if (next.has(projectId)) { next.delete(projectId) } else { next.add(projectId) }
-      return next
-    })
+    setCreatingChatInProject(projectId)
+    try {
+      const model = userPreferences.defaultModel || models[0]?.id || ''
+      const res = await api.createChat(model, '', undefined, undefined, projectId)
+      const now = new Date().toISOString()
+      addChat({ chatId: res.chatId, title: 'New Chat', model, systemPrompt: '', createdAt: now, updatedAt: now, projectId })
+      navigate(`/c/${res.chatId}`)
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setCreatingChatInProject(null)
+    }
   }
 
   async function loadProjectData(projectId: string) {
@@ -97,7 +106,7 @@ export default function ProjectsPanel() {
       setLoadedMemories(prev => ({ ...prev, [projectId]: memoriesRes.memories }))
       mergeProjectFiles(filesRes.files)
     } catch {
-      // non-fatal: sub-sections just stay empty
+      // non-fatal
     } finally {
       setLoadingData(prev => { const s = new Set(prev); s.delete(projectId); return s })
     }
@@ -113,6 +122,7 @@ export default function ProjectsPanel() {
     })
   }
 
+  const matchChat = useMatch('/c/:chatId')
   const activeChatId = matchChat?.params.chatId
 
   return (
@@ -150,7 +160,7 @@ export default function ProjectsPanel() {
           <p className="empty-hint">No projects yet.</p>
         )}
         {projects.map(project => {
-          const isExpanded = expandedProjects.has(project.projectId)
+          const isExpanded = project.projectId === activeProjectId
           const sections = expandedSections[project.projectId] ?? new Set<'files' | 'memory'>()
           const projectChats = chats.filter(c => c.projectId === project.projectId)
           const files = loadedFiles[project.projectId] ?? []
@@ -160,17 +170,17 @@ export default function ProjectsPanel() {
           return (
             <div key={project.projectId} className="project-tree-item">
               {/* Project row */}
-              {editingId === project.projectId ? (
+              {editingProjectId === project.projectId ? (
                 <div className="project-item project-item--editing">
                   <input
                     autoFocus
                     className="rename-input"
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    onBlur={() => commitRename(project.projectId)}
+                    value={editProjectName}
+                    onChange={e => setEditProjectName(e.target.value)}
+                    onBlur={() => commitProjectRename(project.projectId)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter') commitRename(project.projectId)
-                      if (e.key === 'Escape') setEditingId(null)
+                      if (e.key === 'Enter') commitProjectRename(project.projectId)
+                      if (e.key === 'Escape') setEditingProjectId(null)
                     }}
                     onClick={e => e.stopPropagation()}
                   />
@@ -182,8 +192,8 @@ export default function ProjectsPanel() {
                 >
                   <button
                     className="project-chevron"
-                    onClick={e => toggleProject(e, project.projectId)}
-                    title={isExpanded ? 'Collapse' : 'Expand'}
+                    onClick={e => { e.stopPropagation(); navigate(`/p/${project.projectId}`) }}
+                    title={isExpanded ? 'View project' : 'Expand project'}
                   >
                     <FontAwesomeIcon icon={isExpanded ? faChevronDown : faChevronRight} />
                   </button>
@@ -193,10 +203,17 @@ export default function ProjectsPanel() {
                   />
                   <span className="project-title">{project.name}</span>
                   <div className="project-actions">
-                    <button onClick={e => startRename(e, project.projectId, project.name)} title="Rename">
+                    <button
+                      onClick={e => handleNewChatInProject(e, project.projectId)}
+                      title="New chat in project"
+                      disabled={creatingChatInProject === project.projectId}
+                    >
+                      <FontAwesomeIcon icon={creatingChatInProject === project.projectId ? faSpinner : faPlus} spin={creatingChatInProject === project.projectId} />
+                    </button>
+                    <button onClick={e => startProjectRename(e, project.projectId, project.name)} title="Rename project">
                       <FontAwesomeIcon icon={faPenToSquare} />
                     </button>
-                    <button onClick={e => handleDelete(e, project.projectId)} title="Delete">
+                    <button onClick={e => handleDeleteProject(e, project.projectId)} title="Delete project">
                       <FontAwesomeIcon icon={faTrash} />
                     </button>
                   </div>
@@ -217,8 +234,40 @@ export default function ProjectsPanel() {
                         onClick={() => navigate(`/c/${chat.chatId}`)}
                         title={chat.title}
                       >
-                        <FontAwesomeIcon icon={faComment} className="project-chat-icon" />
-                        <span className="project-chat-title">{chat.title}</span>
+                        {editingId === chat.chatId ? (
+                          <input
+                            autoFocus
+                            className="rename-input"
+                            value={editTitle}
+                            onChange={e => setEditTitle(e.target.value)}
+                            onBlur={() => commitRename(chat.chatId)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitRename(chat.chatId)
+                              if (e.key === 'Escape') setEditingId(null)
+                            }}
+                            onClick={e => e.stopPropagation()}
+                          />
+                        ) : (
+                          <>
+                            <FontAwesomeIcon icon={faComment} className="project-chat-icon" />
+                            <span className="project-chat-title">{chat.title}</span>
+                            <div className="chat-actions">
+                              <button
+                                onClick={e => handleRetitle(e, chat.chatId)}
+                                title="Re-generate title"
+                                disabled={retitling === chat.chatId}
+                              >
+                                <FontAwesomeIcon icon={faWandMagicSparkles} spin={retitling === chat.chatId} />
+                              </button>
+                              <button onClick={e => startRename(e, chat)} title="Rename">
+                                <FontAwesomeIcon icon={faPenToSquare} />
+                              </button>
+                              <button onClick={e => handleDelete(e, chat.chatId)} title="Delete">
+                                <FontAwesomeIcon icon={faTrash} />
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ))
                   )}
@@ -239,7 +288,12 @@ export default function ProjectsPanel() {
                         <div className="project-subtree-empty">{isLoading ? 'Loading…' : 'No files'}</div>
                       ) : (
                         files.map(f => (
-                          <div key={f.fileId} className="project-sub-item" title={f.summary ?? ''}>
+                          <div
+                            key={f.fileId}
+                            className="project-sub-item project-sub-item--clickable"
+                            title={f.summary ?? ''}
+                            onClick={() => navigate(`/p/${project.projectId}?file=${f.fileId}`)}
+                          >
                             <FontAwesomeIcon icon={faFile} style={{ opacity: 0.5, fontSize: 11 }} />
                             <span className="project-sub-item-name">{f.filename}</span>
                             {f.microLabel && <span className="project-sub-item-label">— {f.microLabel}</span>}

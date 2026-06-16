@@ -1,64 +1,19 @@
 import { useState } from 'react'
 import { useNavigate, useMatch } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
-import type { Chat } from '../api/http'
+import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen, faLayerGroup } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
+import { useChatActions } from '../lib/useChatActions'
 
-interface Props {
-  onRenameChat: (chatId: string, title: string) => void
-}
-
-export default function ChatsPanel({ onRenameChat }: Props) {
+export default function ChatsPanel() {
   const navigate = useNavigate()
   const match = useMatch('/c/:chatId')
   const activeChatId = match?.params.chatId
-  const { chats, removeChat, pushToast, projects, updateChatProjectId } = useChatStore()
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editTitle, setEditTitle] = useState('')
-  const [retitling, setRetitling] = useState<string | null>(null)
+  const { chats, pushToast, projects, updateChatProjectId } = useChatStore()
+  const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
   const [movingId, setMovingId] = useState<string | null>(null)
-
-  async function handleDelete(e: React.MouseEvent, chatId: string) {
-    e.stopPropagation()
-    if (!confirm('Delete this chat?')) return
-    try {
-      await api.deleteChat(chatId)
-      removeChat(chatId)
-      if (activeChatId === chatId) navigate('/c/new')
-    } catch (err) {
-      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    }
-  }
-
-  function startRename(e: React.MouseEvent, chat: Chat) {
-    e.stopPropagation()
-    setEditingId(chat.chatId)
-    setEditTitle(chat.title)
-  }
-
-  async function commitRename(chatId: string) {
-    const title = editTitle.trim()
-    if (title) {
-      await api.renameChat(chatId, title)
-      onRenameChat(chatId, title)
-    }
-    setEditingId(null)
-  }
-
-  async function handleRetitle(e: React.MouseEvent, chatId: string) {
-    e.stopPropagation()
-    setRetitling(chatId)
-    try {
-      const res = await api.retitleChat(chatId)
-      onRenameChat(chatId, res.title)
-    } catch (err) {
-      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    } finally {
-      setRetitling(null)
-    }
-  }
+  const [showProjectChats, setShowProjectChats] = useState(false)
 
   function toggleMoveMenu(e: React.MouseEvent, chatId: string) {
     e.stopPropagation()
@@ -68,24 +23,32 @@ export default function ChatsPanel({ onRenameChat }: Props) {
   async function handleMove(e: React.MouseEvent, chatId: string, projectId: string | null) {
     e.stopPropagation()
     setMovingId(null)
-    // Optimistic update
     updateChatProjectId(chatId, projectId)
     try {
       await api.moveChatToProject(chatId, projectId)
     } catch (err) {
-      // Revert
       const chat = chats.find(c => c.chatId === chatId)
       updateChatProjectId(chatId, chat?.projectId ?? null)
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
   }
 
-  const sorted = [...chats].sort((a, b) =>
-    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-  )
+  const sorted = [...chats]
+    .filter(c => showProjectChats || !c.projectId)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
 
   return (
     <>
+      <div className="chat-list-header">
+        <button
+          className={`chat-filter-btn${showProjectChats ? ' active' : ''}`}
+          onClick={() => setShowProjectChats(v => !v)}
+          title={showProjectChats ? 'Hide project chats' : 'Show all chats including project chats'}
+        >
+          <FontAwesomeIcon icon={faLayerGroup} />
+          {showProjectChats ? 'All chats' : 'Non-project only'}
+        </button>
+      </div>
       <div className="chat-list">
         {sorted.map(chat => {
           const chatProject = chat.projectId ? projects.find(p => p.projectId === chat.projectId) : null
@@ -173,8 +136,14 @@ export default function ChatsPanel({ onRenameChat }: Props) {
             </div>
           )
         })}
-        {chats.length === 0 && (
-          <p className="empty-hint">No chats yet. Click + to start.</p>
+        {sorted.length === 0 && (
+          <p className="empty-hint">
+            {showProjectChats
+              ? 'No chats yet. Click + to start.'
+              : chats.length > 0
+                ? 'All chats are in projects. Toggle above to see them.'
+                : 'No chats yet. Click + to start.'}
+          </p>
         )}
       </div>
     </>
