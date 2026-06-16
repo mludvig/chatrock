@@ -25,6 +25,7 @@ import { subFromClaims } from '../lib/auth'
 import { QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { summarizeFile } from '../lib/projectFiles'
 import { validateAttachment, presignPut, projectFilePrefix, deleteProjectObjects, deleteS3Objects } from '../lib/attachments'
+import { enrichChatForProject } from '../lib/enrichment'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -95,20 +96,27 @@ export const handler = async (
     if (!project) return err(404, 'Not found')
 
     const allChats = await listChats(sub)
-    const chats = allChats
-      .filter(c => c.projectId === projectId)
-      .map(c => ({
-        chatId: (c.SK as string).replace('CHAT#', ''),
-        title: c.title,
-        model: c.model,
-        systemPrompt: c.systemPrompt,
-        createdAt: c.createdAt,
-        updatedAt: c.updatedAt,
-        ...(c.activeLeafId !== undefined ? { activeLeafId: c.activeLeafId } : {}),
-        ...(c.modelSettings !== undefined ? { modelSettings: c.modelSettings } : {}),
-        projectId: c.projectId,
-        ...(c.summary !== undefined ? { summary: c.summary } : {}),
-      }))
+    const memberChats = allChats.filter(c => c.projectId === projectId)
+    const chats = memberChats.map(c => ({
+      chatId: (c.SK as string).replace('CHAT#', ''),
+      title: c.title,
+      model: c.model,
+      systemPrompt: c.systemPrompt,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      ...(c.activeLeafId !== undefined ? { activeLeafId: c.activeLeafId } : {}),
+      ...(c.modelSettings !== undefined ? { modelSettings: c.modelSettings } : {}),
+      projectId: c.projectId,
+      ...(c.summary !== undefined ? { summary: c.summary } : {}),
+    }))
+
+    // Fire-and-forget: enrich any member chats that have no summary yet
+    const unsummarized = memberChats.filter(c => c.summary === undefined)
+    if (unsummarized.length > 0) {
+      void Promise.allSettled(
+        unsummarized.map(c => enrichChatForProject(sub, (c.SK as string).replace('CHAT#', '')))
+      )
+    }
 
     return ok({
       project: {
