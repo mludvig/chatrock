@@ -33,6 +33,12 @@ export type ReconcileOp =
   | { op: 'DELETE'; existingId: string }
   | { op: 'NOOP'; existingId: string }
 
+export type FullMemOp =
+  | { op: 'ADD'; text: string; category: string }
+  | { op: 'UPDATE'; memId: string; text: string; category: string; createdAt: string }
+  | { op: 'DELETE'; memId: string }
+  | { op: 'NOOP'; memId: string }
+
 // ── Extraction ────────────────────────────────────────────────────────────────
 
 const EXTRACTION_SYSTEM_PROMPT = `You extract durable personal facts about the user from conversation transcripts.
@@ -130,6 +136,53 @@ export function reconcile(
   for (const e of existing) {
     if (!matchedExistingIds.has(e.memId)) {
       ops.push({ op: 'NOOP', existingId: e.memId })
+    }
+  }
+
+  return ops
+}
+
+// ── Full-list reconciliation (used by post-turn enrichment pipeline) ──────────
+
+/**
+ * Reconciles a model-returned memory list against the existing list.
+ * Supports ADD, UPDATE, DELETE, and NOOP — replacing the ADD-only reconcile().
+ *
+ * The model returns memIds for items it wants to retain/update (null for new).
+ * Existing items not present in the returned list are marked for DELETE.
+ * If a returned memId doesn't match any existing item, it's treated as ADD.
+ */
+export function reconcileMemoryList(
+  returned: Array<{ memId: string | null; category: string; text: string }>,
+  existing: Array<{ memId: string; text: string; category: string; createdAt: string }>,
+): FullMemOp[] {
+  const ops: FullMemOp[] = []
+  const existingById = new Map(existing.map(e => [e.memId, e]))
+  const returnedIds = new Set<string>()
+
+  for (const item of returned) {
+    if (!item.memId) {
+      ops.push({ op: 'ADD', text: item.text, category: item.category })
+    } else {
+      const existingItem = existingById.get(item.memId)
+      if (!existingItem) {
+        // Model returned a memId we don't recognize — treat as new
+        ops.push({ op: 'ADD', text: item.text, category: item.category })
+      } else {
+        returnedIds.add(item.memId)
+        if (existingItem.text !== item.text || existingItem.category !== item.category) {
+          ops.push({ op: 'UPDATE', memId: item.memId, text: item.text, category: item.category, createdAt: existingItem.createdAt })
+        } else {
+          ops.push({ op: 'NOOP', memId: item.memId })
+        }
+      }
+    }
+  }
+
+  // Existing items not referenced by the returned list → DELETE
+  for (const e of existing) {
+    if (!returnedIds.has(e.memId)) {
+      ops.push({ op: 'DELETE', memId: e.memId })
     }
   }
 

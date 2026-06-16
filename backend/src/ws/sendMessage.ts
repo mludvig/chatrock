@@ -2,7 +2,7 @@ import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
@@ -10,8 +10,8 @@ import { MEMORY_EXTRACTION_MODEL, isValidModelId, type ModelSettings } from '../
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
-import { reconcile, type UserMemory, type ProjectMemory } from '../lib/memory'
-import { enrichTurn } from '../lib/enrichment'
+import { reconcileMemoryList } from '../lib/memory'
+import { enrichUserFacts, enrichProjectFacts } from '../lib/enrichment'
 import { fetchS3Text } from '../lib/projectFiles'
 
 function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[]): ContentBlock[] {
@@ -526,7 +526,7 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // ── Post-turn enrichment (one Haiku call: title + user facts + project facts + summary) ──
+  // ── Post-turn enrichment (two Haiku calls: user facts + project facts/summary) ──
   // Skipped when memoryEnabled is false.
   if (memoryEnabled) {
     try {
@@ -538,73 +538,68 @@ export const buildHandler = (postFn: PostFn) => async (
         `Assistant: ${assistantTextForMemory}`,
       ].join('\n')
 
-      const enrichResult = await enrichTurn({ transcript, isProject, needTitle })
       const memNow = new Date().toISOString()
-      let totalAdded = 0
+      let totalChanged = 0
 
-      // User facts
-      const existingUserMemsRaw = await listUserMemories(sub)
-      const existingUserMems = existingUserMemsRaw.map(i => ({
+      // ── User facts (reuse userMemoriesRaw already loaded for the system prompt) ──
+      const existingUserMems = userMemoriesRaw.map(i => ({
         memId: i.memId as string,
         text: i.text as string,
-        category: i.category as UserMemory['category'],
+        category: i.category as string,
         createdAt: i.createdAt as string,
-        updatedAt: i.updatedAt as string,
       }))
-      const userOps = reconcile(
-        enrichResult.userFacts as Array<{ category: UserMemory['category']; text: string }>,
-        existingUserMems,
-      )
+      const userResult = await enrichUserFacts(transcript, existingUserMems, needTitle)
+      const userOps = reconcileMemoryList(userResult.memories, existingUserMems)
       for (const op of userOps) {
         if (op.op === 'ADD') {
           const memId = uuidv4()
-          await putUserMemory({
-            ...buildUserMemKey(sub, memId),
-            memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow,
-          })
-          totalAdded++
-        }
-      }
-
-      // Project facts + summary
-      if (isProject && projectId) {
-        const existingProjectMemsRaw = await listProjectMemories(projectId)
-        const existingProjectMems = existingProjectMemsRaw.map(i => ({
-          memId: i.memId as string,
-          text: i.text as string,
-          category: i.category as ProjectMemory['category'],
-          createdAt: i.createdAt as string,
-          updatedAt: i.updatedAt as string,
-        }))
-        const projectFacts = (enrichResult.projectFacts ?? []) as Array<{ category: ProjectMemory['category']; text: string }>
-        // Cast to satisfy reconcile's UserMemory-typed signature; category values differ but logic is text-dedup only
-        const projectOps = reconcile(
-          projectFacts as unknown as Array<{ category: UserMemory['category']; text: string }>,
-          existingProjectMems as unknown as UserMemory[],
-        )
-        for (const op of projectOps) {
-          if (op.op === 'ADD') {
-            const memId = uuidv4()
-            await putProjectMemory({
-              ...buildProjectMemKey(projectId, memId),
-              memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow,
-            })
-            totalAdded++
-          }
-        }
-        if (enrichResult.summary) {
-          await updateChatSummary(sub, chatId, enrichResult.summary)
+          await putUserMemory({ ...buildUserMemKey(sub, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
+          totalChanged++
+        } else if (op.op === 'UPDATE') {
+          await putUserMemory({ ...buildUserMemKey(sub, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
+          totalChanged++
+        } else if (op.op === 'DELETE') {
+          await deleteUserMemory(sub, op.memId)
+          totalChanged++
         }
       }
 
       // Title
-      if (enrichResult.title) {
-        await updateChatTitle(sub, chatId, enrichResult.title)
-        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title: enrichResult.title }) })
+      if (userResult.title) {
+        await updateChatTitle(sub, chatId, userResult.title)
+        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title: userResult.title }) })
       }
 
-      if (totalAdded > 0 && !memoryChangedDuringStream) {
-        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalAdded }) })
+      // ── Project facts + summary (reuse projectMemoriesRaw already loaded) ──
+      if (isProject && projectId) {
+        const existingProjectMems = (projectMemoriesRaw as Record<string, unknown>[]).map(i => ({
+          memId: i.memId as string,
+          text: i.text as string,
+          category: i.category as string,
+          createdAt: i.createdAt as string,
+        }))
+        const projectResult = await enrichProjectFacts(transcript, existingProjectMems)
+        const projectOps = reconcileMemoryList(projectResult.memories, existingProjectMems)
+        for (const op of projectOps) {
+          if (op.op === 'ADD') {
+            const memId = uuidv4()
+            await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
+            totalChanged++
+          } else if (op.op === 'UPDATE') {
+            await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
+            totalChanged++
+          } else if (op.op === 'DELETE') {
+            await deleteProjectMemory(projectId, op.memId)
+            totalChanged++
+          }
+        }
+        if (projectResult.summary) {
+          await updateChatSummary(sub, chatId, projectResult.summary)
+        }
+      }
+
+      if (totalChanged > 0 && !memoryChangedDuringStream) {
+        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged }) })
       }
 
       console.log(JSON.stringify({ event: 'llm_call', purpose: 'enrich_turn', model: MEMORY_EXTRACTION_MODEL, chatId }))

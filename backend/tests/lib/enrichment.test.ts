@@ -1,4 +1,4 @@
-import { enrichTurn, enrichChatForProject } from '../../src/lib/enrichment'
+import { enrichUserFacts, enrichProjectFacts, enrichChatForProject } from '../../src/lib/enrichment'
 import * as bedrock from '../../src/lib/bedrock'
 import * as dynamo from '../../src/lib/dynamo'
 import * as treeLib from '../../src/lib/tree'
@@ -21,93 +21,142 @@ const mockTree = treeLib as jest.Mocked<typeof treeLib>
 beforeEach(() => jest.clearAllMocks())
 
 const TRANSCRIPT = 'User: Hi, I am Alice from Wellington.\nAssistant: Nice to meet you!'
+const EXISTING_USER_MEMS = [{ memId: 'mem-1', category: 'identity', text: 'User is a software engineer' }]
+const EXISTING_PROJECT_MEMS = [{ memId: 'proj-1', category: 'decision', text: 'Deploy via ./deploy.sh' }]
 
-test('isProject:false — returns userFacts only, no projectFacts or summary', async () => {
+// ── enrichUserFacts ───────────────────────────────────────────────────────────
+
+test('enrichUserFacts — returns updated memory list with new item', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
-    userFacts: [{ category: 'identity', text: 'User is Alice from Wellington' }],
+    memories: [
+      { memId: 'mem-1', category: 'identity', text: 'User is a software engineer' },
+      { memId: null, category: 'identity', text: 'User is Alice from Wellington' },
+    ],
   }))
-  const result = await enrichTurn({ transcript: TRANSCRIPT, isProject: false, needTitle: false })
-  expect(result.userFacts).toHaveLength(1)
-  expect(result.userFacts[0].text).toBe('User is Alice from Wellington')
-  expect(result.projectFacts).toBeUndefined()
-  expect(result.summary).toBeUndefined()
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  expect(result.memories).toHaveLength(2)
+  expect(result.memories[1].text).toBe('User is Alice from Wellington')
+  expect(result.memories[1].memId).toBeNull()
   expect(result.title).toBeUndefined()
 })
 
-test('isProject:true — returns projectFacts and summary', async () => {
+test('enrichUserFacts — returns title when needTitle is true', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
-    userFacts: [],
-    projectFacts: [{ category: 'decision', text: 'Deploy via ./deploy.sh' }],
+    memories: [],
+    title: 'Introduction chat',
+  }))
+  const result = await enrichUserFacts(TRANSCRIPT, [], true)
+  expect(result.title).toBe('Introduction chat')
+})
+
+test('enrichUserFacts — falls back to existing list on malformed output', async () => {
+  mockBedrock.converseOnce.mockResolvedValue('not json')
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  expect(result.memories).toHaveLength(1)
+  expect(result.memories[0].memId).toBe('mem-1')
+  expect(result.title).toBeUndefined()
+})
+
+test('enrichUserFacts — falls back to existing list when Bedrock throws', async () => {
+  mockBedrock.converseOnce.mockRejectedValue(new Error('network'))
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  expect(result.memories).toHaveLength(1)
+  expect(result.memories[0].memId).toBe('mem-1')
+})
+
+test('enrichUserFacts — filters out invalid category values', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    memories: [
+      { memId: null, category: 'identity', text: 'Valid fact' },
+      { memId: null, category: 'invalid_cat', text: 'Should be filtered' },
+    ],
+  }))
+  const result = await enrichUserFacts(TRANSCRIPT, [], false)
+  expect(result.memories).toHaveLength(1)
+  expect(result.memories[0].text).toBe('Valid fact')
+})
+
+test('enrichUserFacts — passes existing memories in user message', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
+  await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content![0] as { text: string }).text
+  expect(userMsg).toContain('CURRENT_MEMORIES')
+  expect(userMsg).toContain('mem-1')
+})
+
+test('enrichUserFacts — system prompt contains PII guardrails', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
+  await enrichUserFacts(TRANSCRIPT, [], false)
+  const systemPrompt = mockBedrock.converseOnce.mock.calls[0][1]
+  expect(systemPrompt).toContain('NEVER capture')
+  expect(systemPrompt).toContain('third parties')
+})
+
+test('enrichUserFacts — strips markdown code fences', async () => {
+  mockBedrock.converseOnce.mockResolvedValue('```json\n{"memories":[{"memId":null,"category":"identity","text":"Alice"}]}\n```')
+  const result = await enrichUserFacts(TRANSCRIPT, [], false)
+  expect(result.memories).toHaveLength(1)
+  expect(result.memories[0].text).toBe('Alice')
+})
+
+test('enrichUserFacts — empty memories array falls back to existing', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  // Empty returned list → fall back (model said nothing new, don't wipe)
+  expect(result.memories).toHaveLength(1)
+  expect(result.memories[0].memId).toBe('mem-1')
+})
+
+// ── enrichProjectFacts ────────────────────────────────────────────────────────
+
+test('enrichProjectFacts — returns updated memory list and summary', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    memories: [
+      { memId: 'proj-1', category: 'decision', text: 'Deploy via ./deploy.sh' },
+      { memId: null, category: 'fact', text: 'Project uses TypeScript' },
+    ],
     summary: 'Chat about the deployment pipeline.',
   }))
-  const result = await enrichTurn({ transcript: TRANSCRIPT, isProject: true, needTitle: false })
-  expect(result.projectFacts).toHaveLength(1)
-  expect(result.projectFacts![0].category).toBe('decision')
+  const result = await enrichProjectFacts(TRANSCRIPT, EXISTING_PROJECT_MEMS)
+  expect(result.memories).toHaveLength(2)
   expect(result.summary).toBe('Chat about the deployment pipeline.')
 })
 
-test('needTitle:true — returns title field', async () => {
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
-    userFacts: [],
-    title: 'Deployment setup',
-  }))
-  const result = await enrichTurn({ transcript: TRANSCRIPT, isProject: false, needTitle: true })
-  expect(result.title).toBe('Deployment setup')
-})
-
-test('malformed model output — returns empty defaults, never throws', async () => {
-  mockBedrock.converseOnce.mockResolvedValue('not json')
-  const result = await enrichTurn({ transcript: TRANSCRIPT, isProject: true, needTitle: true })
-  expect(result.userFacts).toEqual([])
-  expect(result.projectFacts).toBeUndefined()
-  expect(result.summary).toBeUndefined()
-  expect(result.title).toBeUndefined()
-})
-
-test('bedrock throws — returns empty defaults, never throws', async () => {
-  mockBedrock.converseOnce.mockRejectedValue(new Error('network'))
-  await expect(enrichTurn({ transcript: TRANSCRIPT, isProject: false, needTitle: false }))
-    .resolves.toEqual({ userFacts: [] })
-})
-
-test('strips markdown code fences from model output', async () => {
-  mockBedrock.converseOnce.mockResolvedValue('```json\n{"userFacts":[{"category":"identity","text":"Alice"}]}\n```')
-  const result = await enrichTurn({ transcript: TRANSCRIPT, isProject: false, needTitle: false })
-  expect(result.userFacts).toHaveLength(1)
-})
-
-test('isProject:true but projectFacts missing from output — defaults to []', async () => {
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ userFacts: [] }))
-  const result = await enrichTurn({ transcript: TRANSCRIPT, isProject: true, needTitle: false })
-  expect(result.projectFacts).toEqual([])
+test('enrichProjectFacts — falls back to existing list on malformed output', async () => {
+  mockBedrock.converseOnce.mockResolvedValue('bad json')
+  const result = await enrichProjectFacts(TRANSCRIPT, EXISTING_PROJECT_MEMS)
+  expect(result.memories).toHaveLength(1)
+  expect(result.memories[0].memId).toBe('proj-1')
   expect(result.summary).toBeUndefined()
 })
 
-test('invalid category values are filtered out', async () => {
+test('enrichProjectFacts — filters out invalid category values', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
-    userFacts: [
-      { category: 'identity', text: 'Valid fact' },
-      { category: 'invalid', text: 'Bad category' },
+    memories: [
+      { memId: null, category: 'decision', text: 'Valid project fact' },
+      { memId: null, category: 'identity', text: 'Wrong category for project' },
     ],
+    summary: 'Test.',
   }))
-  const result = await enrichTurn({ transcript: TRANSCRIPT, isProject: false, needTitle: false })
-  expect(result.userFacts).toHaveLength(1)
-  expect(result.userFacts[0].text).toBe('Valid fact')
+  const result = await enrichProjectFacts(TRANSCRIPT, [])
+  expect(result.memories).toHaveLength(1)
+  expect(result.memories[0].text).toBe('Valid project fact')
 })
 
-test('system prompt includes project section only when isProject:true', async () => {
-  mockBedrock.converseOnce.mockResolvedValue('{}')
-  await enrichTurn({ transcript: TRANSCRIPT, isProject: true, needTitle: false })
-  const callArgs = mockBedrock.converseOnce.mock.calls[0]
-  expect(callArgs[1]).toContain('projectFacts')
-  expect(callArgs[1]).toContain('summary')
+test('enrichProjectFacts — passes existing memories in user message', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [], summary: 'test' }))
+  await enrichProjectFacts(TRANSCRIPT, EXISTING_PROJECT_MEMS)
+  const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content![0] as { text: string }).text
+  expect(userMsg).toContain('CURRENT_MEMORIES')
+  expect(userMsg).toContain('proj-1')
 })
 
-test('system prompt does not include project section when isProject:false', async () => {
-  mockBedrock.converseOnce.mockResolvedValue('{}')
-  await enrichTurn({ transcript: TRANSCRIPT, isProject: false, needTitle: false })
-  const callArgs = mockBedrock.converseOnce.mock.calls[0]
-  expect(callArgs[1]).not.toContain('projectFacts')
+test('enrichProjectFacts — relaxed system prompt does not restrict sensitive data', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [], summary: '' }))
+  await enrichProjectFacts(TRANSCRIPT, [])
+  const systemPrompt = mockBedrock.converseOnce.mock.calls[0][1]
+  expect(systemPrompt).toContain('customer info')
+  expect(systemPrompt).not.toContain('NEVER capture')
 })
 
 // ── enrichChatForProject ──────────────────────────────────────────────────────
@@ -121,8 +170,7 @@ test('enrichChatForProject — calls updateChatSummary when summary is returned'
   mockDynamo.listMessages.mockResolvedValue(FAKE_ROWS as unknown as Record<string, unknown>[])
   mockTree.buildActivePath.mockReturnValue(FAKE_ROWS as any)
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
-    userFacts: [],
-    projectFacts: [],
+    memories: [],
     summary: 'A project chat about greetings.',
   }))
   mockDynamo.updateChatSummary.mockResolvedValue(undefined)
@@ -133,10 +181,10 @@ test('enrichChatForProject — calls updateChatSummary when summary is returned'
   expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'chat-1', 'A project chat about greetings.')
 })
 
-test('enrichChatForProject — no updateChatSummary when enrichTurn returns no summary', async () => {
+test('enrichChatForProject — no updateChatSummary when no summary returned', async () => {
   mockDynamo.listMessages.mockResolvedValue(FAKE_ROWS as unknown as Record<string, unknown>[])
   mockTree.buildActivePath.mockReturnValue(FAKE_ROWS as any)
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ userFacts: [] }))
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
 
   const result = await enrichChatForProject('user-1', 'chat-1')
 
@@ -159,4 +207,15 @@ test('enrichChatForProject — returns undefined on error (never throws)', async
   const result = await enrichChatForProject('user-1', 'chat-1')
 
   expect(result).toBeUndefined()
+})
+
+test('enrichChatForProject — passes empty existing memories (summary-only call)', async () => {
+  mockDynamo.listMessages.mockResolvedValue(FAKE_ROWS as unknown as Record<string, unknown>[])
+  mockTree.buildActivePath.mockReturnValue(FAKE_ROWS as any)
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [], summary: 'test' }))
+
+  await enrichChatForProject('user-1', 'chat-1')
+
+  const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content![0] as { text: string }).text
+  expect(userMsg).toContain('CURRENT_MEMORIES: []')
 })
