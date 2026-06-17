@@ -1092,6 +1092,11 @@ $header-h: 45px;
   .thinking-spinner { margin-left: auto; }
 }
 
+.thinking-header--static {
+  cursor: default;
+  &:hover { background: $surface2; }
+}
+
 .thinking-body {
   padding: 10px 12px;
   background: $surface;
