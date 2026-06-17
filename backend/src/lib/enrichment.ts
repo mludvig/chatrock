@@ -53,21 +53,37 @@ On parse failure or nothing notable: return the existing list unchanged (preserv
 
 const TITLE_INSTRUCTION = `Also include "title": a very short chat title (max 6 words) capturing the main topic. No quotes, no punctuation at the end.`
 
-const PROJECT_SYSTEM_PROMPT = `You manage a persistent memory list about a project.
+const PROJECT_SYSTEM_PROMPT = `You manage a persistent memory list about a project. The list accumulates durable facts that are SPECIFIC TO THIS PROJECT and were established or confirmed BY THE USER — the context a new teammate would need to continue this project.
 
-You receive the current memory list as JSON and a conversation transcript.
+You receive the current memory list as JSON and a conversation transcript with "User:" and "Assistant:" turns.
 Return ONLY a valid JSON object — no markdown, no explanation:
 { "memories": [{"memId": "<existing-id or null for new>", "category": "decision|convention|fact|constraint|glossary|other", "text": "<one sentence>"}, ...], "summary": "<1-3 sentence chat summary>" }
 
+PROVENANCE IS DECISIVE. A memory must come from the USER — something they decided, chose, required, named, or told you about their own project, environment, customer, or data. Do NOT record knowledge the ASSISTANT produced while explaining, teaching, comparing, or summarising a topic, even when it is accurate. When the user asks "what is X" or "explain Y", the assistant's reply is general reference material, NOT a project fact.
+
+LITMUS TEST before adding any item: "Could someone find this in public documentation without knowing this user's project?" If yes, it is general knowledge — DO NOT capture it. Only capture facts that are true *because of this specific project*.
+
+Capture (only when stated or chosen by the user):
+- decision: choices the user made for this project
+- convention: naming/structure the user adopted
+- constraint: requirements or limits the user imposed
+- fact: details of the user's own environment, customer, accounts, or data
+- glossary: project-specific terms the user introduces (NOT definitions of public products)
+
+Never capture:
+- definitions or descriptions of public products, tools, services, or concepts
+- how a technology works in general
+- tutorials, step-by-step explanations, or comparisons the assistant generated
+- temporary task context or conversational pleasantries
+
 Memory list rules (max 20 items, one sentence each):
-- Retain existing items (keep memId) that remain accurate
+- Retain existing items (keep memId) that remain accurate and project-specific
 - Update text/category of an existing item (keep memId) when you have better information
-- Omit items no longer relevant or superseded
-- Add new items (memId: null) for genuinely new durable project facts
+- Omit items that are not project-specific, are superseded, or are general knowledge
+- Add new items (memId: null) only for genuinely new, user-established project facts
 - Merge near-duplicates into one item
 
-Capture: architectural/product decisions, naming conventions, domain facts, constraints, term definitions, customer info, key facts extracted from processed documents.
-Ignore: temporary task context, conversational pleasantries.`
+When the turn contains nothing project-specific from the user: return the existing list unchanged (preserving existing memIds).`
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
