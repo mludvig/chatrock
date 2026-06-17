@@ -4,7 +4,7 @@ export interface AssembleInput {
   basePrompt: string          // the chat's systemPrompt (client-supplied)
   prefs: UserPreferences
   memories: Array<{ memId?: string; text: string; category: string }>
-  now?: string                // ISO date string — injected if injectCurrentDate=true
+  now?: string                // ISO date string — chat.createdAt; always injected when present
   memoryToolEnabled?: boolean // if true, include manage_memory capability instructions
   // New fields for project chats:
   projectInstructions?: string      // injected after effective custom instructions
@@ -36,10 +36,13 @@ export function assembleSystemPrompt(input: AssembleInput): string {
     parts.push(`Project instructions:\n${input.projectInstructions.trim()}`)
   }
 
-  // 2. Current date injection
-  if (input.prefs.injectCurrentDate && input.now) {
-    const dateStr = input.now.slice(0, 10)  // YYYY-MM-DD
-    parts.push(`Today's date is ${dateStr}.`)
+  // 2. Chat creation date — always injected (stable value, no caching impact)
+  if (input.now) {
+    const dateStr = new Date(input.now).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })
+    const tsNote = input.prefs.injectCurrentDate
+      ? " Individual messages include a 'Current timestamp' line reflecting when they were sent."
+      : ''
+    parts.push(`Chat created: ${dateStr}.${tsNote}`)
   }
 
   // 3. Answer-length directive

@@ -8,17 +8,18 @@ import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
 import { MEMORY_EXTRACTION_MODEL, isValidModelId, type ModelSettings } from '../config/models'
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
-import { resolvePreferences } from '../lib/preferences'
+import { resolvePreferences, type UserPreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
 import { reconcileMemoryList } from '../lib/memory'
 import { enrichUserFacts, enrichProjectFacts } from '../lib/enrichment'
 import { fetchS3Text } from '../lib/projectFiles'
 
-function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[]): ContentBlock[] {
+function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: ContentBlock): ContentBlock[] {
   const attachBlocks: ContentBlock[] = attachments.map(a => attachmentBlock(a))
-  if (content) return [{ text: content }, ...attachBlocks]
+  const prefix: ContentBlock[] = tsBlock ? [tsBlock] : []
+  if (content) return [...prefix, { text: content }, ...attachBlocks]
   // No text — attachment-only send: Bedrock rejects blank/whitespace text blocks
-  return attachBlocks
+  return [...prefix, ...attachBlocks]
 }
 
 interface WSSendEvent {
@@ -71,28 +72,39 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // Load and resolve user preferences (+ memories only when memoryEnabled)
-  const memoryEnabled = modelSettings.memoryEnabled !== false
+  // Load and resolve preferences across all three layers: user → project → chat
+  // Use client memoryEnabled as a preliminary filter for the DDB memory loads (optimisation).
+  const clientMemoryEnabled = modelSettings.memoryEnabled !== false
   const projectId = chat.projectId as string | undefined
   const [userPrefs, userMemoriesRaw, projectItem, projectMemoriesRaw, projectFilesRaw, allChatsRaw] = await Promise.all([
     getUserPrefs(sub),
-    memoryEnabled ? listUserMemories(sub) : Promise.resolve([]),
+    clientMemoryEnabled ? listUserMemories(sub) : Promise.resolve([]),
     projectId ? getProject(sub, projectId) : Promise.resolve(undefined),
-    (projectId && memoryEnabled) ? listProjectMemories(projectId) : Promise.resolve([]),
+    (projectId && clientMemoryEnabled) ? listProjectMemories(projectId) : Promise.resolve([]),
     projectId ? listProjectFiles(projectId) : Promise.resolve([]),
     projectId ? listChats(sub) : Promise.resolve([]),
   ])
-  const effectivePrefs = resolvePreferences({ user: userPrefs })
 
-  // Merge preference inference defaults into modelSettings
-  // (client per-send value wins if defined)
+  const projectPrefs: UserPreferences = projectItem ? {
+    defaultModel: projectItem.defaultModel as string | undefined,
+    ...(projectItem.modelSettings as Partial<UserPreferences> || {}),
+  } : {}
+
+  const chatPrefs: UserPreferences = {
+    thinkingEffort:    modelSettings.thinkingEffort,
+    webSearch:         modelSettings.webSearch,
+    memoryEnabled:     modelSettings.memoryEnabled,
+    answerLength:      modelSettings.answerLength as UserPreferences['answerLength'],
+    injectCurrentDate: modelSettings.injectCurrentDate,
+  }
+
+  const effectivePrefs = resolvePreferences({ user: userPrefs, project: projectPrefs, chat: chatPrefs })
+  const memoryEnabled = effectivePrefs.memoryEnabled !== false
+
   const effectiveModelSettings: ModelSettings = {
     thinkingEffort: effectivePrefs.thinkingEffort,
-    webSearch: effectivePrefs.webSearch,
-    temperature: effectivePrefs.temperature,
-    topP: effectivePrefs.topP,
-    topK: effectivePrefs.topK,
-    ...modelSettings,  // client values override
+    webSearch:      effectivePrefs.webSearch,
+    memoryEnabled:  effectivePrefs.memoryEnabled,
   }
 
   // Build project manifest and forced files (project chats only)
@@ -162,7 +174,7 @@ export const buildHandler = (postFn: PostFn) => async (
   }
 
   // Assemble the effective system prompt (server-authoritative)
-  const now = new Date().toISOString()
+  const now = chat.createdAt as string | undefined
   const memoriesForPrompt = memoryEnabled
     ? userMemoriesRaw.map(i => ({ memId: i.memId as string, text: i.text as string, category: i.category as string }))
     : []
@@ -189,6 +201,11 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Build tool context for manage_memory / manage_project_memory / read_project_* (from auth, never client)
   const toolCtx: ToolContext = { sub, ...(projectId ? { projectId, chatId } : {}) }
+
+  // Timestamp block: prepended to new user turns when injectCurrentDate is enabled.
+  // Stored permanently in DDB; the model reads the actual send time for each turn.
+  const makeTsBlock = (): ContentBlock | undefined =>
+    effectivePrefs.injectCurrentDate ? { text: `Current timestamp: ${new Date().toISOString()}` } : undefined
 
   // Capture the response start time once — all turns of this response share it
   // so their SKs (MSG#<ts>#<seq>#<id>) sort together in order.
@@ -269,7 +286,7 @@ export const buildHandler = (postFn: PostFn) => async (
       msgId: userMsgId,
       parentId: editParentId,
       role: 'user',
-      blocks: buildUserBlocks(content, attachments),
+      blocks: buildUserBlocks(content, attachments, makeTsBlock()),
       model,
       createdAt: responseStartTs,
       turnIndex: 0,
@@ -298,7 +315,7 @@ export const buildHandler = (postFn: PostFn) => async (
       msgId: userMsgId,
       parentId: currentLeafId,
       role: 'user',
-      blocks: buildUserBlocks(content, attachments),
+      blocks: buildUserBlocks(content, attachments, makeTsBlock()),
       model,
       createdAt: responseStartTs,
       turnIndex: 0,

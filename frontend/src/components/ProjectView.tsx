@@ -6,7 +6,7 @@ import {
   faUpload, faFile, faExclamationTriangle,
 } from '@fortawesome/free-solid-svg-icons'
 import { api, uploadToS3 } from '../api/http'
-import type { Chat, ModelSettings, ProjectMemory, ProjectFile } from '../api/http'
+import type { Chat, ProjectMemory, ProjectFile } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 
 interface Props {
@@ -85,9 +85,10 @@ export default function ProjectView({ defaultModel }: Props) {
 
   async function handleNewChat() {
     if (!projectId) return
-    const model = userPreferences.defaultModel || defaultModel || models[0]?.id || ''
+    const model = project?.defaultModel || userPreferences.defaultModel || defaultModel || models[0]?.id || ''
+    const initSettings = project?.modelSettings
     try {
-      const res = await api.createChat(model, '', undefined, undefined as ModelSettings | undefined, projectId)
+      const res = await api.createChat(model, '', undefined, initSettings, projectId)
       const now = new Date().toISOString()
       const newChat: Chat = { chatId: res.chatId, title: 'New Chat', model, systemPrompt: '', createdAt: now, updatedAt: now, projectId }
       addChat(newChat)

@@ -17,6 +17,8 @@ export interface ModelSettings {
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearch?: boolean                               // false disables web tools
   memoryEnabled?: boolean                           // false skips injection + extraction
+  answerLength?: 'default' | 'short' | 'extensive' // per-chat answer-length override
+  injectCurrentDate?: boolean                       // true = prepend timestamp block to user turns
 }
 
 // ── Model registry ────────────────────────────────────────────────────────────
