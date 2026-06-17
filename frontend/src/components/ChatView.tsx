@@ -5,7 +5,7 @@ import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevro
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
-import { sendMessage, cancelMessage, ensureConnected, setWSHandlers } from '../api/ws'
+import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
@@ -76,6 +76,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const justLoadedRef = useRef(false)
   const streamCancelledRef = useRef(false)
   const idleTimerRef = useRef<number | null>(null)
+  // Delivery watchdog: armed after each send; cleared by the server's `ack` (or any
+  // frame). If it fires, the send was dropped by a stale WebSocket — recover instead
+  // of hanging on "Processing…" forever.
+  const ackTimerRef = useRef<number | null>(null)
+  // msgId of the optimistic user bubble for the in-flight send (removed on ack-timeout).
+  const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
   const pendingNewChatIdRef = useRef<string | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
@@ -253,6 +259,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Register WS event handler
   useEffect(() => {
     setWSHandlers((evt: WSEvent) => {
+      // Any frame proves the WebSocket is live → disarm the delivery watchdog.
+      clearAckTimer()
+      if (evt.type === 'ack') return  // delivery confirmation only; nothing to render
       // Allow titleUpdated (title gen runs independently of stream cancel) and
       // error (always show server errors) and cancelled (needed for timely reload
       // after the server persists the partial cancelled turn) to pass through.
@@ -397,6 +406,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     bubbleIdxRef.current = -1
     pendingNewChatIdRef.current = null
     clearIdleTimer()
+    clearAckTimer()
   }, [chatId])
 
   function handleMessagesScroll() {
@@ -515,6 +525,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     startStream()
     pendingScrollTopRef.current = true
 
+    optimisticMsgIdRef.current = null  // re-run has no optimistic user bubble
     try {
       await ensureConnected(accessToken)
       sendMessage({
@@ -524,6 +535,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         modelSettings: draftModelSettings,
         parentId,
       })
+      armAckWatchdog()
     } catch (err) {
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
@@ -539,6 +551,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     startStream()
     pendingScrollTopRef.current = true
 
+    optimisticMsgIdRef.current = null  // continue has no optimistic user bubble
     try {
       await ensureConnected(accessToken)
       sendMessage({
@@ -549,6 +562,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         parentId: msgId,
         continue: true,
       })
+      armAckWatchdog()
     } catch (err) {
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
@@ -572,9 +586,52 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     idleTimerRef.current = window.setTimeout(() => setStreamIdle(true), 2000)
   }
 
+  function clearAckTimer() {
+    if (ackTimerRef.current !== null) {
+      clearTimeout(ackTimerRef.current)
+      ackTimerRef.current = null
+    }
+  }
+
+  // Arm after a send. The server emits `ack` the instant it receives the frame, so
+  // ~12s of total silence means the frame never landed (stale socket). Cold starts
+  // and slow first tokens are well within this window; the timer is cleared by the
+  // first frame of any kind.
+  function armAckWatchdog() {
+    clearAckTimer()
+    ackTimerRef.current = window.setTimeout(handleAckTimeout, 12000)
+  }
+
+  function handleAckTimeout() {
+    ackTimerRef.current = null
+    clearIdleTimer()
+    clearStream()
+    setSending(false)
+    setLastTurnUsage(null)
+    // The optimistic user bubble was never persisted server-side — drop it so the
+    // UI doesn't show a message that isn't really there.
+    const optId = optimisticMsgIdRef.current
+    if (optId) {
+      const remaining = useChatStore.getState().messages.filter(m => !('msgId' in m) || m.msgId !== optId)
+      setMessages(remaining)
+    }
+    optimisticMsgIdRef.current = null
+    // Restore the typed content + attachments so a resend is one keypress away.
+    const draft = pendingSendRef.current
+    if (draft && draft.content) {
+      setInput(draft.content)
+      setAttachments(draft.attachments)
+    }
+    pushToast({ kind: 'error', text: 'Message not delivered — the connection dropped. Reconnecting; please send again.' })
+    // Drop the stale socket and reopen so the resend uses a fresh connection.
+    disconnect()
+    ensureConnected(accessToken).catch(() => {})
+  }
+
   function handleStop() {
     streamCancelledRef.current = true
     clearIdleTimer()
+    clearAckTimer()
     const sm = useChatStore.getState().streamingMsg
     const producedContent = !!sm && sm.steps.some(stepHasContent)
     const currentId = chatIdRef.current
@@ -648,6 +705,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
 
     pendingSendRef.current = { content, attachments: readyAttachments, wasNew: isNew }
+    optimisticMsgIdRef.current = optimisticUser.msgId
 
     if (isNew) {
       setCreatingChat(true)
@@ -675,6 +733,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         })
         await ensureConnected(accessToken)
         sendMessage({ chatId: res.chatId, content, model, systemPrompt, modelSettings: draftModelSettings, attachments: attachmentsPayload })
+        armAckWatchdog()
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
         setSending(false)
@@ -709,6 +768,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           parentId: editPid,
           attachments: attachmentsPayload,
         })
+        armAckWatchdog()
       } catch (err) {
         setSending(false)
         setErrorMsg(err instanceof Error ? err.message : String(err))
@@ -734,6 +794,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         modelSettings: draftModelSettings,
         attachments: attachmentsPayload,
       })
+      armAckWatchdog()
     } catch (err) {
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))

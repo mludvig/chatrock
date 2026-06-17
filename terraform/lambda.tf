@@ -196,7 +196,13 @@ resource "aws_lambda_function" "ws_send_message" {
   source_code_hash = filebase64sha256("${path.module}/dist/ws-sendMessage.zip")
   handler          = "index.handler"
   runtime          = local.lambda_runtime
-  timeout          = 300
+  # The streaming handler runs an agentic loop (web search + file reads + Bedrock).
+  # 128 MB (the AWS default) is CPU-starved; a long tool-use task at 128 MB blew
+  # past the old 300s wall and the Lambda was killed mid-stream, orphaning turns.
+  # More memory ⇒ proportionally more CPU ⇒ much faster; longer timeout for genuine
+  # multi-round tasks. Both are independent of the WS API Gateway integration timeout.
+  memory_size = 1024
+  timeout     = 600
   environment { variables = local.lambda_env_base }
   tags = { Env = var.env }
 }

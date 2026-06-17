@@ -72,6 +72,25 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
+  // Immediate ack: positive confirmation that the send reached the backend.
+  // The client arms a short watchdog after sending; receiving any frame (this
+  // ack first) proves the WebSocket is live. No ack ⇒ the frame was dropped by
+  // a stale connection, and the client recovers instead of hanging on "Processing…".
+  await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'ack' }) })
+
+  // Advance the chat's activeLeafId to a just-persisted turn. Called after EVERY
+  // turn write (user prompt + each assistant/tool turn + partial flush) so that a
+  // non-graceful termination (e.g. Lambda timeout mid-stream) can never orphan
+  // committed turns: activeLeafId always points at the latest durable turn, so a
+  // page reload or a follow-up send chains from the right place with full context.
+  const advanceLeaf = async (msgId: string) => {
+    try {
+      await updateChatActiveLeaf(sub, chatId, msgId)
+    } catch (e) {
+      console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
+    }
+  }
+
   // Load and resolve preferences across all three layers: user → project → chat
   // Use client memoryEnabled as a preliminary filter for the DDB memory loads (optimisation).
   const clientMemoryEnabled = modelSettings.memoryEnabled !== false
@@ -293,6 +312,7 @@ export const buildHandler = (postFn: PostFn) => async (
       responseId,
     }
     await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
+    await advanceLeaf(userMsgId)
     const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
     bedrockMessages = await Promise.all(
       buildActivePath(allRows, userMsgId).map(async m => ({
@@ -322,6 +342,7 @@ export const buildHandler = (postFn: PostFn) => async (
       responseId,
     }
     await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
+    await advanceLeaf(userMsgId)
 
     // Build Bedrock message history via the active-path tree walk.
     // Combine prior rows with the just-created user turn, then walk the active path
@@ -393,6 +414,7 @@ export const buildHandler = (postFn: PostFn) => async (
       incomplete: true,
     })
     lastTurnMsgId = turnMsgId
+    await advanceLeaf(turnMsgId)
   }
 
   let errored = false
@@ -458,6 +480,9 @@ export const buildHandler = (postFn: PostFn) => async (
               ? { webSearch: effectiveModelSettings.webSearch } : {}),
           })
           lastTurnMsgId = turnMsgId
+          // Advance the durable leaf as each turn commits, so a mid-stream kill
+          // (e.g. Lambda timeout) never orphans this turn from the active path.
+          await advanceLeaf(turnMsgId)
           // Reset partial accumulator — this turn is fully persisted
           partialText = ''
           partialTurnIndex = chunk.turnIndex + 1
