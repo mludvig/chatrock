@@ -30,20 +30,40 @@ export function connect(accessToken: string): Promise<void> {
     return Promise.resolve()
   }
   return new Promise((resolve, reject) => {
-    socket = new WebSocket(`${ENV.wsUrl}?token=${encodeURIComponent(accessToken)}`)
-    socket.onopen  = () => resolve()
-    socket.onerror = () => reject(new Error('WebSocket connect failed'))
-    socket.onmessage = (ev) => {
-      try {
-        const data: WSEvent = JSON.parse(ev.data)
-        onEventCb?.(data)
-      } catch {
-        // ignore malformed frames
+    let attempts = 0
+    const MAX_ATTEMPTS = 3
+
+    const attempt = () => {
+      attempts++
+      const ws = new WebSocket(`${ENV.wsUrl}?token=${encodeURIComponent(accessToken)}`)
+
+      ws.onopen = () => {
+        socket = ws
+        resolve()
+      }
+      ws.onerror = () => {
+        if (attempts < MAX_ATTEMPTS) {
+          setTimeout(attempt, 1500)
+        } else {
+          reject(new Error('WebSocket connect failed'))
+        }
+      }
+      ws.onmessage = (ev) => {
+        try {
+          const data: WSEvent = JSON.parse(ev.data)
+          onEventCb?.(data)
+        } catch {
+          // ignore malformed frames
+        }
+      }
+      // Only clear the module-level socket if it's still this specific instance,
+      // so a concurrent reconnect attempt doesn't get wiped by a stale onclose.
+      ws.onclose = () => {
+        if (socket === ws) socket = null
       }
     }
-    socket.onclose = () => {
-      socket = null
-    }
+
+    attempt()
   })
 }
 
