@@ -46,12 +46,6 @@ resource "aws_cloudfront_distribution" "chatrock" {
   web_acl_id          = aws_wafv2_web_acl.chatrock.arn
   price_class         = "PriceClass_100"
 
-  logging_config {
-    bucket          = aws_s3_bucket.logs.bucket_regional_domain_name
-    prefix          = "cloudfront/"
-    include_cookies = false
-  }
-
   # ── Origins ──────────────────────────────────────────────────────────────
   origin {
     domain_name              = aws_s3_bucket.spa.bucket_regional_domain_name
@@ -178,6 +172,39 @@ resource "aws_cloudfront_distribution" "chatrock" {
   }
 
   tags = { Env = var.env }
+}
+
+# ── CloudFront standard logs v2 → S3 (JSON, Hive-partitioned) ────────────────
+# Replaces the legacy logging_config block (v1 flat layout, us-east-1 only).
+# The CloudWatch vended-logs API must be called in us-east-1 regardless of the
+# S3 bucket's region.
+
+resource "aws_cloudwatch_log_delivery_source" "cloudfront" {
+  provider     = aws.us_east_1
+  name         = "chatrock-cloudfront-access-logs-${var.env}"
+  resource_arn = aws_cloudfront_distribution.chatrock.arn
+  log_type     = "ACCESS_LOGS"
+}
+
+resource "aws_cloudwatch_log_delivery_destination" "cloudfront_s3" {
+  provider      = aws.us_east_1
+  name          = "chatrock-cloudfront-s3-${var.env}"
+  output_format = "json"
+
+  delivery_destination_configuration {
+    destination_resource_arn = "${aws_s3_bucket.logs.arn}/cloudfront"
+  }
+}
+
+resource "aws_cloudwatch_log_delivery" "cloudfront" {
+  provider                 = aws.us_east_1
+  delivery_source_name     = aws_cloudwatch_log_delivery_source.cloudfront.name
+  delivery_destination_arn = aws_cloudwatch_log_delivery_destination.cloudfront_s3.arn
+
+  s3_delivery_configuration = [{
+    suffix_path                 = "{yyyy}/{MM}/{dd}/{HH}"
+    enable_hive_compatible_path = true
+  }]
 }
 
 resource "aws_cloudfront_response_headers_policy" "security" {

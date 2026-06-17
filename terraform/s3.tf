@@ -1,11 +1,16 @@
 # ── Centralised logging bucket ────────────────────────────────────────────────
+# Must be in us-east-1: CloudFront standard logs v2 delivery resources require
+# us-east-1, and v1 logging_config also only delivers to us-east-1 buckets.
 
 resource "aws_s3_bucket" "logs" {
-  bucket = "chatrock-logs-${var.env}-${data.aws_caller_identity.current.account_id}"
-  tags   = { Env = var.env }
+  provider         = aws.us_east_1
+  bucket           = "chatrock-logs-${var.env}-${data.aws_caller_identity.current.account_id}-us-east-1-an"
+  bucket_namespace = "account-regional"
+  tags             = { Env = var.env }
 }
 
 resource "aws_s3_bucket_public_access_block" "logs" {
+  provider                = aws.us_east_1
   bucket                  = aws_s3_bucket.logs.id
   block_public_acls       = true
   block_public_policy     = true
@@ -14,7 +19,8 @@ resource "aws_s3_bucket_public_access_block" "logs" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "logs" {
-  bucket = aws_s3_bucket.logs.id
+  provider = aws.us_east_1
+  bucket   = aws_s3_bucket.logs.id
   rule {
     id     = "expire-logs"
     status = "Enabled"
@@ -24,21 +30,72 @@ resource "aws_s3_bucket_lifecycle_configuration" "logs" {
 }
 
 resource "aws_s3_bucket_ownership_controls" "logs" {
-  bucket = aws_s3_bucket.logs.id
+  provider = aws.us_east_1
+  bucket   = aws_s3_bucket.logs.id
   rule { object_ownership = "BucketOwnerPreferred" }
 }
 
 resource "aws_s3_bucket_acl" "logs" {
+  provider   = aws.us_east_1
   bucket     = aws_s3_bucket.logs.id
   acl        = "log-delivery-write"
   depends_on = [aws_s3_bucket_ownership_controls.logs, aws_s3_bucket_public_access_block.logs]
 }
 
+# Bucket policy for CloudFront standard logs v2 (delivery.logs.amazonaws.com).
+# The legacy ACL above covers WAF/Firehose; this policy covers the newer vended-logs delivery.
+data "aws_iam_policy_document" "logs_delivery_write" {
+  statement {
+    sid    = "AWSLogsDeliveryWrite"
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.logs.arn}/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  statement {
+    sid    = "AWSLogsDeliveryAclCheck"
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+    actions   = ["s3:GetBucketAcl", "s3:ListBucket"]
+    resources = [aws_s3_bucket.logs.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "logs" {
+  provider   = aws.us_east_1
+  bucket     = aws_s3_bucket.logs.id
+  policy     = data.aws_iam_policy_document.logs_delivery_write.json
+  depends_on = [aws_s3_bucket_public_access_block.logs]
+}
+
 # ── SPA bucket ────────────────────────────────────────────────────────────────
 
 resource "aws_s3_bucket" "spa" {
-  bucket = "chatrock-spa-${var.env}-${data.aws_caller_identity.current.account_id}"
-  tags   = { Env = var.env }
+  bucket           = "chatrock-spa-${var.env}-${data.aws_caller_identity.current.account_id}-${var.aws_region}-an"
+  bucket_namespace = "account-regional"
+  tags             = { Env = var.env }
 }
 
 resource "aws_s3_bucket_public_access_block" "spa" {
