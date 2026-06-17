@@ -151,12 +151,12 @@ test('enrichProjectFacts — passes existing memories in user message', async ()
   expect(userMsg).toContain('proj-1')
 })
 
-test('enrichProjectFacts — relaxed system prompt does not restrict sensitive data', async () => {
+test('enrichProjectFacts — system prompt requires user provenance and excludes general knowledge', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [], summary: '' }))
   await enrichProjectFacts(TRANSCRIPT, [])
   const systemPrompt = mockBedrock.converseOnce.mock.calls[0][1]
-  expect(systemPrompt).toContain('customer info')
-  expect(systemPrompt).not.toContain('NEVER capture')
+  expect(systemPrompt).toContain('PROVENANCE IS DECISIVE')
+  expect(systemPrompt).toContain('Never capture')
 })
 
 // ── enrichChatForProject ──────────────────────────────────────────────────────

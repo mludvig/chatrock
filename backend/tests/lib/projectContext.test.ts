@@ -82,16 +82,19 @@ describe('executeProjectReadFileTool', () => {
     expect(mockFetchS3Text).toHaveBeenCalledWith('k/notes.txt.extracted.txt')
   })
 
-  it('returns pdf summary with note when no extractedTextKey', async () => {
+  it('returns raw pdf bytes as a document block when no extractedTextKey', async () => {
+    const fakeBytes = new Uint8Array([1, 2, 3])
     mockGetProjectFile.mockResolvedValue({
       fileId: 'f2', filename: 'report.pdf', microLabel: 'Report', summary: 'Annual report.',
       contentType: 'application/pdf', s3Key: 'k/report.pdf',
       status: 'ready', inclusion: 'auto',
     } as Record<string, unknown>)
+    mockFetchS3Bytes.mockResolvedValue(fakeBytes)
     const result = await executeProjectReadFileTool({ fileId: 'f2', detail: 'full' }, ctx)
     expect(result.status).toBe('success')
-    expect(content0(result)).toMatchObject({ text: expect.stringContaining('Annual report.') })
-    expect(content0(result)).toMatchObject({ text: expect.stringContaining('Full text not available') })
+    // No extracted-text sidecar: the full PDF is sent verbatim as a document block
+    expect(content0(result)).toMatchObject({ document: { format: 'pdf', source: { bytes: fakeBytes } } })
+    expect(result.content![1]).toMatchObject({ text: expect.stringContaining('complete PDF') })
   })
 
   it('returns pdf full text when extractedTextKey exists', async () => {
