@@ -226,6 +226,21 @@ function ThinkingBlock({ text, done, streaming }: { text: string; done: boolean;
   // Auto-open while thinking is live; auto-collapse once done so the answer isn't buried.
   const [open, setOpen] = useState(!done)
   useEffect(() => { if (done) setOpen(false) }, [done])
+
+  // Some reasoning blocks carry only a signature (or are fully redacted) and have
+  // no visible text — Bedrock legitimately returns these. Render a flat, static
+  // label instead of an expandable panel with nothing inside it.
+  if (done && text.trim() === '') {
+    return (
+      <div className="thinking-block thinking-block--empty">
+        <span className="thinking-header thinking-header--static">
+          <FontAwesomeIcon icon={faBrain} className="thinking-brain" />
+          <span>Thought (no details shown)</span>
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div className={`thinking-block${open ? ' open' : ''}`}>
       <button className="thinking-header" onClick={() => setOpen(o => !o)}>

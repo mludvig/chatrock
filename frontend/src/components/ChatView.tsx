@@ -31,7 +31,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     userPreferences, triggerMemoryRefresh,
     draftModelSettings, draftSystemPrompt,
     setCurrentChatId, setDraftModelSettings, setDraftSystemPrompt,
-    projects,
+    projects, mergeProjectFiles,
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
@@ -184,6 +184,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     if (isNew && defaultModel && !newModel) setNewModel(defaultModel)
   }, [defaultModel, isNew, newModel])
+
+  // Project files are normally loaded by ProjectView/ProjectsPanel into the shared
+  // projectFilesById map. Opening a project chat directly (deep link, reload) never
+  // visits those screens, so read_project_file tool pills fell back to showing the
+  // raw fileId instead of the filename. Load them here too whenever a chat belongs
+  // to a project.
+  const chatProjectId = chatProject?.projectId
+  useEffect(() => {
+    if (!chatProjectId) return
+    api.listProjectFiles(chatProjectId).then(r => mergeProjectFiles(r.files)).catch(() => {})
+  }, [chatProjectId, mergeProjectFiles])
 
   // Pre-fill input with a draft when navigating to the fork (set via pendingDraftRef before navigate)
   const pendingDraftRef = useRef<string | null>(null)
