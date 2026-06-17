@@ -98,6 +98,32 @@ function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[]
 }
 
 /**
+ * Merge adjacent same-role messages into one, concatenating their content blocks.
+ *
+ * Bedrock's Converse API requires strictly alternating user/assistant roles. A
+ * conversation can legitimately end up with two consecutive same-role turns when
+ * an agentic loop is interrupted (e.g. Lambda timeout) right after persisting a
+ * tool-result (user-role) turn but before the model consumed it: a subsequent
+ * normal user message then chains as [… assistant(toolUse), user(toolResult),
+ * user(text)] → two user turns in a row → ValidationException.
+ *
+ * Coalescing is a no-op for a well-formed alternating history, so it is safe to
+ * apply unconditionally as a final guard before every Bedrock call.
+ */
+export function coalesceMessages(messages: Message[]): Message[] {
+  const out: Message[] = []
+  for (const msg of messages) {
+    const prev = out[out.length - 1]
+    if (prev && prev.role === msg.role) {
+      prev.content = [...(prev.content ?? []), ...(msg.content ?? [])]
+    } else {
+      out.push({ ...msg, content: [...(msg.content ?? [])] })
+    }
+  }
+  return out
+}
+
+/**
  * Return true if any message in the array contains a toolUse or toolResult block.
  * Bedrock requires toolConfig to be present whenever the message history contains
  * these blocks, even if we don't want to offer new tools this turn.
@@ -341,8 +367,11 @@ export async function* converseStream(
   if (tools.length === 0 && historyHasToolBlocks(messages)) {
     tools = [...WEB_TOOLS, MEMORY_TOOL, CACHE_POINT_TOOL]
   }
-  // Base messages are the incoming history (verbatim blocks replayed as-is)
-  const baseMessages: Message[] = [...messages]
+  // Base messages are the incoming history (verbatim blocks replayed as-is).
+  // Coalesce adjacent same-role turns so an interrupted agentic loop (which can
+  // leave the active leaf on a tool-result user turn) never produces two
+  // consecutive user messages → Bedrock ValidationException.
+  const baseMessages: Message[] = coalesceMessages(messages)
   // New messages added this session (grows with each tool-use round)
   const newMessages: Message[] = []
 

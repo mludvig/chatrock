@@ -472,7 +472,7 @@ test('inc2: response turns chain parentId from user turn through each assistant/
   expect(asst2.parentId).toBe(userTool1.msgId)
 })
 
-test('inc2: updateChatActiveLeaf called once after stream with the final turn msgId', async () => {
+test('inc2: activeLeafId advanced incrementally; final call is the final turn msgId', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
@@ -487,13 +487,18 @@ test('inc2: updateChatActiveLeaf called once after stream with the final turn ms
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
-  // The activeLeafId passed should be the final assistant turn's msgId
-  const lastActiveLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
-  const assistantRecord = mockDynamo.putMessage.mock.calls
-    .map(c => c[0] as Record<string, unknown>)
-    .find(r => r.role === 'assistant')!
+  // Leaf advanced per durable turn (user prompt, then assistant turn) — never orphaned.
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
+  const lastActiveLeaf = leafCalls[leafCalls.length - 1][2] as string
+  const records = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  const userRecord = records.find(r => r.role === 'user')!
+  const assistantRecord = records.find(r => r.role === 'assistant')!
+  // Final leaf is the final assistant turn
   expect(lastActiveLeaf).toBe(assistantRecord.msgId)
+  // The user prompt's msgId was also pinned as a leaf (so it survives a mid-stream kill)
+  const advancedIds = leafCalls.map(c => c[2])
+  expect(advancedIds).toContain(userRecord.msgId)
 })
 
 // ── Slice 1 (Inc 3): re-run an answer ────────────────────────────────────────
@@ -559,8 +564,9 @@ test('inc3: re-run updateChatActiveLeaf called with new leaf msgId', async () =>
 
   await buildHandler(mockPost)(rerunEvent())
 
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
-  const newLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
+  const newLeaf = leafCalls[leafCalls.length - 1][2] as string
   const assistantPut = mockDynamo.putMessage.mock.calls
     .map(c => c[0] as Record<string, unknown>)
     .find(r => r.role === 'assistant')!
@@ -691,8 +697,9 @@ test('inc5: edit updateChatActiveLeaf called once with the new assistant leaf', 
 
   await buildHandler(mockPost)(editEvent())
 
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
-  const newLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
+  const newLeaf = leafCalls[leafCalls.length - 1][2] as string
   const assistantPut = mockDynamo.putMessage.mock.calls
     .map(c => c[0] as Record<string, unknown>)
     .find(r => r.role === 'assistant')!
@@ -837,9 +844,10 @@ test('d3: cancel between turns — persisted turns survive, cancelled event emit
   expect(events.find(e => e.type === 'cancelled')).toBeDefined()
   expect(events.find(e => e.type === 'done')).toBeUndefined()
 
-  // activeLeafId set to the last persisted turn
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
-  const cancelledLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  // activeLeafId set to the last persisted turn (final advance call)
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
+  const cancelledLeaf = leafCalls[leafCalls.length - 1][2] as string
   const assistantPut = putCalls.find(r => r.role === 'assistant')!
   expect(cancelledLeaf).toBe(assistantPut.msgId)
 })
@@ -879,10 +887,78 @@ test('d3: cancel mid-turn — partial text flushed as assistant turn, cancelled 
   expect(events.find(e => e.type === 'cancelled')).toBeDefined()
   expect(events.find(e => e.type === 'done')).toBeUndefined()
 
-  // activeLeafId updated to the partial turn
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
-  const cancelLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  // activeLeafId updated to the partial turn (final advance call)
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
+  const cancelLeaf = leafCalls[leafCalls.length - 1][2] as string
   expect(cancelLeaf).toBe(partialPut!.msgId)
+})
+
+// ── Delivery ack + kill-resilient activeLeaf ─────────────────────────────────
+
+test('ack: emits an ack frame as the first WS frame on a valid send', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'delta' as const, text: 'hi' }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const frames = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  // ack must be the very first frame — and it must precede any content frame
+  expect(frames[0]).toEqual({ type: 'ack' })
+  const ackIdx = frames.findIndex(f => f.type === 'ack')
+  const deltaIdx = frames.findIndex(f => f.type === 'delta')
+  expect(ackIdx).toBeLessThan(deltaIdx)
+})
+
+test('ack: no ack frame when the chat is not found (error frame instead)', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue(undefined)
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'missing', content: 'Hi', model: MODEL, systemPrompt: '' }))
+
+  const frames = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  expect(frames.find(f => f.type === 'ack')).toBeUndefined()
+  expect(frames.find(f => f.type === 'error')).toBeDefined()
+})
+
+test('leaf-resilience: the user prompt is pinned as activeLeaf before streaming begins', async () => {
+  // Models the incident: a normal send whose stream is killed before any assistant
+  // turn commits. The user prompt must still be the activeLeaf so it survives a
+  // reload and a follow-up send chains from it (not orphaned at the prior leaf).
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: null })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  // Stream throws immediately with no turn and no partial text (mid-stall kill).
+  const converseStreamFn = jest.fn((_m: unknown, _s: unknown, _msgs: unknown, _settings: unknown) =>
+    (async function* () {
+      throw new Error('boom')
+      // eslint-disable-next-line no-unreachable
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    })()
+  )
+  mockBedrock.converseStream.mockImplementation(converseStreamFn as unknown as typeof mockBedrock.converseStream)
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'continue', model: MODEL, systemPrompt: '' }))
+
+  const userRecord = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'user')!
+  // activeLeaf was advanced to the user prompt before the stream ran
+  const advancedIds = mockDynamo.updateChatActiveLeaf.mock.calls.map(c => c[2])
+  expect(advancedIds).toContain(userRecord.msgId)
 })
 
 // ── Increment F: per-turn metadata + web-search toggle ───────────────────────
@@ -1310,10 +1386,11 @@ test('err2: Bedrock error mid-turn — activeLeafId updated to the flushed parti
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
   const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
   const partialPut = putCalls.find(r => r.role === 'assistant')!
-  const leafArg = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const leafArg = leafCalls[leafCalls.length - 1][2] as string
   expect(leafArg).toBe(partialPut.msgId)
 })
 
@@ -1355,9 +1432,10 @@ test('err4: Bedrock error before any output — activeLeafId updated to user tur
   expect(putCalls.filter(r => r.role === 'assistant')).toHaveLength(0)
 
   // activeLeafId still updated (to the user turn)
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
   const userPut = putCalls.find(r => r.role === 'user')!
-  const leafArg = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const leafArg = leafCalls[leafCalls.length - 1][2] as string
   expect(leafArg).toBe(userPut.msgId)
 })
 
@@ -1383,8 +1461,9 @@ test('err5: Bedrock error after complete turns — survived turns intact, last t
   expect(partialPut.blocks).toEqual([{ text: 'partial result' }])
   expect(partialPut.incomplete).toBe(true)
 
-  // activeLeaf points to the flushed partial
-  const leafArg = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  // activeLeaf points to the flushed partial (final advance call)
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  const leafArg = leafCalls[leafCalls.length - 1][2] as string
   expect(leafArg).toBe(partialPut.msgId)
 })
 
@@ -1498,8 +1577,9 @@ test('cont5: continue updateChatActiveLeaf called with the new continuation turn
 
   await buildHandler(mockPost)(continueEvent())
 
-  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
-  const newLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2] as string
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  expect(leafCalls.length).toBeGreaterThanOrEqual(1)
+  const newLeaf = leafCalls[leafCalls.length - 1][2] as string
   const asstPut = mockDynamo.putMessage.mock.calls
     .map(c => c[0] as Record<string, unknown>)
     .find(r => r.role === 'assistant')!

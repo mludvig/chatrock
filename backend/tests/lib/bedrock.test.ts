@@ -11,7 +11,7 @@
  *  6. All existing UI chunks (thinking_delta, thinking_done, delta,
  *     tool_call_start, tool_call, tool_result, stop) still flow through.
  */
-import { converseStream, bedrockClient } from '../../src/lib/bedrock'
+import { converseStream, coalesceMessages, bedrockClient } from '../../src/lib/bedrock'
 import * as tools from '../../src/lib/tools'
 
 // Mock the bedrockClient so we never hit AWS
@@ -773,4 +773,45 @@ test('read tools: cachePoint is always last when read tools present', async () =
   const lastTool = toolList[toolList.length - 1]
   expect(lastTool.toolSpec).toBeUndefined()
   expect(lastTool.cachePoint).toBeDefined()
+})
+
+// ── coalesceMessages: role-alternation guard ──────────────────────────────────
+
+describe('coalesceMessages', () => {
+  test('merges two consecutive user turns (interrupted agentic loop + new user msg)', () => {
+    const toolResultBlock = { toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' as const } }
+    const merged = coalesceMessages([
+      { role: 'user', content: [{ text: 'Q' }] },
+      { role: 'assistant', content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }] },
+      { role: 'user', content: [toolResultBlock] },        // dangling tool-result leaf
+      { role: 'user', content: [{ text: 'continue' }] },   // new user message
+    ])
+    // The two trailing user turns collapse into one valid user message
+    expect(merged).toHaveLength(3)
+    expect(merged[2].role).toBe('user')
+    expect(merged[2].content).toEqual([toolResultBlock, { text: 'continue' }])
+    // No two adjacent same-role messages remain
+    for (let i = 1; i < merged.length; i++) {
+      expect(merged[i].role).not.toBe(merged[i - 1].role)
+    }
+  })
+
+  test('is a no-op for a well-formed alternating history', () => {
+    const msgs = [
+      { role: 'user' as const, content: [{ text: 'Q' }] },
+      { role: 'assistant' as const, content: [{ text: 'A' }] },
+      { role: 'user' as const, content: [{ text: 'Q2' }] },
+    ]
+    expect(coalesceMessages(msgs)).toEqual(msgs)
+  })
+
+  test('does not mutate the input array or its messages', () => {
+    const input = [
+      { role: 'user' as const, content: [{ text: 'a' }] },
+      { role: 'user' as const, content: [{ text: 'b' }] },
+    ]
+    const snapshot = JSON.parse(JSON.stringify(input))
+    coalesceMessages(input)
+    expect(input).toEqual(snapshot)
+  })
 })

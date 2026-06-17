@@ -2,6 +2,7 @@ import { ENV } from '../env'
 import type { ModelSettings, TokenUsage } from './http'
 
 export type WSEvent =
+  | { type: 'ack' }
   | { type: 'delta';          text: string }
   | { type: 'thinking_delta'; text: string }
   | { type: 'thinking_done' }
