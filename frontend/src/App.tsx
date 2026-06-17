@@ -133,6 +133,15 @@ export default function App() {
     }
   }, [auth])
 
+  // Auto-retry on transient network errors (e.g. laptop wake / coming back online).
+  // The refresh token is still valid — we just couldn't reach the token endpoint.
+  const isNetworkError = /NetworkError|Failed to fetch|network/i.test(auth.error?.message ?? '')
+  useEffect(() => {
+    if (!isNetworkError) return
+    const timer = setTimeout(() => void auth.signinSilent(), 3000)
+    return () => clearTimeout(timer)
+  }, [isNetworkError, auth])
+
   if (auth.isLoading || (!auth.isAuthenticated && auth.user?.refresh_token && !auth.error)) {
     return <div className="splash">Loading…</div>
   }
@@ -140,8 +149,8 @@ export default function App() {
   if (auth.error) {
     return (
       <div className="splash error">
-        Auth error: {auth.error.message}
-        <button onClick={() => auth.removeUser()}>Reset</button>
+        {isNetworkError ? 'Connection error — retrying…' : `Auth error: ${auth.error.message}`}
+        <button onClick={() => void auth.removeUser().then(() => auth.signinRedirect())}>Reset</button>
       </div>
     )
   }
