@@ -361,6 +361,16 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
           }
           if (cleanStep.kind === 'text') {
             if (!isAssistant) {
+              // Timestamp blocks injected by the backend — render as a muted label, not as chat text
+              if (cleanStep.text.startsWith('Current timestamp: ')) {
+                const isoStr = cleanStep.text.slice('Current timestamp: '.length)
+                const displayTs = (() => {
+                  try { return new Date(isoStr).toLocaleString() } catch { return isoStr }
+                })()
+                return (
+                  <div key={i} className="msg-timestamp-label">{displayTs}</div>
+                )
+              }
               return (
                 <div key={i} className="md md--user">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>

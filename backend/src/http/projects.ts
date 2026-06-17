@@ -153,16 +153,26 @@ export const handler = async (
       return err(400, 'memoryEnabled must be a boolean')
     }
 
+    if (body.modelSettings !== undefined && (
+      typeof body.modelSettings !== 'object' || body.modelSettings === null || Array.isArray(body.modelSettings)
+    )) {
+      return err(400, 'modelSettings must be a plain object')
+    }
+
     const filteredFields: Partial<{
       name: string
       description: string
       instructions: string
       memoryEnabled: boolean
+      defaultModel: string
+      modelSettings: Record<string, unknown>
     }> = {}
     if (body.name !== undefined) filteredFields.name = body.name as string
     if (body.description !== undefined) filteredFields.description = body.description as string
     if (body.instructions !== undefined) filteredFields.instructions = body.instructions as string
     if (body.memoryEnabled !== undefined) filteredFields.memoryEnabled = body.memoryEnabled as boolean
+    if (body.defaultModel !== undefined) filteredFields.defaultModel = body.defaultModel as string
+    if (body.modelSettings !== undefined) filteredFields.modelSettings = body.modelSettings as Record<string, unknown>
 
     await updateProjectFields(sub, projectId, filteredFields)
     console.log(JSON.stringify({ event: 'project_updated', sub, projectId }))

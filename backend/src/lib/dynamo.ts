@@ -321,6 +321,8 @@ export async function updateProjectFields(
     description: string
     instructions: string
     memoryEnabled: boolean
+    defaultModel: string
+    modelSettings: Record<string, unknown>
     updatedAt: string
   }>,
 ): Promise<void> {
@@ -333,6 +335,8 @@ export async function updateProjectFields(
     description: 'description',
     instructions: 'instructions',
     memoryEnabled: 'memoryEnabled',
+    defaultModel: 'defaultModel',
+    modelSettings: 'modelSettings',
   }
 
   for (const [key, value] of Object.entries(fields)) {

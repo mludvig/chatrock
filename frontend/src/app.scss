@@ -736,6 +736,13 @@ $header-h: 45px;
   }
 }
 
+.msg-timestamp-label {
+  font-size: 11px;
+  color: $muted;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
 .msg-meta {
   font-size: 11px;
   color: $muted;
@@ -1702,6 +1709,13 @@ $mobile: 720px;
     justify-content: space-between;
     margin-bottom: 10px;
     .pref-row-label { font-size: 13px; }
+  }
+
+  .pref-hint {
+    font-size: 11px;
+    color: $muted;
+    margin-top: -6px;
+    line-height: 1.4;
   }
 
   .saved-indicator {

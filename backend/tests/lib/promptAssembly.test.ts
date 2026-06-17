@@ -40,34 +40,46 @@ test('undefined persona → persona section absent', () => {
   expect(result.trim()).toBe('Base.')
 })
 
-test('injectCurrentDate=true + now → date line present', () => {
+test('now provided → chat creation date always injected', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: '',
+    prefs: {},
+    memories: [],
+    now: '2026-06-14T10:00:00.000Z',
+  })
+  expect(result).toContain('Chat created: June 14, 2026.')
+})
+
+test('injectCurrentDate=true → timestamp note appended to date line', () => {
   const result = assembleSystemPrompt({
     basePrompt: '',
     prefs: { injectCurrentDate: true },
     memories: [],
     now: '2026-06-14T10:00:00.000Z',
   })
-  expect(result).toContain("Today's date is 2026-06-14.")
+  expect(result).toContain('Chat created: June 14, 2026.')
+  expect(result).toContain("Current timestamp")
 })
 
-test('injectCurrentDate=false → date line absent', () => {
+test('injectCurrentDate=false → date present but no timestamp note', () => {
   const result = assembleSystemPrompt({
     basePrompt: '',
     prefs: { injectCurrentDate: false },
     memories: [],
     now: '2026-06-14T10:00:00.000Z',
   })
-  expect(result).not.toContain("Today's date is")
+  expect(result).toContain('Chat created: June 14, 2026.')
+  expect(result).not.toContain("'Current timestamp'")
 })
 
-test('injectCurrentDate=true but no now → date line absent', () => {
+test('no now → date line absent', () => {
   const result = assembleSystemPrompt({
     basePrompt: '',
     prefs: { injectCurrentDate: true },
     memories: [],
     // now is undefined
   })
-  expect(result).not.toContain("Today's date is")
+  expect(result).not.toContain('Chat created:')
 })
 
 test('answerLength=short → concise directive present', () => {
@@ -145,7 +157,6 @@ test('all parts together → correct ordering: effective-instructions → date �
     basePrompt: 'Base prompt here.',
     prefs: {
       persona: 'You are an expert.',
-      injectCurrentDate: true,
       answerLength: 'short',
     },
     memories: [{ text: 'User is a developer', category: 'role' }],
@@ -157,7 +168,7 @@ test('all parts together → correct ordering: effective-instructions → date �
   expect(result).not.toContain('You are an expert.')
 
   const baseIdx = result.indexOf('Base prompt here.')
-  const dateIdx = result.indexOf("Today's date is 2026-06-14.")
+  const dateIdx = result.indexOf('Chat created: June 14, 2026.')
   const lengthIdx = result.indexOf('concise')
   const memoryIdx = result.indexOf('What you know about the user:')
 
@@ -183,15 +194,16 @@ test('effective instructions appear before memory block (basePrompt is effective
   expect(baseIdx).toBeLessThan(memIdx)
 })
 
-test('date line uses only YYYY-MM-DD portion of ISO string', () => {
+test('date line uses human-readable month name, not raw ISO string', () => {
   const result = assembleSystemPrompt({
     basePrompt: '',
-    prefs: { injectCurrentDate: true },
+    prefs: {},
     memories: [],
     now: '2026-06-14T23:59:59.999Z',
   })
-  expect(result).toContain("Today's date is 2026-06-14.")
+  expect(result).toContain('Chat created: June 14, 2026.')
   expect(result).not.toContain('T23:59:59')
+  expect(result).not.toContain('2026-06-14')
 })
 
 // ── memId support in memory block ────────────────────────────────────────────
@@ -664,7 +676,6 @@ test('order: effectiveInstructions → projectInstructions → date → answerLe
   const result = assembleSystemPrompt({
     basePrompt: 'Chat instructions.',
     prefs: {
-      injectCurrentDate: true,
       answerLength: 'short',
     },
     memories: [{ memId: 'um-1', text: 'User likes brevity', category: 'style' }],
@@ -677,7 +688,7 @@ test('order: effectiveInstructions → projectInstructions → date → answerLe
 
   const chatIdx = result.indexOf('Chat instructions.')
   const projInstIdx = result.indexOf('Project instructions:')
-  const dateIdx = result.indexOf("Today's date is 2026-06-16.")
+  const dateIdx = result.indexOf('Chat created: June 16, 2026.')
   const lengthIdx = result.indexOf('concise')
   const userMemIdx = result.indexOf('What you know about the user:')
   const projMemIdx = result.indexOf('What you know about this project:')

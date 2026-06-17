@@ -215,12 +215,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         setDraftModelSettings(chat.modelSettings)
       } else if (currentModelDef) {
         const base = defaultSettings(currentModelDef.capabilities)
+        const project = chat?.projectId
+          ? useChatStore.getState().projects.find(p => p.projectId === chat.projectId)
+          : null
+        const projectLayer = project?.modelSettings ?? {}
         setDraftModelSettings({
           ...base,
           ...(userPreferences.webSearch !== undefined ? { webSearch: userPreferences.webSearch } : {}),
           ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
             ? { thinkingEffort: userPreferences.thinkingEffort }
             : {}),
+          ...projectLayer,
         })
       }
     }
@@ -235,6 +240,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     const chat = chats.find(c => c.chatId === chatId)
     if (chat?.modelSettings && Object.keys(chat.modelSettings).length > 0) {
       setDraftModelSettings(chat.modelSettings)
+    } else if (chat) {
+      const project = chat.projectId ? projects.find(p => p.projectId === chat.projectId) : null
+      const projectLayer = project?.modelSettings ?? {}
+      if (Object.keys(projectLayer).length > 0) {
+        setDraftModelSettings({ ...projectLayer })
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chats, chatId, isNew])

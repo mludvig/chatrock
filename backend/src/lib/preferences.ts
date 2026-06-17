@@ -1,10 +1,11 @@
 export interface UserPreferences {
   persona?: string                    // free-text custom instructions
-  injectCurrentDate?: boolean         // prepend current date to prompt
+  injectCurrentDate?: boolean         // true = prepend timestamp block to user turns
   answerLength?: 'default' | 'short' | 'extensive'
   defaultModel?: string
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearch?: boolean
+  memoryEnabled?: boolean             // false = skip user memory injection + extraction
   temperature?: number
   topP?: number
   topK?: number
@@ -13,8 +14,8 @@ export interface UserPreferences {
 
 export interface ResolveInput {
   user?: UserPreferences
-  project?: UserPreferences           // not used yet, bakes in for Phase 2
-  chat?: UserPreferences              // not used yet, bakes in for Phase 2
+  project?: UserPreferences
+  chat?: UserPreferences
 }
 
 // Resolution order: chat overrides project overrides user (per-key, shallow)

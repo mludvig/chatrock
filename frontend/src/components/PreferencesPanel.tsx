@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/http'
-import type { UserPreferences, ModelCapabilities } from '../api/http'
+import type { UserPreferences, ModelCapabilities, ModelSettings, Project } from '../api/http'
 import { THINKING_EFFORTS } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import ModelSettingsPanel from './ModelSettingsPanel'
@@ -11,15 +11,28 @@ export default function PreferencesPanel() {
     currentChatId, draftModelSettings, draftSystemPrompt,
     setDraftModelSettings, setDraftSystemPrompt,
     updateChatSettings, updateChatSystemPrompt, chats,
+    projects, updateProject,
   } = useChatStore()
 
-  const [tab, setTab] = useState<'defaults' | 'chat'>('chat')
+  const activeChat = currentChatId ? chats.find(c => c.chatId === currentChatId) : null
+  const activeProject = activeChat?.projectId
+    ? projects.find(p => p.projectId === activeChat.projectId)
+    : null
+
+  type Tab = 'defaults' | 'project' | 'chat'
+
+  const [tab, setTab] = useState<Tab>('chat')
   const [prefs, setPrefs] = useState<UserPreferences>(userPreferences)
   const [saved, setSaved] = useState(false)
   const debounceRef = useRef<number | null>(null)
   const chatInstructionsDebounceRef = useRef<number | null>(null)
   const chatSettingsDebounceRef = useRef<number | null>(null)
   const initialLoadRef = useRef(false)
+
+  // Project tab state
+  const [projectDraft, setProjectDraft] = useState<Partial<Project>>({})
+  const projectDebounceRef = useRef<number | null>(null)
+  const projectDraftInitRef = useRef<string | null>(null)
 
   // Load preferences from server on mount
   useEffect(() => {
@@ -31,6 +44,19 @@ export default function PreferencesPanel() {
       initialLoadRef.current = true
     })
   }, [setUserPreferences])
+
+  // Seed project draft when active project changes
+  useEffect(() => {
+    if (!activeProject) return
+    if (projectDraftInitRef.current === activeProject.projectId) return
+    projectDraftInitRef.current = activeProject.projectId
+    setProjectDraft({
+      instructions:  activeProject.instructions,
+      defaultModel:  activeProject.defaultModel,
+      modelSettings: activeProject.modelSettings,
+      memoryEnabled: activeProject.memoryEnabled,
+    })
+  }, [activeProject])
 
   // Auto-save defaults with 800ms debounce
   useEffect(() => {
@@ -54,7 +80,6 @@ export default function PreferencesPanel() {
   }
 
   const isNew = !currentChatId
-  const activeChat = currentChatId ? chats.find(c => c.chatId === currentChatId) : null
 
   const selectedModelDef = models.find(m => m.id === prefs.defaultModel)
   const selectedCaps = selectedModelDef?.capabilities
@@ -66,6 +91,13 @@ export default function PreferencesPanel() {
   const activeChatModelDef = models.find(m => m.id === activeChatModelId)
   const activeCaps: ModelCapabilities = activeChatModelDef?.capabilities
     ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
+
+  // Caps for the project's default model
+  const projectModelId = projectDraft.defaultModel ?? ''
+  const projectModelDef = models.find(m => m.id === projectModelId)
+  const projectCaps: ModelCapabilities = projectModelDef?.capabilities
+    ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
+  const projectSupportsThinking = projectCaps.thinking !== 'none'
 
   function handleChatInstructionsChange(value: string) {
     if (isNew) {
@@ -79,7 +111,7 @@ export default function PreferencesPanel() {
     }
   }
 
-  function handleChatSettingsChange(newSettings: import('../api/http').ModelSettings) {
+  function handleChatSettingsChange(newSettings: ModelSettings) {
     setDraftModelSettings(newSettings)
     if (!isNew && currentChatId) {
       updateChatSettings(currentChatId, newSettings)
@@ -90,12 +122,35 @@ export default function PreferencesPanel() {
     }
   }
 
+  function patchProjectDraft(update: Partial<Project>) {
+    if (!activeProject) return
+    setProjectDraft(prev => {
+      const next = { ...prev, ...update }
+      updateProject(activeProject.projectId, next as Partial<Project>)
+      if (projectDebounceRef.current !== null) clearTimeout(projectDebounceRef.current)
+      projectDebounceRef.current = window.setTimeout(() => {
+        api.updateProject(activeProject.projectId, next as Parameters<typeof api.updateProject>[1]).catch(() => {})
+      }, 800)
+      return next
+    })
+  }
+
+  function patchProjectModelSettings(update: Partial<ModelSettings>) {
+    patchProjectDraft({ modelSettings: { ...(projectDraft.modelSettings ?? {}), ...update } })
+  }
+
   useEffect(() => {
     return () => {
       if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
       if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
+      if (projectDebounceRef.current !== null) clearTimeout(projectDebounceRef.current)
     }
   }, [])
+
+  // If the project disappears (chat moved out), fall back to 'chat' tab
+  useEffect(() => {
+    if (!activeProject && tab === 'project') setTab('chat')
+  }, [activeProject, tab])
 
   return (
     <div className="prefs-panel">
@@ -106,6 +161,14 @@ export default function PreferencesPanel() {
         >
           Defaults
         </button>
+        {activeProject && (
+          <button
+            className={`prefs-tab${tab === 'project' ? ' active' : ''}`}
+            onClick={() => setTab('project')}
+          >
+            This project
+          </button>
+        )}
         <button
           className={`prefs-tab${tab === 'chat' ? ' active' : ''}`}
           onClick={() => setTab('chat')}
@@ -204,10 +267,10 @@ export default function PreferencesPanel() {
             </div>
           </div>
 
-          {/* Inject current date */}
+          {/* Inject current timestamp */}
           <div className="pref-section">
             <div className="pref-row">
-              <span className="pref-row-label">Inject current date</span>
+              <span className="pref-row-label">Inject current timestamp</span>
               <button
                 className={`toggle-btn${prefs.injectCurrentDate !== false ? ' active' : ''}`}
                 onClick={() => patch({ injectCurrentDate: prefs.injectCurrentDate === false ? true : false })}
@@ -218,6 +281,99 @@ export default function PreferencesPanel() {
           </div>
 
           <div className="saved-indicator">{saved ? 'Saved' : ''}</div>
+        </div>
+      )}
+
+      {tab === 'project' && activeProject && (
+        <div className="prefs-tab-content">
+          <p className="prefs-desc">Applies to all chats in <strong>{activeProject.name}</strong>. Per-chat settings override these.</p>
+
+          {/* Project instructions */}
+          <div className="pref-section">
+            <div className="pref-label">Project instructions</div>
+            <textarea
+              className="pref-textarea"
+              placeholder="Context or instructions for the assistant in every chat within this project…"
+              value={projectDraft.instructions ?? ''}
+              onChange={e => patchProjectDraft({ instructions: e.target.value })}
+            />
+          </div>
+
+          {/* Project default model */}
+          <div className="pref-section">
+            <div className="pref-label">Default model</div>
+            <select
+              className="pref-select"
+              value={projectDraft.defaultModel ?? ''}
+              onChange={e => patchProjectDraft({ defaultModel: e.target.value || undefined })}
+            >
+              <option value="">Same as user default</option>
+              {models.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Thinking effort */}
+          {projectSupportsThinking && (
+            <div className="pref-section">
+              <div className="pref-label">Thinking effort</div>
+              <div className="effort-buttons">
+                {THINKING_EFFORTS.map(e => (
+                  <button
+                    key={e}
+                    className={`effort-btn${(projectDraft.modelSettings?.thinkingEffort ?? 'off') === e ? ' active' : ''}`}
+                    onClick={() => patchProjectModelSettings({ thinkingEffort: e })}
+                  >
+                    {e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Web search */}
+          <div className="pref-section">
+            <div className="pref-row">
+              <span className="pref-row-label">Web search</span>
+              <button
+                className={`toggle-btn${projectDraft.modelSettings?.webSearch !== false ? ' active' : ''}`}
+                onClick={() => patchProjectModelSettings({ webSearch: projectDraft.modelSettings?.webSearch === false ? true : false })}
+              >
+                {projectDraft.modelSettings?.webSearch !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+
+          {/* Answer length */}
+          <div className="pref-section">
+            <div className="pref-label">Answer length</div>
+            <div className="effort-buttons">
+              {(['default', 'short', 'extensive'] as const).map(len => (
+                <button
+                  key={len}
+                  className={`effort-btn${(projectDraft.modelSettings?.answerLength ?? 'default') === len ? ' active' : ''}`}
+                  onClick={() => patchProjectModelSettings({ answerLength: len })}
+                >
+                  {len.charAt(0).toUpperCase() + len.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Project memory */}
+          <div className="pref-section">
+            <div className="pref-row">
+              <span className="pref-row-label">Project memory</span>
+              <button
+                className={`toggle-btn${projectDraft.memoryEnabled !== false ? ' active' : ''}`}
+                onClick={() => patchProjectDraft({ memoryEnabled: projectDraft.memoryEnabled === false ? true : false })}
+              >
+                {projectDraft.memoryEnabled !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="pref-hint">When off, project memories are not injected and the manage_project_memory tool is disabled.</div>
+          </div>
         </div>
       )}
 
@@ -240,6 +396,35 @@ export default function PreferencesPanel() {
             settings={draftModelSettings}
             onChange={handleChatSettingsChange}
           />
+
+          {/* Answer length */}
+          <div className="pref-section">
+            <div className="pref-label">Answer length</div>
+            <div className="effort-buttons">
+              {(['default', 'short', 'extensive'] as const).map(len => (
+                <button
+                  key={len}
+                  className={`effort-btn${(draftModelSettings.answerLength ?? 'default') === len ? ' active' : ''}`}
+                  onClick={() => handleChatSettingsChange({ ...draftModelSettings, answerLength: len })}
+                >
+                  {len.charAt(0).toUpperCase() + len.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Inject current timestamp */}
+          <div className="pref-section">
+            <div className="pref-row">
+              <span className="pref-row-label">Inject current timestamp</span>
+              <button
+                className={`toggle-btn${draftModelSettings.injectCurrentDate !== false ? ' active' : ''}`}
+                onClick={() => handleChatSettingsChange({ ...draftModelSettings, injectCurrentDate: draftModelSettings.injectCurrentDate === false ? true : false })}
+              >
+                {draftModelSettings.injectCurrentDate !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

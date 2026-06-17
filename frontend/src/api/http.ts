@@ -42,6 +42,8 @@ export interface Project {
   description?: string
   instructions?: string
   memoryEnabled?: boolean
+  defaultModel?: string
+  modelSettings?: ModelSettings
   createdAt: string
   updatedAt: string
 }
@@ -99,6 +101,8 @@ export interface ModelSettings {
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearch?: boolean
   memoryEnabled?: boolean
+  answerLength?: 'default' | 'short' | 'extensive'
+  injectCurrentDate?: boolean
 }
 
 export interface UserMemory {
@@ -206,7 +210,7 @@ export const api = {
   listProjects: () => req<{ projects: Project[] }>('GET', '/api/projects'),
   createProject: (name: string) => req<{ projectId: string }>('POST', '/api/projects', { name }),
   getProject: (projectId: string) => req<{ project: Project; chats: Chat[] }>('GET', `/api/projects/${projectId}`),
-  updateProject: (projectId: string, fields: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'memoryEnabled'>>) =>
+  updateProject: (projectId: string, fields: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'memoryEnabled' | 'defaultModel' | 'modelSettings'>>) =>
     req<{ ok: boolean }>('PATCH', `/api/projects/${projectId}`, fields),
   deleteProject: (projectId: string) => req<void>('DELETE', `/api/projects/${projectId}`),
   moveChatToProject: (chatId: string, projectId: string | null) =>
