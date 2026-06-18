@@ -4,7 +4,8 @@ export interface UserPreferences {
   answerLength?: 'default' | 'short' | 'extensive'
   defaultModel?: string
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
-  webSearch?: boolean
+  webSearchEnabled?: boolean
+  webSearchProvider?: 'jina' | 'agentcore'  // which backend powers the web_search tool
   memoryEnabled?: boolean             // false = skip user memory injection + extraction
   temperature?: number
   topP?: number

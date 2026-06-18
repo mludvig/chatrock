@@ -1,6 +1,7 @@
 import type { Tool, ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
+import { callGatewayTool } from './agentcore/gateway'
 
 // ── Tool execution context ────────────────────────────────────────────────────
 
@@ -8,6 +9,7 @@ export interface ToolContext {
   sub: string
   projectId?: string
   chatId?: string
+  webSearchProvider?: 'jina' | 'agentcore'
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -179,7 +181,9 @@ export async function executeTool(name: string, input: Record<string, string>, c
       return await executeProjectReadChatTool(input, ctx)
     }
     if (name === 'web_search') {
-      const result = await jinaSearch(input.query)
+      const provider = ctx.webSearchProvider === 'agentcore' ? 'agentcore' : 'jina'
+      const result = provider === 'agentcore' ? await agentcoreSearch(input.query) : await jinaSearch(input.query)
+      console.log(JSON.stringify({ event: 'web_search', provider, result: 'success' }))
       return { toolUseId: '', content: [{ text: result }], status: 'success' }
     }
     if (name === 'web_fetch') {
@@ -216,6 +220,36 @@ async function jinaSearch(query: string): Promise<string> {
   if (results.length === 0) return JSON.stringify({ results: [], text: 'No results found.' })
 
   // Also provide a plain-text version the model can cite from
+  const text = results.map((r, i) =>
+    `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.description}`
+  ).join('\n\n')
+
+  return JSON.stringify({ results, text })
+}
+
+// Amazon Bedrock AgentCore Web Search — routed through the MCP gateway (see ./agentcore/gateway.ts).
+// Mapped into the same { results, text } contract jinaSearch produces so toolResults.ts card
+// parsing and the SearchResult shape work unchanged regardless of provider.
+interface AgentCoreSearchResult {
+  text: string
+  url?: string
+  title?: string
+  publishedDate?: string
+}
+
+async function agentcoreSearch(query: string): Promise<string> {
+  const res = await callGatewayTool('WebSearch', { query: query.slice(0, 200), maxResults: 5 })
+  if (res.isError) throw new Error(`AgentCore web search failed: ${res.text}`)
+
+  const parsed = JSON.parse(res.text) as { results?: AgentCoreSearchResult[] }
+  const results: SearchResult[] = (parsed.results ?? []).map(r => ({
+    title: r.title ?? r.url ?? '',
+    url: r.url ?? '',
+    description: r.text ?? '',
+  }))
+
+  if (results.length === 0) return JSON.stringify({ results: [], text: 'No results found.' })
+
   const text = results.map((r, i) =>
     `[${i + 1}] ${r.title}\nURL: ${r.url}\n${r.description}`
   ).join('\n\n')

@@ -12,6 +12,7 @@
  *     tool_call_start, tool_call, tool_result, stop) still flow through.
  */
 import { converseStream, coalesceMessages, bedrockClient } from '../../src/lib/bedrock'
+import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/blocks'
 import * as tools from '../../src/lib/tools'
 
 // Mock the bedrockClient so we never hit AWS
@@ -225,6 +226,58 @@ test('yields a user turn chunk for tool results', async () => {
   })
 })
 
+// ── Regression: many parallel tool calls in one round must not blow past the
+// DynamoDB 400KB item limit when their results are bundled into one turn ──────
+//
+// Reproduces a real production failure: the model fanned out 30 parallel web_search
+// calls in a single round; each result was capped at the old flat 30KB, but their sum
+// (~900KB) exceeded the DynamoDB item limit and the PutItem was rejected with
+// "ValidationException: Item size has exceeded the maximum allowed size".
+
+test('30 parallel tool calls in one round: aggregate tool-result content stays within TOOL_RESULTS_ROUND_CAP', async () => {
+  const N = 30
+  const bigResult = 'x'.repeat(40_000) // bigger than the old flat 30KB cap on its own
+
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    ...Array.from({ length: N }, (_, i) => [
+      { contentBlockStart: { contentBlockIndex: i, start: { toolUse: { toolUseId: `tu-${i}`, name: 'web_search' } } } },
+      { contentBlockDelta: { contentBlockIndex: i, delta: { toolUse: { input: '{"query":"x"}' } } } },
+      { contentBlockStop: { contentBlockIndex: i } },
+    ]).flat(),
+    { messageStop: { stopReason: 'tool_use' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
+  ]))
+  for (let i = 0; i < N; i++) {
+    mockExecuteTool.mockResolvedValueOnce({
+      toolUseId: `tu-${i}`,
+      content: [{ text: bigResult }],
+      status: 'success',
+    })
+  }
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Done' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {})) {
+    chunks.push(chunk)
+  }
+
+  const userTurn = (chunks as Array<{ type: string; role: string; content: Array<Record<string, unknown>> }>)
+    .find(c => c.type === 'turn' && c.role === 'user')!
+  expect(userTurn.content).toHaveLength(N)
+
+  const totalBytes = userTurn.content.reduce((sum, block) => {
+    const toolResult = block.toolResult as { content: Array<{ text: string }> }
+    return sum + Buffer.byteLength(toolResult.content[0].text, 'utf8')
+  }, 0)
+  expect(totalBytes).toBeLessThanOrEqual(TOOL_RESULTS_ROUND_CAP)
+})
+
 // ── Test 6: contentBlockStart may not fire before contentBlockDelta for text ──
 //
 // Defensive: if Bedrock skips contentBlockStart for a plain text block (seen in
@@ -316,9 +369,9 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
   expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
 })
 
-// ── F2: webSearch:false passes no toolConfig to Bedrock ──────────────────────
+// ── F2: webSearchEnabled:false passes no toolConfig to Bedrock ──────────────────────
 
-test('f2: webSearch:false, memoryEnabled:false sends no toolConfig in the Bedrock request', async () => {
+test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the Bedrock request', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -328,7 +381,7 @@ test('f2: webSearch:false, memoryEnabled:false sends no toolConfig in the Bedroc
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { webSearch: false, memoryEnabled: false }, undefined, undefined)) {
+  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false }, undefined, undefined)) {
     chunks.push(chunk)
   }
 
@@ -337,7 +390,7 @@ test('f2: webSearch:false, memoryEnabled:false sends no toolConfig in the Bedroc
   expect(cmdInput.toolConfig).toBeUndefined()
 })
 
-test('f2: webSearch:true (default) sends toolConfig to Bedrock', async () => {
+test('f2: webSearchEnabled:true (default) sends toolConfig to Bedrock', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -351,14 +404,14 @@ test('f2: webSearch:true (default) sends toolConfig to Bedrock', async () => {
     chunks.push(chunk)
   }
 
-  // Default (webSearch not set) should include toolConfig
+  // Default (webSearchEnabled not set) should include toolConfig
   const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
   expect(cmdInput.toolConfig).toBeDefined()
 })
 
 // ── Memory tool assembly tests ────────────────────────────────────────────────
 
-test('tools: webSearch:false, memoryEnabled:true → manage_memory tool present, web tools absent', async () => {
+test('tools: webSearchEnabled:false, memoryEnabled:true → manage_memory tool present, web tools absent', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -368,7 +421,7 @@ test('tools: webSearch:false, memoryEnabled:true → manage_memory tool present,
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], { webSearch: false, memoryEnabled: true }, undefined, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: true }, undefined, undefined)) {
     // drain
   }
 
@@ -382,7 +435,7 @@ test('tools: webSearch:false, memoryEnabled:true → manage_memory tool present,
   expect(toolNames).not.toContain('web_fetch')
 })
 
-test('tools: webSearch:true, memoryEnabled:true → both web tools AND memory tool present', async () => {
+test('tools: webSearchEnabled:true, memoryEnabled:true → both web tools AND memory tool present', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -392,7 +445,7 @@ test('tools: webSearch:true, memoryEnabled:true → both web tools AND memory to
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk2 of converseStream('test-model', '', [], { webSearch: true, memoryEnabled: true }, undefined, undefined)) {
+  for await (const _chunk2 of converseStream('test-model', '', [], { webSearchEnabled: true, memoryEnabled: true }, undefined, undefined)) {
     // drain
   }
 
@@ -540,11 +593,11 @@ test('part1a: forced-final call after max rounds has non-empty toolConfig in its
 
 // ── Part 1 fix: toolConfig required when disabled-tools but history has tool blocks ──
 //
-// If webSearch and memory are both off but the replayed history already contains
+// If webSearchEnabled and memory are both off but the replayed history already contains
 // toolUse/toolResult blocks, the first round still needs a toolConfig or Bedrock
 // throws ValidationException.
 
-test('part1b: history with toolResult blocks forces toolConfig even when webSearch+memory disabled', async () => {
+test('part1b: history with toolResult blocks forces toolConfig even when webSearchEnabled+memory disabled', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -564,7 +617,7 @@ test('part1b: history with toolResult blocks forces toolConfig even when webSear
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _chunk of converseStream(
-    'test-model', '', historyWithToolBlock, { webSearch: false, memoryEnabled: false },
+    'test-model', '', historyWithToolBlock, { webSearchEnabled: false, memoryEnabled: false },
   )) { /* drain */ }
 
   // toolConfig MUST be defined (history forces it)
@@ -576,7 +629,7 @@ test('part1b: history with toolResult blocks forces toolConfig even when webSear
 
 // ── Confirm non-regression: clean history + tools disabled still sends no toolConfig ──
 
-test('part1c: clean history with webSearch+memory disabled still sends no toolConfig', async () => {
+test('part1c: clean history with webSearchEnabled+memory disabled still sends no toolConfig', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -587,7 +640,7 @@ test('part1c: clean history with webSearch+memory disabled still sends no toolCo
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _chunk of converseStream(
-    'test-model', '', [], { webSearch: false, memoryEnabled: false },
+    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false },
   )) { /* drain */ }
 
   // No tool blocks in history → no toolConfig needed (same as before)

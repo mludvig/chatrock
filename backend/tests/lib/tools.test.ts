@@ -1,6 +1,7 @@
 import { executeTool } from '../../src/lib/tools'
 import * as memoryLib from '../../src/lib/memory'
 import * as projectContextLib from '../../src/lib/projectContext'
+import * as gatewayLib from '../../src/lib/agentcore/gateway'
 
 // Mock both memory tool executors so we can spy on them without real dynamo calls
 jest.mock('../../src/lib/memory', () => ({
@@ -15,10 +16,16 @@ jest.mock('../../src/lib/projectContext', () => ({
   executeProjectReadChatTool: jest.fn(),
 }))
 
+// Mock the AgentCore MCP gateway client so web_search:agentcore tests don't open a real session
+jest.mock('../../src/lib/agentcore/gateway', () => ({
+  callGatewayTool: jest.fn(),
+}))
+
 const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeMemoryTool
 const mockExecuteProjectMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeProjectMemoryTool
 const mockExecuteProjectReadFileTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadFileTool
 const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadChatTool
+const mockCallGatewayTool = (gatewayLib as jest.Mocked<typeof gatewayLib>).callGatewayTool
 
 const TEST_CTX = { sub: 'test-user' }
 
@@ -277,5 +284,102 @@ describe('read_project_chat dispatch', () => {
     expect(result.status).toBe('error')
     expect((result.content?.[0] as { text: string }).text).toBe('No project context')
     expect(mockExecuteProjectReadChatTool).not.toHaveBeenCalled()
+  })
+})
+
+// ── web_search provider dispatch ──────────────────────────────────────────────
+
+describe('web_search provider dispatch', () => {
+  const realFetch = global.fetch
+  afterEach(() => {
+    global.fetch = realFetch
+    jest.clearAllMocks()
+  })
+
+  it('defaults to Jina when ctx.webSearchProvider is unset', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ title: 'A', url: 'https://a.com', description: 'desc' }] }),
+    }) as unknown as typeof fetch
+
+    const result = await executeTool('web_search', { query: 'hello' }, TEST_CTX)
+
+    expect(global.fetch).toHaveBeenCalled()
+    expect(mockCallGatewayTool).not.toHaveBeenCalled()
+    expect(result.status).toBe('success')
+  })
+
+  it('routes to Jina when ctx.webSearchProvider is "jina"', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ title: 'A', url: 'https://a.com', description: 'desc' }] }),
+    }) as unknown as typeof fetch
+
+    await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'jina' })
+
+    expect(global.fetch).toHaveBeenCalled()
+    expect(mockCallGatewayTool).not.toHaveBeenCalled()
+  })
+
+  it('routes to the AgentCore gateway when ctx.webSearchProvider is "agentcore"', async () => {
+    mockCallGatewayTool.mockResolvedValueOnce({
+      isError: false,
+      text: JSON.stringify({
+        id: 'abc123',
+        results: [
+          { text: 'Python 3.13 was released in October 2024.', url: 'https://example.com/py313', title: 'Python 3.13', publishedDate: '2024-10-07' },
+        ],
+      }),
+    })
+
+    const result = await executeTool('web_search', { query: 'python release' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
+
+    expect(mockCallGatewayTool).toHaveBeenCalledWith('WebSearch', { query: 'python release', maxResults: 5 })
+    expect(result.status).toBe('success')
+    const payload = JSON.parse((result.content?.[0] as { text: string }).text)
+    expect(payload.results).toEqual([
+      { title: 'Python 3.13', url: 'https://example.com/py313', description: 'Python 3.13 was released in October 2024.' },
+    ])
+    expect(payload.text).toContain('Python 3.13 was released in October 2024.')
+  })
+
+  it('truncates the query to 200 chars before calling AgentCore', async () => {
+    mockCallGatewayTool.mockResolvedValueOnce({ isError: false, text: JSON.stringify({ results: [] }) })
+
+    const longQuery = 'x'.repeat(250)
+    await executeTool('web_search', { query: longQuery }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
+
+    const calledArgs = mockCallGatewayTool.mock.calls[0][1] as { query: string }
+    expect(calledArgs.query.length).toBe(200)
+  })
+
+  it('returns error status when AgentCore reports an error', async () => {
+    mockCallGatewayTool.mockResolvedValueOnce({ isError: true, text: 'gateway unavailable' })
+
+    const result = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
+
+    expect(result.status).toBe('error')
+  })
+
+  it('returns "No results found." when AgentCore returns an empty results array', async () => {
+    mockCallGatewayTool.mockResolvedValueOnce({ isError: false, text: JSON.stringify({ results: [] }) })
+
+    const result = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
+
+    const payload = JSON.parse((result.content?.[0] as { text: string }).text)
+    expect(payload.results).toEqual([])
+    expect(payload.text).toBe('No results found.')
+  })
+
+  it('web_fetch always uses Jina, even when webSearchProvider is "agentcore"', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { title: 'A', url: 'https://a.com', content: 'body' } }),
+    }) as unknown as typeof fetch
+
+    await executeTool('web_fetch', { url: 'https://a.com' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
+
+    expect(global.fetch).toHaveBeenCalled()
+    expect(mockCallGatewayTool).not.toHaveBeenCalled()
   })
 })

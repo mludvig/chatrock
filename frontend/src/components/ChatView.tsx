@@ -214,7 +214,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         const base = defaultSettings(currentModelDef.capabilities)
         setDraftModelSettings({
           ...base,
-          ...(userPreferences.webSearch !== undefined ? { webSearch: userPreferences.webSearch } : {}),
+          ...(userPreferences.webSearchEnabled !== undefined ? { webSearchEnabled: userPreferences.webSearchEnabled } : {}),
           ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
             ? { thinkingEffort: userPreferences.thinkingEffort }
             : {}),
@@ -238,7 +238,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         const projectLayer = project?.modelSettings ?? {}
         setDraftModelSettings({
           ...base,
-          ...(userPreferences.webSearch !== undefined ? { webSearch: userPreferences.webSearch } : {}),
+          ...(userPreferences.webSearchEnabled !== undefined ? { webSearchEnabled: userPreferences.webSearchEnabled } : {}),
           ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
             ? { thinkingEffort: userPreferences.thinkingEffort }
             : {}),

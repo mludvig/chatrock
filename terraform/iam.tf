@@ -87,6 +87,13 @@ data "aws_iam_policy_document" "lambda_policy" {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.cloudfront_attachments_private_key.arn]
   }
+
+  # Caller-side permission for the AgentCore Web Search MCP gateway (see agentcore.tf).
+  # This is distinct from aws_iam_role.agentcore_gateway, which AgentCore itself assumes.
+  statement {
+    actions   = ["bedrock-agentcore:InvokeGateway"]
+    resources = [aws_bedrockagentcore_gateway.web_search.gateway_arn]
+  }
 }
 
 resource "aws_iam_role_policy" "lambda" {
