@@ -124,6 +124,42 @@ export function coalesceMessages(messages: Message[]): Message[] {
 }
 
 /**
+ * If the history ends on an assistant turn with unresolved toolUse blocks (the matching
+ * tool-result turn failed to persist, or any other event left the active leaf mid-round),
+ * synthesize a placeholder error toolResult for each dangling id so the prefix is valid
+ * before it reaches Bedrock — instead of Bedrock rejecting the whole request with a generic
+ * ValidationException ("tool_use ids were found without tool_result blocks...").
+ *
+ * Mirrors coalesceMessages' role: a final defense-in-depth guard, not the primary fix.
+ * putMessagePair (sendMessage.ts) prevents new instances of this going forward; this heals
+ * any that exist regardless — old data, or any other failure mode that produces the same
+ * malformed shape.
+ */
+export function healDanglingToolUse(messages: Message[]): Message[] {
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'assistant') return messages
+
+  const toolUseIds = (last.content ?? [])
+    .filter(b => 'toolUse' in b)
+    .map(b => (b as { toolUse: { toolUseId?: string } }).toolUse.toolUseId)
+    .filter((id): id is string => !!id)
+
+  if (toolUseIds.length === 0) return messages
+
+  const healedTurn: Message = {
+    role: 'user',
+    content: toolUseIds.map(toolUseId => ({
+      toolResult: {
+        toolUseId,
+        content: [{ text: 'Interrupted before completing — please retry.' }],
+        status: 'error' as const,
+      },
+    })),
+  }
+  return [...messages, healedTurn]
+}
+
+/**
  * Return true if any message in the array contains a toolUse or toolResult block.
  * Bedrock requires toolConfig to be present whenever the message history contains
  * these blocks, even if we don't want to offer new tools this turn.
@@ -370,8 +406,9 @@ export async function* converseStream(
   // Base messages are the incoming history (verbatim blocks replayed as-is).
   // Coalesce adjacent same-role turns so an interrupted agentic loop (which can
   // leave the active leaf on a tool-result user turn) never produces two
-  // consecutive user messages → Bedrock ValidationException.
-  const baseMessages: Message[] = coalesceMessages(messages)
+  // consecutive user messages → Bedrock ValidationException. Then heal a dangling
+  // tool_use tail (the sibling failure mode) the same way.
+  const baseMessages: Message[] = healDanglingToolUse(coalesceMessages(messages))
   // New messages added this session (grows with each tool-use round)
   const newMessages: Message[] = []
 

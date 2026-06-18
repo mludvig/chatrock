@@ -11,9 +11,10 @@
  *  6. All existing UI chunks (thinking_delta, thinking_done, delta,
  *     tool_call_start, tool_call, tool_result, stop) still flow through.
  */
-import { converseStream, coalesceMessages, bedrockClient } from '../../src/lib/bedrock'
+import { converseStream, coalesceMessages, healDanglingToolUse, bedrockClient } from '../../src/lib/bedrock'
 import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/blocks'
 import * as tools from '../../src/lib/tools'
+import type { Message } from '@aws-sdk/client-bedrock-runtime'
 
 // Mock the bedrockClient so we never hit AWS
 jest.mock('@aws-sdk/client-bedrock-runtime', () => {
@@ -627,6 +628,39 @@ test('part1b: history with toolResult blocks forces toolConfig even when webSear
   expect(tools.filter(t => t.toolSpec).length).toBeGreaterThan(0)
 })
 
+// ── Regression: converseStream heals a dangling tool_use tail before calling Bedrock ──
+//
+// Reproduces the second incident from this session end-to-end: a replayed history ending
+// on an assistant message with an unresolved toolUse (the matching tool-result turn never
+// got persisted). Without healing, Bedrock would reject the whole request.
+
+test('regression: converseStream heals a dangling tool_use tail in the replayed history before the Bedrock call', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  const historyWithDanglingToolUse = [
+    { role: 'user' as const, content: [{ text: 'find the latest news' }] },
+    { role: 'assistant' as const, content: [{ toolUse: { toolUseId: 'orphan-tu', name: 'web_search', input: { query: 'news' } } }] },
+  ]
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', historyWithDanglingToolUse, {})) { /* drain */ }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const sentMessages = cmdInput.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>
+  // The dangling assistant message must now be followed by a synthesized toolResult —
+  // not sent to Bedrock as a bare, unresolved tail.
+  expect(sentMessages[sentMessages.length - 1].role).toBe('user')
+  expect(sentMessages[sentMessages.length - 1].content[0]).toMatchObject({
+    toolResult: { toolUseId: 'orphan-tu' },
+  })
+})
+
 // ── Confirm non-regression: clean history + tools disabled still sends no toolConfig ──
 
 test('part1c: clean history with webSearchEnabled+memory disabled still sends no toolConfig', async () => {
@@ -866,5 +900,75 @@ describe('coalesceMessages', () => {
     const snapshot = JSON.parse(JSON.stringify(input))
     coalesceMessages(input)
     expect(input).toEqual(snapshot)
+  })
+})
+
+// ── healDanglingToolUse ───────────────────────────────────────────────────────
+//
+// Reproduces the second incident from this session: a tail assistant message with
+// toolUse blocks but no following toolResult message — Bedrock rejects this outright
+// ("tool_use ids were found without tool_result blocks..." / "Expected toolResult
+// blocks..."). healDanglingToolUse synthesizes the missing toolResult so the prefix
+// is valid before it ever reaches Bedrock.
+
+describe('healDanglingToolUse', () => {
+  test('synthesizes a placeholder error toolResult for a dangling tail tool_use', () => {
+    const healed = healDanglingToolUse([
+      { role: 'user', content: [{ text: 'Q' }] },
+      { role: 'assistant', content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }] },
+    ])
+    expect(healed).toHaveLength(3)
+    expect(healed[2].role).toBe('user')
+    expect(healed[2].content).toEqual([
+      { toolResult: { toolUseId: 't1', content: [{ text: expect.any(String) }], status: 'error' } },
+    ])
+  })
+
+  test('synthesizes one placeholder toolResult per dangling id when multiple are present', () => {
+    const healed = healDanglingToolUse([
+      { role: 'user', content: [{ text: 'Q' }] },
+      {
+        role: 'assistant',
+        content: [
+          { toolUse: { toolUseId: 't1', name: 'web_search', input: {} } },
+          { toolUse: { toolUseId: 't2', name: 'web_search', input: {} } },
+        ],
+      },
+    ])
+    expect(healed).toHaveLength(3)
+    const ids = (healed[2].content ?? []).map(b => (b as { toolResult: { toolUseId: string } }).toolResult.toolUseId)
+    expect(ids).toEqual(['t1', 't2'])
+  })
+
+  test('is a no-op when the tail assistant message has no toolUse blocks', () => {
+    const msgs: Message[] = [
+      { role: 'user', content: [{ text: 'Q' }] },
+      { role: 'assistant', content: [{ text: 'A' }] },
+    ]
+    expect(healDanglingToolUse(msgs)).toEqual(msgs)
+  })
+
+  test('is a no-op when the tail message is already a user (toolResult) turn', () => {
+    const msgs: Message[] = [
+      { role: 'assistant', content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }] },
+      { role: 'user', content: [{ toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' } }] },
+    ]
+    expect(healDanglingToolUse(msgs)).toEqual(msgs)
+  })
+
+  test('is a no-op for an empty message array', () => {
+    expect(healDanglingToolUse([])).toEqual([])
+  })
+
+  test('composes with coalesceMessages: heals after coalescing a dangling-toolResult-then-new-user-message history', () => {
+    // This history has TWO failure shapes from the same incident: a dangling tool-result
+    // user turn followed by a new user message (coalesceMessages' job), AND — separately —
+    // verify a clean tail tool_use is still healed when there is no trailing user message.
+    const healed = healDanglingToolUse(coalesceMessages([
+      { role: 'user', content: [{ text: 'Q' }] },
+      { role: 'assistant', content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }] },
+    ]))
+    expect(healed).toHaveLength(3)
+    expect(healed[2].role).toBe('user')
   })
 })

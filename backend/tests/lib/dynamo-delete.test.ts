@@ -10,7 +10,7 @@ jest.mock('../../src/lib/dynamo', () => {
 })
 
 // Instead, spy on the ddb object exported from the module
-import { ddb, deleteChat } from '../../src/lib/dynamo'
+import { ddb, deleteChat, batchDeleteMessages, TABLE } from '../../src/lib/dynamo'
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -71,3 +71,30 @@ test('deleteChat batches more than 25 messages in chunks of 25', async () => {
   // Query + 2 BatchWrites + 1 Delete = 4 sends
   expect(mockSend).toHaveBeenCalledTimes(4)
 })
+
+// ── UnprocessedItems retry (subtree delete) ──────────────────────────────────
+//
+// A throttled/partial BatchWriteCommand response leaves leftover DeleteRequests in
+// UnprocessedItems without throwing — silently ignoring that would leave a "deleted"
+// branch half-deleted. batchDeleteMessages must retry until clear, or throw.
+
+test('batchDeleteMessages retries UnprocessedItems until they clear', async () => {
+  const keyB = { PK: 'CHAT#c1', SK: 'MSG#ts#0001#b' }
+  mockSend
+    .mockResolvedValueOnce({ UnprocessedItems: { [TABLE]: [{ DeleteRequest: { Key: keyB } }] } })
+    .mockResolvedValueOnce({})
+
+  await batchDeleteMessages([{ PK: 'CHAT#c1', SK: 'MSG#ts#0000#a' }, keyB])
+
+  expect(mockSend).toHaveBeenCalledTimes(2)
+  const retryRequests = Object.values(mockSend.mock.calls[1][0].input.RequestItems)[0] as { DeleteRequest: { Key: unknown } }[]
+  expect(retryRequests).toHaveLength(1)
+  expect(retryRequests[0]).toMatchObject({ DeleteRequest: { Key: keyB } })
+})
+
+test('batchDeleteMessages throws if items remain unprocessed after all retry attempts', async () => {
+  const keyA = { PK: 'CHAT#c1', SK: 'MSG#ts#0000#a' }
+  mockSend.mockResolvedValue({ UnprocessedItems: { [TABLE]: [{ DeleteRequest: { Key: keyA } }] } })
+
+  await expect(batchDeleteMessages([keyA])).rejects.toThrow(/unprocessed/)
+}, 10_000)

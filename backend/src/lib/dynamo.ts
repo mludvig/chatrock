@@ -7,6 +7,7 @@ import {
   UpdateCommand,
   DeleteCommand,
   BatchWriteCommand,
+  TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb'
 
 export const TABLE = process.env.DYNAMO_TABLE ?? 'chatrock'
@@ -158,25 +159,49 @@ export async function putMessage(item: Record<string, unknown>) {
   await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
 }
 
+// Writes an assistant turn (with toolUse blocks) and its tool-result turn atomically — both
+// land or neither does. Prevents the active path from ever ending on a dangling tool_use:
+// a failure (size limit, throttling, etc.) leaves the PRIOR turn as the durable tip instead
+// of a structurally-connected-but-Bedrock-invalid one.
+export async function putMessagePair(assistantItem: Record<string, unknown>, toolResultItem: Record<string, unknown>) {
+  await ddb.send(new TransactWriteCommand({
+    TransactItems: [
+      { Put: { TableName: TABLE, Item: assistantItem } },
+      { Put: { TableName: TABLE, Item: toolResultItem } },
+    ],
+  }))
+}
+
+// BatchWriteCommand is not atomic and can return UnprocessedItems (e.g. under throttling)
+// without throwing. Retrying them is the difference between "fork copied every message" /
+// "subtree fully deleted" and a silent partial result that looks identical until something
+// downstream trips over the gap. Throws if items remain unprocessed after all retries so the
+// caller's error handling (not a silent partial success) is what runs.
+async function sendBatchWriteWithRetry(requests: Record<string, unknown>[], maxAttempts = 5): Promise<void> {
+  let pending = requests
+  for (let attempt = 0; attempt < maxAttempts && pending.length > 0; attempt++) {
+    const res = await ddb.send(new BatchWriteCommand({ RequestItems: { [TABLE]: pending } }))
+    pending = (res.UnprocessedItems?.[TABLE] as Record<string, unknown>[] | undefined) ?? []
+    if (pending.length > 0 && attempt < maxAttempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, 2 ** attempt * 50))
+    }
+  }
+  if (pending.length > 0) {
+    throw new Error(`BatchWriteCommand: ${pending.length} item(s) still unprocessed after ${maxAttempts} attempts`)
+  }
+}
+
 export async function batchPutMessages(items: Record<string, unknown>[]): Promise<void> {
   for (let i = 0; i < items.length; i += 25) {
     const chunk = items.slice(i, i + 25)
-    await ddb.send(new BatchWriteCommand({
-      RequestItems: {
-        [TABLE]: chunk.map(item => ({ PutRequest: { Item: item } })),
-      },
-    }))
+    await sendBatchWriteWithRetry(chunk.map(item => ({ PutRequest: { Item: item } })))
   }
 }
 
 export async function batchDeleteMessages(keys: { PK: string; SK: string }[]): Promise<void> {
   for (let i = 0; i < keys.length; i += 25) {
     const chunk = keys.slice(i, i + 25)
-    await ddb.send(new BatchWriteCommand({
-      RequestItems: {
-        [TABLE]: chunk.map(k => ({ DeleteRequest: { Key: { PK: k.PK, SK: k.SK } } })),
-      },
-    }))
+    await sendBatchWriteWithRetry(chunk.map(k => ({ DeleteRequest: { Key: { PK: k.PK, SK: k.SK } } })))
   }
 }
 
