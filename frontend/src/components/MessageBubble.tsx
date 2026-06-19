@@ -141,6 +141,8 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
     ? `Search: ${safeInput(step.input, 'query')}`
     : step.name === 'web_fetch'
     ? `Fetch: ${safeInput(step.input, 'url')}`
+    : step.name === 'browse_web'
+    ? `Browse: ${firstBrowserUrl(step.input)}`
     : step.name === 'read_project_file'
     ? (() => {
         const fid = safeInput(step.input, 'fileId')
@@ -169,7 +171,15 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
       </button>
       {expanded && step.result !== undefined && (
         <div className="tool-result-body">
-          {hasResults ? (
+          {step.screenshotUrls?.length ? (
+            <div className="browser-screenshots">
+              {step.screenshotUrls.map((url, i) => (
+                <a key={url} href={sanitizeUrl(url)} target="_blank" rel="noopener noreferrer">
+                  <img src={sanitizeUrl(url)} alt={`Screenshot ${i + 1}`} className="attachment-thumbnail" />
+                </a>
+              ))}
+            </div>
+          ) : hasResults ? (
             <div className="search-results">
               {step.searchResults!.map((r: SearchResult, i: number) => (
                 <SearchResultCard key={r.url} r={r} index={i} />
@@ -191,6 +201,21 @@ function safeInput(inputJson: string, key: string): string {
     return val.length > 60 ? val.slice(0, 60) + '…' : val
   } catch {
     return inputJson.slice(0, 60)
+  }
+}
+
+function firstBrowserUrl(inputJson: string): string {
+  try {
+    const obj = JSON.parse(inputJson) as { steps?: Array<{ tool?: string; params?: { url?: string } }> }
+    const steps = obj.steps ?? []
+    const nav = steps.find(s => s.tool === 'browser_navigate')
+    if (nav?.params?.url) {
+      const url = nav.params.url
+      return url.length > 60 ? url.slice(0, 60) + '…' : url
+    }
+    return `${steps.length} step${steps.length === 1 ? '' : 's'}`
+  } catch {
+    return 'browse'
   }
 }
 

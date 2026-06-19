@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
-import { parseSearchResults } from '../lib/toolResults'
+import { parseSearchResults, parseBrowserScreenshots } from '../lib/toolResults'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
@@ -171,7 +171,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           ...msg,
           steps: msg.steps.map(step => {
             if (step.kind !== 'tool') return step
-            return { ...step, searchResults: parseSearchResults(step.name, step.result, step.isError) }
+            return {
+              ...step,
+              searchResults: parseSearchResults(step.name, step.result, step.isError),
+              screenshotUrls: parseBrowserScreenshots(step.name, step.result, step.isError),
+            }
           }),
         }
       })
@@ -371,7 +375,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           ...msg,
           steps: msg.steps.map(step => {
             if (step.kind !== 'tool') return step
-            return { ...step, searchResults: parseSearchResults(step.name, step.result, step.isError) }
+            return {
+              ...step,
+              searchResults: parseSearchResults(step.name, step.result, step.isError),
+              screenshotUrls: parseBrowserScreenshots(step.name, step.result, step.isError),
+            }
           }),
         }
       })

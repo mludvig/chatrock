@@ -23,6 +23,15 @@ const handlers = [
 const distDir = path.join(__dirname, '..', 'terraform', 'dist')
 mkdirSync(distDir, { recursive: true })
 
+// playwright-core's browser registry module does an eager `require('../../browsers.json')`
+// relative to its own package directory; single-file bundling breaks that relative path.
+// chromium-bidi is required unconditionally too, but is dead code for our Chromium-over-CDP-
+// only usage and isn't even installed. Both must stay external — for ws-sendMessage (the only
+// handler that imports them, via lib/agentcore/browser.ts), the real package directories are
+// copied into the zip below so Node's normal require() resolution finds them at runtime.
+const PLAYWRIGHT_EXTERNAL = ['@playwright/mcp', 'playwright-core', 'playwright', 'chromium-bidi']
+const rootNodeModules = path.join(__dirname, '..', 'node_modules')
+
 for (const { name, entry } of handlers) {
   const outfile = path.join(distDir, name, 'index.js')
   mkdirSync(path.dirname(outfile), { recursive: true })
@@ -35,6 +44,7 @@ for (const { name, entry } of handlers) {
     outfile,
     minify: false,
     sourcemap: false,
+    external: PLAYWRIGHT_EXTERNAL,
   })
 
   await new Promise((resolve, reject) => {
@@ -45,6 +55,11 @@ for (const { name, entry } of handlers) {
     archive.on('error', reject)
     archive.pipe(output)
     archive.file(outfile, { name: 'index.js' })
+    if (name === 'ws-sendMessage') {
+      for (const pkg of ['playwright', 'playwright-core', '@playwright/mcp']) {
+        archive.directory(path.join(rootNodeModules, pkg), `node_modules/${pkg}`)
+      }
+    }
     archive.finalize()
   })
 

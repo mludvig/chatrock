@@ -1,7 +1,8 @@
-import { executeTool } from '../../src/lib/tools'
+import { executeTool, MAX_BROWSER_STEPS, MAX_BROWSER_SCREENSHOTS } from '../../src/lib/tools'
 import * as memoryLib from '../../src/lib/memory'
 import * as projectContextLib from '../../src/lib/projectContext'
 import * as gatewayLib from '../../src/lib/agentcore/gateway'
+import * as browserLib from '../../src/lib/agentcore/browser'
 
 // Mock both memory tool executors so we can spy on them without real dynamo calls
 jest.mock('../../src/lib/memory', () => ({
@@ -21,11 +22,17 @@ jest.mock('../../src/lib/agentcore/gateway', () => ({
   callGatewayTool: jest.fn(),
 }))
 
+// Mock the AgentCore Browser session executor so browse_web tests don't open a real session
+jest.mock('../../src/lib/agentcore/browser', () => ({
+  runBrowserSteps: jest.fn(),
+}))
+
 const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeMemoryTool
 const mockExecuteProjectMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeProjectMemoryTool
 const mockExecuteProjectReadFileTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadFileTool
 const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadChatTool
 const mockCallGatewayTool = (gatewayLib as jest.Mocked<typeof gatewayLib>).callGatewayTool
+const mockRunBrowserSteps = (browserLib as jest.Mocked<typeof browserLib>).runBrowserSteps
 
 const TEST_CTX = { sub: 'test-user' }
 
@@ -381,5 +388,111 @@ describe('web_search provider dispatch', () => {
 
     expect(global.fetch).toHaveBeenCalled()
     expect(mockCallGatewayTool).not.toHaveBeenCalled()
+  })
+})
+
+describe('browse_web dispatch', () => {
+  beforeEach(() => {
+    mockRunBrowserSteps.mockClear()
+  })
+
+  it('dispatches an allowed step list to runBrowserSteps', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [{ tool: 'browser_navigate', ok: true, text: ['Navigated'], images: [] }],
+      isError: false,
+    })
+
+    const result = await executeTool('browse_web', { steps: [{ tool: 'browser_navigate', params: { url: 'https://example.com' } }] }, TEST_CTX)
+
+    expect(mockRunBrowserSteps).toHaveBeenCalledWith([{ tool: 'browser_navigate', params: { url: 'https://example.com' } }])
+    expect(result.status).toBe('success')
+    expect(result.content).toEqual([{ text: '### browser_navigate\nNavigated' }])
+  })
+
+  it('returns error without calling runBrowserSteps when steps is empty', async () => {
+    const result = await executeTool('browse_web', { steps: [] }, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
+  })
+
+  it('returns error without calling runBrowserSteps when steps is missing', async () => {
+    const result = await executeTool('browse_web', {}, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
+  })
+
+  it(`returns error without calling runBrowserSteps when over ${MAX_BROWSER_STEPS} steps`, async () => {
+    const steps = Array.from({ length: MAX_BROWSER_STEPS + 1 }, () => ({ tool: 'browser_navigate', params: { url: 'https://example.com' } }))
+    const result = await executeTool('browse_web', { steps }, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
+  })
+
+  it('returns error without calling runBrowserSteps when a step uses a disallowed tool', async () => {
+    const result = await executeTool('browse_web', { steps: [{ tool: 'browser_run_code_unsafe', params: { code: '1' } }] }, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toMatch(/Disallowed/)
+  })
+
+  it(`returns error without calling runBrowserSteps when over ${MAX_BROWSER_SCREENSHOTS} screenshot steps`, async () => {
+    const steps = Array.from({ length: MAX_BROWSER_SCREENSHOTS + 1 }, () => ({ tool: 'browser_take_screenshot', params: {} }))
+    const result = await executeTool('browse_web', { steps }, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
+  })
+
+  it('propagates multiple text and image content entries across steps', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [
+        { tool: 'browser_snapshot', ok: true, text: ['tree...'], images: [] },
+        { tool: 'browser_take_screenshot', ok: true, text: [], images: [{ format: 'png', bytes: Buffer.from('abc') }] },
+        { tool: 'browser_console_messages', ok: true, text: ['[log] hi'], images: [] },
+      ],
+      isError: false,
+    })
+
+    const result = await executeTool('browse_web', {
+      steps: [
+        { tool: 'browser_snapshot', params: {} },
+        { tool: 'browser_take_screenshot', params: {} },
+        { tool: 'browser_console_messages', params: { level: 'info' } },
+      ],
+    }, TEST_CTX)
+
+    expect(result.status).toBe('success')
+    expect(result.content).toEqual([
+      { text: '### browser_snapshot\ntree...' },
+      { image: { format: 'png', source: { bytes: Buffer.from('abc') } } },
+      { text: '### browser_console_messages\n[log] hi' },
+    ])
+  })
+
+  it('returns error status and includes the error text when runBrowserSteps reports isError', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [{ tool: 'browser_click', ok: false, text: [], images: [], error: 'selector not found' }],
+      isError: true,
+    })
+
+    const result = await executeTool('browse_web', { steps: [{ tool: 'browser_click', params: { target: 'e3' } }] }, TEST_CTX)
+
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toMatch(/selector not found/)
+  })
+
+  it('logs a browser_tool CloudWatch event with stepCount and screenshotCount', async () => {
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [{ tool: 'browser_take_screenshot', ok: true, text: [], images: [{ format: 'png', bytes: Buffer.from('x') }] }],
+      isError: false,
+    })
+
+    await executeTool('browse_web', { steps: [{ tool: 'browser_take_screenshot', params: {} }] }, { ...TEST_CTX, chatId: 'c1' })
+
+    const logged = logSpy.mock.calls.map(c => c[0] as string).find(s => s.includes('browser_tool'))
+    expect(logged).toBeDefined()
+    const parsed = JSON.parse(logged!)
+    expect(parsed).toMatchObject({ event: 'browser_tool', result: 'success', stepCount: 1, screenshotCount: 1, chatId: 'c1' })
+    logSpy.mockRestore()
   })
 })

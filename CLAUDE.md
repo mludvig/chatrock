@@ -174,6 +174,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `titleUpdated` | `chatId`, `title` |
 | `memoryUpdated` | `count` — number of new memories extracted this turn |
 | `warning` | `message` — non-fatal post-turn failure (enrichment DB write failed, etc.) |
+| `heartbeat` | — sent every `HEARTBEAT_INTERVAL_MS` (4s) while a single tool call is still in flight, so the WS connection carries real traffic during an otherwise-silent gap (observed empirically to prevent the connection going stale during slow tool calls like `browse_web`) |
 | `error` | `message` |
 
 ### Frontend structure
