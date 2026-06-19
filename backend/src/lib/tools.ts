@@ -474,14 +474,36 @@ async function executeGetRenderedPageTool(input: Record<string, unknown>, ctx: T
 
   const runBrowserSteps = await getRunBrowserSteps()
   const { results, isError } = await runBrowserSteps(steps)
-  const { content, screenshotsFound } = browserResultsToContent(results)
 
-  console.log(JSON.stringify({
-    event: 'browser_tool', tool: 'get_rendered_page', result: isError ? 'error' : 'success',
-    screenshotCount: screenshotsFound, chatId: ctx.chatId,
-  }))
+  if (isError) {
+    const { content, screenshotsFound } = browserResultsToContent(results)
+    console.log(JSON.stringify({ event: 'browser_tool', tool: 'get_rendered_page', result: 'error', screenshotCount: screenshotsFound, chatId: ctx.chatId }))
+    return { toolUseId: '', content, status: 'error' }
+  }
 
-  return { toolUseId: '', content, status: isError ? 'error' : 'success' }
+  // The navigate step's own response is pure noise here: a code echo, a console-error count,
+  // and a "Snapshot" link pointing at a file under this Lambda's ephemeral /tmp — nobody (not
+  // the model, not the human) can ever read that path. The explicit browser_snapshot step
+  // that follows already repeats Page URL/Title and additionally inlines the real YAML
+  // (an unfilenamed browser_snapshot call always inlines — see @playwright/mcp's snapshot
+  // tool), so use ONLY its text. Same JSON envelope shape as web_fetch's jinaFetch() —
+  // reuses the frontend's existing SearchResultCard rendering path (lib/toolResults.ts),
+  // rather than duplicating a new card just for this tool.
+  const snapshotText = results[results.length - 1]?.text.join('\n\n') ?? ''
+  const titleMatch = snapshotText.match(/Page Title:\s*(.+)/)
+  const urlMatch = snapshotText.match(/Page URL:\s*(.+)/)
+
+  console.log(JSON.stringify({ event: 'browser_tool', tool: 'get_rendered_page', result: 'success', screenshotCount: 0, chatId: ctx.chatId }))
+
+  const envelope = {
+    result: {
+      title: titleMatch?.[1]?.trim() || url,
+      url: urlMatch?.[1]?.trim() || url,
+      description: 'Rendered page snapshot (accessibility tree)',
+    },
+    text: snapshotText,
+  }
+  return { toolUseId: '', content: [{ text: JSON.stringify(envelope) }], status: 'success' }
 }
 
 export interface SearchResult {

@@ -33,7 +33,7 @@ test.describe('AgentCore Browser tools (take_screenshot / get_rendered_page)', (
     await expect(reloadedPill.locator('.browser-screenshots img').first()).toBeVisible({ timeout: 10000 })
   })
 
-  test('get_rendered_page resolves with rendered page text, not raw JSON', async ({ page }) => {
+  test('get_rendered_page resolves with a Fetch-style result card (not the raw Playwright trace)', async ({ page }) => {
     await page.goto('/c/new')
     await page.waitForLoadState('networkidle')
 
@@ -48,7 +48,13 @@ test.describe('AgentCore Browser tools (take_screenshot / get_rendered_page)', (
     await expect(pill).not.toHaveClass(/error/)
 
     await pill.locator('.tool-pill-header').click()
-    await expect(pill.locator('.tool-result-body pre')).toBeVisible({ timeout: 10000 })
+    // Reuses the same SearchResultCard as web_fetch — not a raw <pre> trace dump, and never
+    // the navigate step's noise (code echo / dead /tmp file link).
+    const card = pill.locator('.search-result-card').first()
+    await expect(card).toBeVisible({ timeout: 10000 })
+    await expect(pill.locator('.tool-result-body')).not.toContainText('Ran Playwright code')
+    await expect(pill.locator('.tool-result-body')).not.toContainText('/tmp/')
+
     await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
   })
 })

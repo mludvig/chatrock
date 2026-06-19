@@ -261,17 +261,10 @@ function ThinkingBlock({ text, done, streaming }: { text: string; done: boolean;
   useEffect(() => { if (done) setOpen(false) }, [done])
 
   // Some reasoning blocks carry only a signature (or are fully redacted) and have
-  // no visible text — Bedrock legitimately returns these. Render a flat, static
-  // label instead of an expandable panel with nothing inside it.
+  // no visible text — Bedrock legitimately returns these. Nothing useful to show,
+  // so render nothing rather than an empty/placeholder box.
   if (done && text.trim() === '') {
-    return (
-      <div className="thinking-block thinking-block--empty">
-        <span className="thinking-header thinking-header--static">
-          <FontAwesomeIcon icon={faBrain} className="thinking-brain" />
-          <span>Thought (no details shown)</span>
-        </span>
-      </div>
-    )
+    return null
   }
 
   return (

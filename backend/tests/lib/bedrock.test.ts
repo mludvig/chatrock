@@ -1202,4 +1202,38 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     expect(mockPutObjectBytes).not.toHaveBeenCalled()
     expect(mockSignCloudFrontUrl).not.toHaveBeenCalled()
   })
+
+  test('a text-only tool result with multiple text entries (e.g. browse_web, no screenshot) joins ALL of them, not just the first', async () => {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-bw', name: 'browse_web' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"steps":[{"tool":"browser_navigate","params":{"url":"https://example.com"}},{"tool":"browser_snapshot","params":{}}]}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({
+      toolUseId: 'tu-bw',
+      content: [
+        { text: '### browser_navigate\nnav trace' },
+        { text: '### browser_snapshot\nyaml snapshot content' },
+      ],
+      status: 'success',
+    })
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Answer' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+      { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+    ]))
+
+    const toolResultChunks: Array<{ content: string }> = []
+    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+      if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string })
+    }
+
+    // Both step's text must be present — previously only the first entry survived.
+    expect(toolResultChunks[0].content).toContain('nav trace')
+    expect(toolResultChunks[0].content).toContain('yaml snapshot content')
+  })
 })
