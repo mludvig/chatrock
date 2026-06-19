@@ -97,6 +97,18 @@ describe('StreamingMsg steps assembly', () => {
     expect(Array.isArray(toolStep.searchResults)).toBe(true)
   })
 
+  it('tool_result: sets screenshotUrls directly from the WS frame field (no JSON re-parse)', () => {
+    act(() => {
+      const s = useChatStore.getState()
+      s.startStream()
+      s.addToolCall({ toolUseId: 't1', name: 'take_screenshot', input: '' })
+      s.resolveToolCall('t1', '### browser_take_screenshot\ndone', false, ['https://cdn.example.com/shot.png?sig=x'])
+    })
+    const toolStep = useChatStore.getState().streamingMsg!.steps[0] as Record<string, unknown>
+    expect(toolStep.result).toBe('### browser_take_screenshot\ndone')
+    expect(toolStep.screenshotUrls).toEqual(['https://cdn.example.com/shot.png?sig=x'])
+  })
+
   it('interleaved sequence: think→tool→think→text produces 4 ordered steps', () => {
     act(() => {
       const s = useChatStore.getState()

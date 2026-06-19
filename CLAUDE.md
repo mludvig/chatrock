@@ -127,8 +127,9 @@ backend/src/
   lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8); coalesceMessages + healDanglingToolUse sanitize replayed history before every call
   lib/blocks.ts           — block-level helpers: capToolResultText (byte-accurate, default 30 KB cap, accepts a custom budget); TOOL_RESULTS_ROUND_CAP (300 KB aggregate per round)
   lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, putMessagePair (TransactWriteCommand, atomic 2-item write), batchPutMessages/batchDeleteMessages (retry UnprocessedItems), setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
-  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider); ToolContext type
+  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, BROWSER_TOOL, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider); ToolContext type
   lib/agentcore/gateway.ts — minimal SigV4-signed MCP client for AgentCore Gateway targets (callGatewayTool); backs agentcoreSearch today, a generic seam for future AgentCore primitives (e.g. Code Interpreter)
+  lib/agentcore/browser.ts — AgentCore Browser session executor (runBrowserSteps): StartBrowserSession -> SigV4-signed CDP WebSocket -> drives an embedded `@playwright/mcp` server -> StopBrowserSession, one session per call, no state held across agentic rounds; backs take_screenshot/get_rendered_page/browse_web — see "Browser tools" below
   lib/tree.ts             — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf, mostRecentLeaf, resolveSafeLeaf
   lib/memory.ts           — manage_memory + manage_project_memory executors (remember/update/forget); reconcile() ADD-only dedup
   lib/enrichment.ts       — unified post-turn Haiku call: enrichTurn() returns userFacts + projectFacts + summary + title in one JSON call; enrichChatForProject() summary-only wrapper
@@ -166,7 +167,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `thinking_done` | — |
 | `tool_call_start` | `toolUseId`, `name` — fires immediately at block start for fast UI feedback |
 | `tool_call` | `toolUseId`, `name`, `input` — fires when full input JSON is accumulated |
-| `tool_result` | `toolUseId`, `name`, `isError`, `content` |
+| `tool_result` | `toolUseId`, `name`, `isError`, `content`, `screenshotUrls?` — `screenshotUrls` is a first-class array of signed CloudFront URLs for browser-tool screenshots, never embedded as JSON inside `content` |
 | `delta` | `text` |
 | `done` | `stopReason` |
 | `cancelled` | — (stream was aborted by `cancelMessage`) |
@@ -208,7 +209,7 @@ React Router v6: `/` → `/c/new`, `/c/:chatId` for chats, `/p/:projectId` for p
 
 Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `sidebarWidth`, `activePanel`, `userPreferences`. Everything else is ephemeral.
 
-`ModelSettings.webSearchEnabled` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.webSearchProvider` (`'jina' | 'agentcore'`, default `jina`) selects which backend powers the `web_search` tool — see "Web search providers" below. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in DynamoDB and surfaced in the bubble metadata line.
+`ModelSettings.webSearchEnabled` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.webSearchProvider` (`'jina' | 'agentcore'`, default `jina`) selects which backend powers the `web_search` tool — see "Web search providers" below. `ModelSettings.browserCoreEnabled` (default `true`) gates `take_screenshot`/`get_rendered_page`; `ModelSettings.browserExtendedEnabled` (default `false`) gates the scripted `browse_web` tool — see "Browser tools" below. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in DynamoDB and surfaced in the bubble metadata line.
 
 ### Frontend env vars
 
@@ -226,6 +227,54 @@ VITE_COGNITO_DOMAIN, VITE_APP_URL
 - **Amazon Bedrock AgentCore Web Search**: `agentcoreSearch` calls `callGatewayTool('WebSearch', { query, maxResults })` in `lib/agentcore/gateway.ts`, a minimal MCP (Model Context Protocol) client that SigV4-signs requests to an AgentCore Gateway (inbound auth type `AWS_IAM` — the Lambda's own execution role signs directly, no OAuth/Cognito machine-to-machine flow). Web Search is `us-east-1`-only as of June 2026, so the gateway is region-pinned there regardless of the app's home region (`terraform/agentcore.tf`); env vars `AGENTCORE_GATEWAY_URL` / `AGENTCORE_REGION` carry the endpoint into every Lambda. `lib/agentcore/` is structured as a general seam — a future AgentCore Code Interpreter integration would add a sibling file reusing `callGatewayTool` unchanged. Each successful call logs a `web_search` CloudWatch event with `provider`.
 - **Provider's Gateway *target*** (the Web Search connector itself) is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step, not a Terraform resource — see the comment block in `terraform/agentcore.tf` for why (the AWS provider's `aws_bedrockagentcore_gateway_target` doesn't yet expose the `connector` target type) and the exact command.
 
+### Browser tools
+
+Backed by Amazon Bedrock AgentCore Browser — architecturally unlike Web Search (no Gateway/MCP
+target): `lib/agentcore/browser.ts`'s `runBrowserSteps()` does `StartBrowserSession` against the
+AWS-managed system browser (`aws.browser.v1`, literal `aws` pseudo-account, pre-exists in every
+region) → SigV4-signs a CDP WebSocket-upgrade GET (mirrors `gateway.ts`'s signer, applied to a
+GET instead of a POST) → hands the endpoint to an **embedded** `@playwright/mcp` server
+(`createConnection({ browser: { cdpEndpoint, cdpHeaders } })`, restricted to the
+`core`/`core-navigation`/`core-input`/`core-tabs` capability groups) → drives it with an
+in-process MCP `Client` over `InMemoryTransport.createLinkedPair()` → runs each step via
+`callTool` → `StopBrowserSession` in a `finally`. One session per call, opened and torn down
+entirely inside `executeTool()` — no session state is ever held across agentic rounds in
+`sendMessage.ts` (deliberately: avoids the cross-call-state fragility class hardened in
+`fa70b25`). `@playwright/mcp`/`playwright-core`/`playwright`/`chromium-bidi` are esbuild
+`external` and their real `node_modules` trees are packaged only inside `ws-sendMessage.zip`
+(see `backend/esbuild.config.mjs`) — `agentcore/browser.ts` is only ever imported there via a
+lazy `await import(...)` inside each browser-tool executor, so no other Lambda eagerly resolves it.
+
+Three Bedrock tools share this executor, split into two preference-gated groups:
+- **Core** (`ModelSettings.browserCoreEnabled`, default `true`): `take_screenshot` (`url`,
+  `fullPage?`, `width?`, `height?`, `format?`) and `get_rendered_page` (`url`, `width?`,
+  `height?` — a JS-rendered accessibility-tree snapshot, the dynamic-page counterpart to
+  `web_fetch`'s static fetch). Each takes one URL per call and lowers to a fixed 2–3 step
+  `BrowserStep[]` (optional `browser_resize` + `browser_navigate` + `browser_take_screenshot`/
+  `browser_snapshot`) — covers the common case without the model building a `steps` array.
+- **Extended** (`ModelSettings.browserExtendedEnabled`, default `false`): `browse_web` accepts an
+  arbitrary ordered `steps: [{tool, params}]` list (max `MAX_BROWSER_STEPS`=15,
+  `MAX_BROWSER_SCREENSHOTS`=4 per call) from a curated allowlist (`ALLOWED_BROWSER_TOOLS` in
+  `tools.ts`) of the real `@playwright/mcp` tool catalogue — for multi-step interactions (click,
+  type, navigate between pages, wait, fill forms) that the Core shortcuts don't cover. Off by
+  default because it's the more expensive/scriptable surface.
+
+A call's `content[]` can carry multiple text entries (e.g. a snapshot block *and* a console-log
+block) and/or multiple images — `tools.ts`'s shared `browserResultsToContent()` aggregates both
+per step. Image entries flow through the same live/persist bifurcation `bedrock.ts` already uses
+for any image-bearing tool result: uploaded to S3 via `putObjectBytes` under the chat's
+attachment prefix, with `screenshotUrls` (signed CloudFront URLs) carried as a **first-class**
+`StreamChunk`/WS-frame/`ToolStep` field — never JSON-embedded inside the text `content`, so
+neither the live WS handler nor `GET /messages` ever has to re-parse an envelope out of a string.
+The frontend renders `screenshotUrls` as clickable thumbnails (open full-size in a new tab) above
+the text trace in the tool-call pill.
+
+Validation errors (empty/missing `steps`, an unknown step `tool` name, too many steps/screenshots)
+and the dispatcher's catch-all for an unknown top-level tool name are written to be
+self-correcting: if the model calls a `browse_web` step name (e.g. `browser_take_screenshot`) as
+if it were its own tool, the error explicitly says to nest it inside `browse_web`'s `steps` array
+or use `take_screenshot`/`get_rendered_page` instead, rather than a bare "unknown tool".
+
 ### Memory
 
 Two writers, two stores (user and project):
@@ -235,11 +284,11 @@ Two writers, two stores (user and project):
 
 `assembleSystemPrompt` (`lib/promptAssembly.ts`) injects user memory as `- [memId] text` lines, project memory in a separate "About this project:" block, and a project manifest (files + sibling chats) for project chats.
 
-`bedrock.ts` builds the tool list via `buildToolsWithCache(settings, ctx?)`: web tools when `webSearchEnabled !== false`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`; cachePoint always last. Which provider backs `web_search` (Jina vs. AgentCore) doesn't affect the tool spec — see "Web search providers".
+`bedrock.ts` builds the tool list via `buildToolsWithCache(settings, ctx?)`: web tools when `webSearchEnabled !== false`; Core browser tools (`take_screenshot`, `get_rendered_page`) when `browserCoreEnabled !== false`; `browse_web` when `browserExtendedEnabled === true`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`; cachePoint always last. Which provider backs `web_search` (Jina vs. AgentCore) doesn't affect the tool spec — see "Web search providers".
 
 ### User preferences
 
-`lib/preferences.ts` defines `UserPreferences`: `persona` (custom instructions), `defaultModel`, `thinkingEffort`, `webSearchEnabled`, `webSearchProvider` (`'jina'|'agentcore'`), `temperature`, `topP`, `topK`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat; project/chat layers not yet used). Stored as a JSON blob in the `prefs` attribute of the `PREF#USER` row.
+`lib/preferences.ts` defines `UserPreferences`: `persona` (custom instructions), `defaultModel`, `thinkingEffort`, `webSearchEnabled`, `webSearchProvider` (`'jina'|'agentcore'`), `browserCoreEnabled`, `browserExtendedEnabled`, `temperature`, `topP`, `topK`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat; project/chat layers not yet used). Stored as a JSON blob in the `prefs` attribute of the `PREF#USER` row.
 
 `http/preferences.ts` handles `GET /api/preferences` and `PUT /api/preferences`.
 
@@ -294,6 +343,7 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout 
 | `llm_call` purpose=`file_summary` | `http/projects.ts` finalize | model, projectId, fileId, filename |
 | `memory_tool` | `memory.ts` per call | op (remember/update/forget), scope (user/project), result |
 | `web_search` | `tools.ts` per call | provider (jina/agentcore), result |
+| `browser_tool` | `tools.ts` per call | tool (take_screenshot/get_rendered_page/browse_web), result, stepCount?, screenshotCount, chatId |
 | `stream_start` / `stream_error` / `stream_cancelled` | `sendMessage.ts` | — |
 | `enrich_turn_error` | `sendMessage.ts` post-turn | chatId, error |
 | `manifest_truncated` | `sendMessage.ts` manifest build | kind (files/chats), total, kept, projectId, chatId |
@@ -321,3 +371,4 @@ Projects group related chats + files and give the model project-scoped memory an
 - **`cd` in Bash**: avoid `cd` in commands; use `--prefix` or absolute paths to keep auto-approval working.
 - **Screenshots**: save to `.screenshots/YYYY-MM-DD-description.jpg`.
 - **AgentCore Gateway target type**: `aws_bedrockagentcore_gateway_target` (AWS provider v6.51.0) doesn't yet support the `connector` target type that Web Search needs — only the *gateway* is a real Terraform resource (`terraform/agentcore.tf`); the target is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step (comment in that file has the exact command). Needs AWS CLI ≥ 2.35.7 — older builds reject the `connector` parameter outright.
+- **AgentCore Browser IAM ARN**: the AWS-managed system browser lives under the literal `aws` pseudo-account, not the caller's own account — the IAM resource must be `arn:aws:bedrock-agentcore:<region>:aws:browser/aws.browser.v1` (same pattern as Web Search's `arn:...:aws:tool/web-search.v1`). Scoping it to the caller's account ID instead produces an opaque `AccessDeniedException` on `StartBrowserSession`.

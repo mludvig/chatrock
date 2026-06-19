@@ -136,11 +136,16 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
   const { projectFilesById, chats } = useChatStore()
   const pending = step.result === undefined
   const hasResults = !!step.searchResults?.length
+  const hasScreenshots = !!step.screenshotUrls?.length
   const icon = pending ? faSpinner : step.isError ? faCircleXmark : faCircleCheck
   const label = step.name === 'web_search'
     ? `Search: ${safeInput(step.input, 'query')}`
     : step.name === 'web_fetch'
     ? `Fetch: ${safeInput(step.input, 'url')}`
+    : step.name === 'take_screenshot'
+    ? `Screenshot: ${safeInput(step.input, 'url')}`
+    : step.name === 'get_rendered_page'
+    ? `Page: ${safeInput(step.input, 'url')}`
     : step.name === 'browse_web'
     ? `Browse: ${firstBrowserUrl(step.input)}`
     : step.name === 'read_project_file'
@@ -171,23 +176,26 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
       </button>
       {expanded && step.result !== undefined && (
         <div className="tool-result-body">
-          {step.screenshotUrls?.length ? (
+          {hasScreenshots && (
+            // Thumbnails — click opens the full-resolution image in a new tab (same pattern
+            // as AttachmentBlock's user-uploaded images).
             <div className="browser-screenshots">
-              {step.screenshotUrls.map((url, i) => (
+              {step.screenshotUrls!.map((url, i) => (
                 <a key={url} href={sanitizeUrl(url)} target="_blank" rel="noopener noreferrer">
                   <img src={sanitizeUrl(url)} alt={`Screenshot ${i + 1}`} className="attachment-thumbnail" />
                 </a>
               ))}
             </div>
-          ) : hasResults ? (
+          )}
+          {hasResults ? (
             <div className="search-results">
               {step.searchResults!.map((r: SearchResult, i: number) => (
                 <SearchResultCard key={r.url} r={r} index={i} />
               ))}
             </div>
-          ) : (
+          ) : step.result ? (
             <pre>{step.result.slice(0, 3000)}{step.result.length > 3000 ? '\n[...]' : ''}</pre>
-          )}
+          ) : null}
         </div>
       )}
     </div>

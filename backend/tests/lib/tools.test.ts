@@ -428,11 +428,24 @@ describe('browse_web dispatch', () => {
     expect(result.status).toBe('error')
   })
 
-  it('returns error without calling runBrowserSteps when a step uses a disallowed tool', async () => {
+  it('returns a self-correcting error without calling runBrowserSteps when a step uses a disallowed tool', async () => {
     const result = await executeTool('browse_web', { steps: [{ tool: 'browser_run_code_unsafe', params: { code: '1' } }] }, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
     expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toMatch(/Disallowed/)
+    expect((result.content?.[0] as { text: string }).text).toMatch(/Unknown step tool/)
+  })
+
+  it('returns a self-correcting error when steps is empty, mentioning the steps array shape', async () => {
+    const result = await executeTool('browse_web', { steps: [] }, TEST_CTX)
+    expect((result.content?.[0] as { text: string }).text).toMatch(/non-empty "steps" array/)
+  })
+
+  it('gives a self-correcting hint when a step tool name is called as a standalone top-level tool', async () => {
+    const result = await executeTool('browser_take_screenshot', { target: 'e1' }, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toMatch(/not a standalone tool/)
+    expect((result.content?.[0] as { text: string }).text).toMatch(/browse_web/)
   })
 
   it(`returns error without calling runBrowserSteps when over ${MAX_BROWSER_SCREENSHOTS} screenshot steps`, async () => {
@@ -494,5 +507,106 @@ describe('browse_web dispatch', () => {
     const parsed = JSON.parse(logged!)
     expect(parsed).toMatchObject({ event: 'browser_tool', result: 'success', stepCount: 1, screenshotCount: 1, chatId: 'c1' })
     logSpy.mockRestore()
+  })
+})
+
+describe('take_screenshot dispatch', () => {
+  beforeEach(() => {
+    mockRunBrowserSteps.mockClear()
+  })
+
+  it('composes navigate + take_screenshot steps (no resize when width/height omitted)', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [
+        { tool: 'browser_navigate', ok: true, text: ['Navigated'], images: [] },
+        { tool: 'browser_take_screenshot', ok: true, text: [], images: [{ format: 'png', bytes: Buffer.from('img') }] },
+      ],
+      isError: false,
+    })
+
+    const result = await executeTool('take_screenshot', { url: 'https://example.com' }, TEST_CTX)
+
+    expect(mockRunBrowserSteps).toHaveBeenCalledWith([
+      { tool: 'browser_navigate', params: { url: 'https://example.com' } },
+      { tool: 'browser_take_screenshot', params: { type: 'png', fullPage: true } },
+    ])
+    expect(result.status).toBe('success')
+    expect(result.content).toEqual([
+      { text: '### browser_navigate\nNavigated' },
+      { image: { format: 'png', source: { bytes: Buffer.from('img') } } },
+    ])
+  })
+
+  it('adds a leading resize step when width and height are given, and forwards format/fullPage', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({ results: [], isError: false })
+
+    await executeTool('take_screenshot', { url: 'https://example.com', width: 1280, height: 800, format: 'jpeg', fullPage: false }, TEST_CTX)
+
+    expect(mockRunBrowserSteps).toHaveBeenCalledWith([
+      { tool: 'browser_resize', params: { width: 1280, height: 800 } },
+      { tool: 'browser_navigate', params: { url: 'https://example.com' } },
+      { tool: 'browser_take_screenshot', params: { type: 'jpeg', fullPage: false } },
+    ])
+  })
+
+  it('returns error without calling runBrowserSteps when url is missing', async () => {
+    const result = await executeTool('take_screenshot', {}, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
+  })
+
+  it('propagates a runBrowserSteps error', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [{ tool: 'browser_navigate', ok: false, text: [], images: [], error: 'net::ERR_NAME_NOT_RESOLVED' }],
+      isError: true,
+    })
+    const result = await executeTool('take_screenshot', { url: 'https://bad.invalid' }, TEST_CTX)
+    expect(result.status).toBe('error')
+  })
+})
+
+describe('get_rendered_page dispatch', () => {
+  beforeEach(() => {
+    mockRunBrowserSteps.mockClear()
+  })
+
+  it('composes navigate + snapshot steps (no resize when width/height omitted)', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [
+        { tool: 'browser_navigate', ok: true, text: ['Navigated'], images: [] },
+        { tool: 'browser_snapshot', ok: true, text: ['- [Snapshot]'], images: [] },
+      ],
+      isError: false,
+    })
+
+    const result = await executeTool('get_rendered_page', { url: 'https://example.com' }, TEST_CTX)
+
+    expect(mockRunBrowserSteps).toHaveBeenCalledWith([
+      { tool: 'browser_navigate', params: { url: 'https://example.com' } },
+      { tool: 'browser_snapshot', params: {} },
+    ])
+    expect(result.status).toBe('success')
+    expect(result.content).toEqual([
+      { text: '### browser_navigate\nNavigated' },
+      { text: '### browser_snapshot\n- [Snapshot]' },
+    ])
+  })
+
+  it('adds a leading resize step when width and height are given', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({ results: [], isError: false })
+
+    await executeTool('get_rendered_page', { url: 'https://example.com', width: 1024, height: 768 }, TEST_CTX)
+
+    expect(mockRunBrowserSteps).toHaveBeenCalledWith([
+      { tool: 'browser_resize', params: { width: 1024, height: 768 } },
+      { tool: 'browser_navigate', params: { url: 'https://example.com' } },
+      { tool: 'browser_snapshot', params: {} },
+    ])
+  })
+
+  it('returns error without calling runBrowserSteps when url is missing', async () => {
+    const result = await executeTool('get_rendered_page', {}, TEST_CTX)
+    expect(mockRunBrowserSteps).not.toHaveBeenCalled()
+    expect(result.status).toBe('error')
   })
 })
