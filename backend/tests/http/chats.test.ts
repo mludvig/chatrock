@@ -514,6 +514,29 @@ test('inc7: delete branch returns 404 when msgId not in chat', async () => {
   expect(res.statusCode).toBe(404)
 })
 
+test('inc7-regression: delete branch whose own parentId is a phantom (missing) message falls back safely, never writes the phantom id', async () => {
+  // Reproduces the production incident: u2's parentId ("a1") was never durably persisted
+  // (or was separately removed) — it does not exist in rows at all. Deleting u2 (whose
+  // subtree includes the active leaf a2) must NOT reset activeLeafId to the phantom "a1".
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
+  const rows = [
+    makeRow('u1', null),
+    makeRow('u2', 'a1'),   // 'a1' is never in rows — a dangling parent reference
+    makeRow('a2', 'u2'),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.batchDeleteMessages.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'u2' }) as any))
+  expect(res.statusCode).toBe(204)
+
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledTimes(1)
+  const newLeaf = mockDynamo.updateChatActiveLeaf.mock.calls[0][2]
+  expect(newLeaf).not.toBe('a1')
+  expect(newLeaf).toBe('u1')
+})
+
 // ── Upload route ──────────────────────────────────────────────────────────────
 
 describe('POST /api/attachments', () => {

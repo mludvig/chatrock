@@ -2,7 +2,7 @@ import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import { getConnection, getChat, listMessages, putMessage, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
@@ -395,6 +395,13 @@ export const buildHandler = (postFn: PostFn) => async (
   let partialText = ''
   let partialTurnIndex = 0
 
+  // An assistant turn containing toolUse blocks is held here, NOT yet written, until its
+  // paired tool-result turn is also ready — then both are written atomically via
+  // putMessagePair. This guarantees the durable tree never ends on a dangling tool_use: a
+  // kill/error in this window leaves lastTurnMsgId at the prior (fully complete) turn
+  // instead of advancing past a half-written round.
+  let pendingAssistantTurn: { item: Record<string, unknown>; msgId: string } | null = null
+
   // Accumulates assistant text across all turns for post-stream memory extraction
   let assistantTextForMemory = ''
   // Set to true if manage_memory tool was called during the stream.
@@ -468,10 +475,13 @@ export const buildHandler = (postFn: PostFn) => async (
           // Backend-only: persist one record per Converse turn (format C, tree-aware)
           const turnMsgId = uuidv4()
           const turnTs = new Date().toISOString()
-          await putMessage({
+          // Chain from the pending (not-yet-durable) assistant turn if one is awaiting its
+          // pair, otherwise from the last durable turn: user → asst → tool-result → asst …
+          const parentId: string = pendingAssistantTurn?.msgId ?? lastTurnMsgId
+          const item: Record<string, unknown> = {
             ...buildTurnKey(chatId, responseStartTs, seq++, turnMsgId),
             msgId: turnMsgId,
-            parentId: lastTurnMsgId,  // chains: user → asst → tool-result → asst …
+            parentId,
             role: chunk.role,
             blocks: chunk.content,
             model,
@@ -484,10 +494,28 @@ export const buildHandler = (postFn: PostFn) => async (
               ? { thinkingEffort: effectiveModelSettings.thinkingEffort } : {}),
             ...(chunk.role === 'assistant' && effectiveModelSettings.webSearchEnabled !== undefined
               ? { webSearchEnabled: effectiveModelSettings.webSearchEnabled } : {}),
-          })
+          }
+
+          const hasToolUse = chunk.role === 'assistant' && chunk.content.some(b => 'toolUse' in b)
+
+          if (hasToolUse) {
+            // Hold this turn until its tool-result turn arrives — do NOT advance
+            // lastTurnMsgId or the durable leaf yet; this round isn't durable until paired.
+            pendingAssistantTurn = { item, msgId: turnMsgId }
+            break
+          }
+
+          if (pendingAssistantTurn) {
+            // This is the tool-result turn completing the pending round — write both
+            // atomically so the tree can never end on a dangling tool_use.
+            await putMessagePair(pendingAssistantTurn.item, item)
+            pendingAssistantTurn = null
+          } else {
+            await putMessage(item)
+          }
           lastTurnMsgId = turnMsgId
-          // Advance the durable leaf as each turn commits, so a mid-stream kill
-          // (e.g. Lambda timeout) never orphans this turn from the active path.
+          // Advance the durable leaf as each (now-complete) round commits, so a mid-stream
+          // kill (e.g. Lambda timeout) never orphans this turn from the active path.
           await advanceLeaf(turnMsgId)
           // Reset partial accumulator — this turn is fully persisted
           partialText = ''

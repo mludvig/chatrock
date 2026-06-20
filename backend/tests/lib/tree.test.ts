@@ -4,7 +4,7 @@
  * buildActivePath(rows, activeLeafId) walks leaf→root via parentId, reverses
  * to root→leaf order, and returns only the active branch's rows.
  */
-import { buildActivePath, resolveLeaf, resolveResponseLeaf } from '../../src/lib/tree'
+import { buildActivePath, resolveLeaf, resolveResponseLeaf, mostRecentLeaf, resolveSafeLeaf } from '../../src/lib/tree'
 
 import type { TurnRow } from '../../src/lib/tree'
 
@@ -38,13 +38,25 @@ test('linear chain: returns rows in root→leaf order', () => {
 
 // ── (b) activeLeafId null but rows present → falls back to last row's leaf ───
 
-test('null activeLeafId: falls back to the last row (by array order)', () => {
+test('null activeLeafId: falls back to the tree-derived most-recent leaf', () => {
   const rows = [
     makeRow('msg-a', null),
     makeRow('msg-b', 'msg-a'),
   ]
   const result = buildActivePath(rows, null)
   expect(result.map(r => r.msgId)).toEqual(['msg-a', 'msg-b'])
+})
+
+test('null activeLeafId with multiple root siblings: falls back to the most-recently-created branch, not array order', () => {
+  // msg-old (root, older) -> msg-old-child is LAST in array order, but msg-new (root,
+  // created later) should win the fallback — array order must not matter.
+  const rows = [
+    makeRow('msg-new', null, { createdAt: '2025-01-02T00:00:00.000Z' }),
+    makeRow('msg-old', null, { createdAt: '2025-01-01T00:00:00.000Z' }),
+    makeRow('msg-old-child', 'msg-old', { createdAt: '2025-01-01T00:00:01.000Z' }),
+  ]
+  const result = buildActivePath(rows, null)
+  expect(result.map(r => r.msgId)).toEqual(['msg-new'])
 })
 
 // ── (c) Tree with two siblings: returns only the active branch ────────────────
@@ -118,14 +130,13 @@ test('empty rows: returns []', () => {
 
 // ── (f) Unresolvable activeLeafId → returns all rows in array order ───────────
 
-test('unresolvable activeLeafId: falls back to full array (last row as leaf)', () => {
+test('unresolvable activeLeafId: falls back to the tree-derived most-recent leaf', () => {
   const rows = [
     makeRow('msg-1', null),
     makeRow('msg-2', 'msg-1'),
   ]
   // 'nonexistent' is not in the rows — should fall back gracefully
   const result = buildActivePath(rows, 'nonexistent')
-  // Falls back to last-row leaf walk → same as linear chain
   expect(result.map(r => r.msgId)).toEqual(['msg-1', 'msg-2'])
 })
 
@@ -294,4 +305,68 @@ test('inc4: resolveLeaf — deeper fork follows last child at each level', () =>
   expect(resolveLeaf(rows, 'user')).toBe('asstB2')
   // From 'asst-A': last child is userA, then asstA2
   expect(resolveLeaf(rows, 'asst-A')).toBe('asstA2')
+})
+
+// ── mostRecentLeaf ────────────────────────────────────────────────────────────
+
+test('mostRecentLeaf: empty rows returns null', () => {
+  expect(mostRecentLeaf([])).toBeNull()
+})
+
+test('mostRecentLeaf: single linear chain returns the deepest node', () => {
+  const rows = [
+    makeRow('a', null),
+    makeRow('b', 'a'),
+    makeRow('c', 'b'),
+  ]
+  expect(mostRecentLeaf(rows)).toBe('c')
+})
+
+test('mostRecentLeaf: picks the most-recently-created root branch, ignoring array order', () => {
+  const rows = [
+    makeRow('new-root', null, { createdAt: '2025-01-02T00:00:00.000Z' }),
+    makeRow('old-root', null, { createdAt: '2025-01-01T00:00:00.000Z' }),
+    makeRow('old-child', 'old-root', { createdAt: '2025-01-01T00:00:01.000Z' }),
+  ]
+  // old-child is last in array order and deeper, but new-root's branch is more recent.
+  expect(mostRecentLeaf(rows)).toBe('new-root')
+})
+
+test('mostRecentLeaf: rows with no root (headless/malformed) returns null', () => {
+  const rows = [makeRow('a', 'missing-parent')]
+  expect(mostRecentLeaf(rows)).toBeNull()
+})
+
+// ── resolveSafeLeaf ───────────────────────────────────────────────────────────
+
+test('resolveSafeLeaf: empty rows returns null', () => {
+  expect(resolveSafeLeaf([], 'anything')).toBeNull()
+})
+
+test('resolveSafeLeaf: valid candidate resolves down to its branch leaf', () => {
+  const rows = [
+    makeRow('a', null),
+    makeRow('b', 'a'),
+    makeRow('c', 'b'),
+  ]
+  expect(resolveSafeLeaf(rows, 'a')).toBe('c')
+})
+
+test('resolveSafeLeaf: null candidate falls back to mostRecentLeaf', () => {
+  const rows = [makeRow('a', null), makeRow('b', 'a')]
+  expect(resolveSafeLeaf(rows, null)).toBe('b')
+})
+
+test('resolveSafeLeaf: candidate referencing a non-existent (phantom) parent falls back safely', () => {
+  // Reproduces the exact incident: a turn's parentId points at a message that was never
+  // (or no longer) durably persisted. The old resolveLeaf would return the phantom id
+  // unchanged; resolveSafeLeaf must never do that.
+  const rows = [
+    makeRow('real-root', null),
+    makeRow('real-child', 'real-root'),
+  ]
+  const result = resolveSafeLeaf(rows, 'phantom-msg-id-that-does-not-exist')
+  expect(result).not.toBe('phantom-msg-id-that-does-not-exist')
+  expect(rows.some(r => r.msgId === result)).toBe(true)
+  expect(result).toBe('real-child')
 })
