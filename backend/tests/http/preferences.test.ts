@@ -26,12 +26,12 @@ const result = (r: unknown) => r as APIGatewayProxyStructuredResultV2
 // ── GET /api/preferences ─────────────────────────────────────────────────────
 
 test('GET /api/preferences with stored prefs returns them', async () => {
-  mockDynamo.getUserPrefs.mockResolvedValue({ persona: 'Be brief', webSearch: false })
+  mockDynamo.getUserPrefs.mockResolvedValue({ persona: 'Be brief', webSearchEnabled: false })
 
   const res = result(await handler(makeEvent('GET', '/api/preferences') as any))
   expect(res.statusCode).toBe(200)
   const body = JSON.parse(res.body ?? '{}')
-  expect(body.preferences).toEqual({ persona: 'Be brief', webSearch: false })
+  expect(body.preferences).toEqual({ persona: 'Be brief', webSearchEnabled: false })
   expect(mockDynamo.getUserPrefs).toHaveBeenCalledWith('user-1')
 })
 

@@ -79,7 +79,7 @@ Browser → CloudFront (single distribution, custom domain)
 
 Table `chatrock-prod` with PK/SK:
 - Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?
-- Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearch?
+- Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearchEnabled?
 - WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL, cancelRequested?
 - User prefs: `PK=USER#<sub>` / `SK=PREF#USER` — `prefs` attribute (`UserPreferences` JSON blob), updatedAt
 - Memory: `PK=USER#<sub>` / `SK=MEM#USER#<memId>` — text, category (`identity|preference|style|other`), createdAt, updatedAt
@@ -121,7 +121,8 @@ backend/src/
   lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8)
   lib/blocks.ts           — block-level helpers: capToolResultText (30 KB cap)
   lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, batchPutMessages, setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
-  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL; executeTool dispatcher; ToolContext type
+  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider); ToolContext type
+  lib/agentcore/gateway.ts — minimal SigV4-signed MCP client for AgentCore Gateway targets (callGatewayTool); backs agentcoreSearch today, a generic seam for future AgentCore primitives (e.g. Code Interpreter)
   lib/tree.ts             — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf
   lib/memory.ts           — manage_memory + manage_project_memory executors (remember/update/forget); reconcile() ADD-only dedup
   lib/enrichment.ts       — unified post-turn Haiku call: enrichTurn() returns userFacts + projectFacts + summary + title in one JSON call; enrichChatForProject() summary-only wrapper
@@ -200,7 +201,7 @@ React Router v6: `/` → `/c/new`, `/c/:chatId` for chats, `/p/:projectId` for p
 
 Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `sidebarWidth`, `activePanel`, `userPreferences`. Everything else is ephemeral.
 
-`ModelSettings.webSearch` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. Per-assistant-turn `thinkingEffort` and `webSearch` are persisted in DynamoDB and surfaced in the bubble metadata line.
+`ModelSettings.webSearchEnabled` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.webSearchProvider` (`'jina' | 'agentcore'`, default `jina`) selects which backend powers the `web_search` tool — see "Web search providers" below. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in DynamoDB and surfaced in the bubble metadata line.
 
 ### Frontend env vars
 
@@ -211,9 +212,12 @@ VITE_API_BASE_URL, VITE_WS_URL, VITE_COGNITO_USER_POOL_ID, VITE_COGNITO_CLIENT_I
 VITE_COGNITO_DOMAIN, VITE_APP_URL
 ```
 
-### Jina web search / fetch
+### Web search providers
 
-`lib/tools.ts` implements `web_search` (via `s.jina.ai/{query}` with `JINA_API_KEY`) and `web_fetch` (via `r.jina.ai/{url}`, no key). The API key is set in `terraform/terraform.tfvars` as `jina_api_key` and injected into Lambda env. If empty, the tools still appear in the tool spec but requests will 401.
+`lib/tools.ts` implements `web_search` against two interchangeable backends, selected per-call by `ToolContext.webSearchProvider` (threaded from `ModelSettings.webSearchProvider` via `sendMessage.ts`'s preference resolution — same layering as every other model setting). Both map into the identical `{ results: [{title,url,description}], text }` JSON contract so `lib/toolResults.ts` card parsing on the frontend is provider-agnostic. `web_fetch` always uses Jina — AgentCore Web Search has no page-fetch primitive, only ranked snippets.
+- **Jina** (default): `jinaSearch`/`jinaFetch` call `s.jina.ai/{query}` / `r.jina.ai/{url}` with `JINA_API_KEY` (terraform var `jina_api_key`, optional — empty key still appears in the tool spec but requests 401).
+- **Amazon Bedrock AgentCore Web Search**: `agentcoreSearch` calls `callGatewayTool('WebSearch', { query, maxResults })` in `lib/agentcore/gateway.ts`, a minimal MCP (Model Context Protocol) client that SigV4-signs requests to an AgentCore Gateway (inbound auth type `AWS_IAM` — the Lambda's own execution role signs directly, no OAuth/Cognito machine-to-machine flow). Web Search is `us-east-1`-only as of June 2026, so the gateway is region-pinned there regardless of the app's home region (`terraform/agentcore.tf`); env vars `AGENTCORE_GATEWAY_URL` / `AGENTCORE_REGION` carry the endpoint into every Lambda. `lib/agentcore/` is structured as a general seam — a future AgentCore Code Interpreter integration would add a sibling file reusing `callGatewayTool` unchanged. Each successful call logs a `web_search` CloudWatch event with `provider`.
+- **Provider's Gateway *target*** (the Web Search connector itself) is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step, not a Terraform resource — see the comment block in `terraform/agentcore.tf` for why (the AWS provider's `aws_bedrockagentcore_gateway_target` doesn't yet expose the `connector` target type) and the exact command.
 
 ### Memory
 
@@ -224,11 +228,11 @@ Two writers, two stores (user and project):
 
 `assembleSystemPrompt` (`lib/promptAssembly.ts`) injects user memory as `- [memId] text` lines, project memory in a separate "About this project:" block, and a project manifest (files + sibling chats) for project chats.
 
-`bedrock.ts` builds the tool list via `buildToolsWithCache(settings, ctx?)`: web tools when `webSearch !== false`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`; cachePoint always last.
+`bedrock.ts` builds the tool list via `buildToolsWithCache(settings, ctx?)`: web tools when `webSearchEnabled !== false`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`; cachePoint always last. Which provider backs `web_search` (Jina vs. AgentCore) doesn't affect the tool spec — see "Web search providers".
 
 ### User preferences
 
-`lib/preferences.ts` defines `UserPreferences`: `persona` (custom instructions), `defaultModel`, `thinkingEffort`, `webSearch`, `temperature`, `topP`, `topK`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat; project/chat layers not yet used). Stored as a JSON blob in the `prefs` attribute of the `PREF#USER` row.
+`lib/preferences.ts` defines `UserPreferences`: `persona` (custom instructions), `defaultModel`, `thinkingEffort`, `webSearchEnabled`, `webSearchProvider` (`'jina'|'agentcore'`), `temperature`, `topP`, `topK`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat; project/chat layers not yet used). Stored as a JSON blob in the `prefs` attribute of the `PREF#USER` row.
 
 `http/preferences.ts` handles `GET /api/preferences` and `PUT /api/preferences`.
 
@@ -282,6 +286,7 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout 
 | `llm_call` purpose=`enrich_turn` | `sendMessage.ts` post-turn | model, chatId, userAdded, projectAdded, hasSummary, hasTitle |
 | `llm_call` purpose=`file_summary` | `http/projects.ts` finalize | model, projectId, fileId, filename |
 | `memory_tool` | `memory.ts` per call | op (remember/update/forget), scope (user/project), result |
+| `web_search` | `tools.ts` per call | provider (jina/agentcore), result |
 | `stream_start` / `stream_error` / `stream_cancelled` | `sendMessage.ts` | — |
 | `enrich_turn_error` | `sendMessage.ts` post-turn | chatId, error |
 | `manifest_truncated` | `sendMessage.ts` manifest build | kind (files/chats), total, kept, projectId, chatId |
@@ -308,3 +313,4 @@ Projects group related chats + files and give the model project-scoped memory an
 - **WS authorizer**: TTL caching (`authorizer_result_ttl_in_seconds`) is not valid for WebSocket APIs — omit it.
 - **`cd` in Bash**: avoid `cd` in commands; use `--prefix` or absolute paths to keep auto-approval working.
 - **Screenshots**: save to `.screenshots/YYYY-MM-DD-description.jpg`.
+- **AgentCore Gateway target type**: `aws_bedrockagentcore_gateway_target` (AWS provider v6.51.0) doesn't yet support the `connector` target type that Web Search needs — only the *gateway* is a real Terraform resource (`terraform/agentcore.tf`); the target is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step (comment in that file has the exact command). Needs AWS CLI ≥ 2.35.7 — older builds reject the `connector` parameter outright.

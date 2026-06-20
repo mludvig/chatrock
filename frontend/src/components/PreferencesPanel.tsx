@@ -27,7 +27,12 @@ export default function PreferencesPanel() {
   const debounceRef = useRef<number | null>(null)
   const chatInstructionsDebounceRef = useRef<number | null>(null)
   const chatSettingsDebounceRef = useRef<number | null>(null)
-  const initialLoadRef = useRef(false)
+  // Gates both the mount-time fetch below and the auto-save effect: true once the user
+  // has made a real edit. Guards two races at once — (1) the fetch resolving after a quick
+  // edit must not clobber it, and (2) an edit made before the fetch resolves must still
+  // schedule a save (a plain "has the initial GET completed" flag would miss this, since
+  // a ref flip alone doesn't re-trigger the save effect).
+  const editedRef = useRef(false)
 
   // Project tab state
   const [projectDraft, setProjectDraft] = useState<Partial<Project>>({})
@@ -37,12 +42,9 @@ export default function PreferencesPanel() {
   // Load preferences from server on mount
   useEffect(() => {
     api.getPreferences().then(res => {
-      setPrefs(res.preferences)
+      if (!editedRef.current) setPrefs(res.preferences)
       setUserPreferences(res.preferences)
-      initialLoadRef.current = true
-    }).catch(() => {
-      initialLoadRef.current = true
-    })
+    }).catch(() => {})
   }, [setUserPreferences])
 
   // Seed project draft when active project changes
@@ -60,7 +62,7 @@ export default function PreferencesPanel() {
 
   // Auto-save defaults with 800ms debounce
   useEffect(() => {
-    if (!initialLoadRef.current) return
+    if (!editedRef.current) return
     if (debounceRef.current !== null) clearTimeout(debounceRef.current)
     debounceRef.current = window.setTimeout(() => {
       api.savePreferences(prefs).then(() => {
@@ -76,6 +78,7 @@ export default function PreferencesPanel() {
   }, [prefs])
 
   function patch(update: Partial<UserPreferences>) {
+    editedRef.current = true
     setPrefs(p => ({ ...p, ...update }))
   }
 
@@ -230,11 +233,27 @@ export default function PreferencesPanel() {
             <div className="pref-row">
               <span className="pref-row-label">Web search</span>
               <button
-                className={`toggle-btn${prefs.webSearch !== false ? ' active' : ''}`}
-                onClick={() => patch({ webSearch: prefs.webSearch === false ? true : false })}
+                className={`toggle-btn${prefs.webSearchEnabled !== false ? ' active' : ''}`}
+                onClick={() => patch({ webSearchEnabled: prefs.webSearchEnabled === false ? true : false })}
               >
-                {prefs.webSearch !== false ? 'On' : 'Off'}
+                {prefs.webSearchEnabled !== false ? 'On' : 'Off'}
               </button>
+            </div>
+          </div>
+
+          {/* Web search provider */}
+          <div className="pref-section">
+            <div className="pref-label">Web search provider</div>
+            <div className="effort-buttons">
+              {(['jina', 'agentcore'] as const).map(p => (
+                <button
+                  key={p}
+                  className={`effort-btn${(prefs.webSearchProvider ?? 'jina') === p ? ' active' : ''}`}
+                  onClick={() => patch({ webSearchProvider: p })}
+                >
+                  {p === 'jina' ? 'Jina' : 'AgentCore'}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -337,10 +356,10 @@ export default function PreferencesPanel() {
             <div className="pref-row">
               <span className="pref-row-label">Web search</span>
               <button
-                className={`toggle-btn${projectDraft.modelSettings?.webSearch !== false ? ' active' : ''}`}
-                onClick={() => patchProjectModelSettings({ webSearch: projectDraft.modelSettings?.webSearch === false ? true : false })}
+                className={`toggle-btn${projectDraft.modelSettings?.webSearchEnabled !== false ? ' active' : ''}`}
+                onClick={() => patchProjectModelSettings({ webSearchEnabled: projectDraft.modelSettings?.webSearchEnabled === false ? true : false })}
               >
-                {projectDraft.modelSettings?.webSearch !== false ? 'On' : 'Off'}
+                {projectDraft.modelSettings?.webSearchEnabled !== false ? 'On' : 'Off'}
               </button>
             </div>
           </div>

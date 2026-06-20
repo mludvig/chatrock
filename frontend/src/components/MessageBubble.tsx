@@ -446,7 +446,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
                 {msg.thinkingEffort}
               </span>
             )}
-            {msg.webSearch === false && (
+            {msg.webSearchEnabled === false && (
               <span className="msg-meta-item">
                 <FontAwesomeIcon icon={faGlobe} />
                 no web

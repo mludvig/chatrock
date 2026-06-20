@@ -74,7 +74,7 @@ export interface Message {
   usage?: TokenUsage
   // Per-turn inference metadata (F1/F2)
   thinkingEffort?: string
-  webSearch?: boolean
+  webSearchEnabled?: boolean
   // Convenience: a text step's content for the legacy Message.content access pattern
   // (kept so callers that only need the text can still work; derived from steps on load)
   content?: string
@@ -99,7 +99,8 @@ export interface ModelSettings {
   topP?: number
   topK?: number
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
-  webSearch?: boolean
+  webSearchEnabled?: boolean
+  webSearchProvider?: 'jina' | 'agentcore'
   memoryEnabled?: boolean
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
@@ -142,7 +143,8 @@ export interface UserPreferences {
   answerLength?: 'default' | 'short' | 'extensive'
   defaultModel?: string
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
-  webSearch?: boolean
+  webSearchEnabled?: boolean
+  webSearchProvider?: 'jina' | 'agentcore'
   temperature?: number
   topP?: number
   topK?: number
@@ -160,7 +162,7 @@ export const THINKING_EFFORTS = ['off', 'low', 'medium', 'high', 'max'] as const
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   return {
     ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
-    webSearch: true,
+    webSearchEnabled: true,
   }
 }
 
@@ -172,7 +174,7 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     ...(caps.topP && prev.topP !== undefined ? { topP: prev.topP } : {}),
     ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
     ...(caps.thinking !== 'none' ? { thinkingEffort: prev.thinkingEffort ?? defaults.thinkingEffort } : {}),
-    webSearch: prev.webSearch ?? true,
+    webSearchEnabled: prev.webSearchEnabled ?? true,
     memoryEnabled: prev.memoryEnabled ?? true,
   }
 }

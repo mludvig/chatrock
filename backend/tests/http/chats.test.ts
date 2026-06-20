@@ -627,9 +627,9 @@ test('POST /api/chats with duplicate chatId returns 409', async () => {
 test('B1: PATCH modelSettings → updateChatModelSettings called', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
   mockDynamo.updateChatModelSettings.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { modelSettings: { webSearch: false, thinkingEffort: 'low' } }, { chatId: 'c1' }) as any))
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { modelSettings: { webSearchEnabled: false, thinkingEffort: 'low' } }, { chatId: 'c1' }) as any))
   expect(res.statusCode).toBe(200)
-  expect(mockDynamo.updateChatModelSettings).toHaveBeenCalledWith('user-1', 'c1', { webSearch: false, thinkingEffort: 'low' })
+  expect(mockDynamo.updateChatModelSettings).toHaveBeenCalledWith('user-1', 'c1', { webSearchEnabled: false, thinkingEffort: 'low' })
 })
 
 test('B2: PATCH modelSettings with non-object string → 400', async () => {
@@ -653,11 +653,11 @@ test('B-null: PATCH modelSettings with null → 400', async () => {
 
 test('B4: GET /api/chats includes modelSettings when present on chat record', async () => {
   mockDynamo.listChats.mockResolvedValue([
-    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '', modelSettings: { webSearch: false } },
+    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '', modelSettings: { webSearchEnabled: false } },
   ])
   const res = result(await handler(makeEvent('GET', '/api/chats') as any))
   const body = JSON.parse(res.body ?? '{}')
-  expect(body.chats[0].modelSettings).toEqual({ webSearch: false })
+  expect(body.chats[0].modelSettings).toEqual({ webSearchEnabled: false })
 })
 
 test('B5: GET /api/chats omits modelSettings when absent', async () => {
@@ -671,10 +671,10 @@ test('B5: GET /api/chats omits modelSettings when absent', async () => {
 
 test('B6: POST /api/chats with modelSettings persists it', async () => {
   mockDynamo.putChat.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6', modelSettings: { webSearch: false } }) as any))
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6', modelSettings: { webSearchEnabled: false } }) as any))
   expect(res.statusCode).toBe(201)
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
-    expect.objectContaining({ modelSettings: { webSearch: false } })
+    expect.objectContaining({ modelSettings: { webSearchEnabled: false } })
   )
 })
 
@@ -682,7 +682,7 @@ test('B7: fork carries modelSettings from source chat', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', model: 'global.anthropic.claude-sonnet-4-6',
     systemPrompt: 'sys', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
-    modelSettings: { webSearch: false },
+    modelSettings: { webSearchEnabled: false },
   })
   const rows = [
     makeForkRow('u1', null, { role: 'user', responseId: 'r1' }),
@@ -695,7 +695,7 @@ test('B7: fork carries modelSettings from source chat', async () => {
   const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any))
   expect(res.statusCode).toBe(201)
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
-    expect.objectContaining({ modelSettings: { webSearch: false } })
+    expect.objectContaining({ modelSettings: { webSearchEnabled: false } })
   )
 })
 

@@ -8,6 +8,8 @@ locals {
     COGNITO_USER_POOL_ID                = aws_cognito_user_pool.chatrock.id
     COGNITO_CLIENT_ID                   = aws_cognito_user_pool_client.spa.id
     JINA_API_KEY                        = var.jina_api_key
+    AGENTCORE_GATEWAY_URL               = aws_bedrockagentcore_gateway.web_search.gateway_url
+    AGENTCORE_REGION                    = "us-east-1"
     AWS_NODEJS_CONNECTION_REUSE_ENABLED = "1"
     ATTACHMENTS_BUCKET                  = aws_s3_bucket.attachments.id
     CLOUDFRONT_DOMAIN                   = "https://${var.domain_name}"
