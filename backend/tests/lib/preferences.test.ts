@@ -4,27 +4,27 @@ import type { UserPreferences } from '../../src/lib/preferences'
 // ── resolvePreferences ────────────────────────────────────────────────────────
 
 test('user-only: result equals user prefs', () => {
-  const user: UserPreferences = { persona: 'Be brief', answerLength: 'short', webSearch: true }
+  const user: UserPreferences = { persona: 'Be brief', answerLength: 'short', webSearchEnabled: true }
   const result = resolvePreferences({ user })
   expect(result).toEqual(user)
 })
 
 test('chat overrides user: chat value wins', () => {
-  const user: UserPreferences = { answerLength: 'default', webSearch: false }
+  const user: UserPreferences = { answerLength: 'default', webSearchEnabled: false }
   const chat: UserPreferences = { answerLength: 'extensive' }
   const result = resolvePreferences({ user, chat })
   expect(result.answerLength).toBe('extensive')
-  expect(result.webSearch).toBe(false) // user value preserved where chat doesn't override
+  expect(result.webSearchEnabled).toBe(false) // user value preserved where chat doesn't override
 })
 
 test('project overrides user but chat overrides project', () => {
-  const user: UserPreferences = { answerLength: 'default', temperature: 0.5, webSearch: false }
+  const user: UserPreferences = { answerLength: 'default', temperature: 0.5, webSearchEnabled: false }
   const project: UserPreferences = { answerLength: 'short', temperature: 0.7 }
   const chat: UserPreferences = { answerLength: 'extensive' }
   const result = resolvePreferences({ user, project, chat })
   expect(result.answerLength).toBe('extensive') // chat wins
   expect(result.temperature).toBe(0.7)           // project overrides user
-  expect(result.webSearch).toBe(false)            // user preserved
+  expect(result.webSearchEnabled).toBe(false)            // user preserved
 })
 
 test('undefined values at a layer do not override lower layers', () => {
@@ -53,7 +53,7 @@ test('all layers absent: returns {}', () => {
 })
 
 test('chat-only without user: returns chat prefs', () => {
-  const chat: UserPreferences = { webSearch: true, thinkingEffort: 'high' }
+  const chat: UserPreferences = { webSearchEnabled: true, thinkingEffort: 'high' }
   const result = resolvePreferences({ chat })
   expect(result).toEqual(chat)
 })

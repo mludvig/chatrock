@@ -9,7 +9,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
 import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, type ToolContext } from './tools'
-import { capToolResultText } from './blocks'
+import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 
 export const bedrockClient = new BedrockRuntimeClient({
@@ -89,7 +89,7 @@ const CACHE_POINT_CONTENT = { cachePoint: { type: 'default' as const } } as unkn
  */
 function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[] {
   const list: Tool[] = []
-  if (settings.webSearch !== false) list.push(...WEB_TOOLS)
+  if (settings.webSearchEnabled !== false) list.push(...WEB_TOOLS)
   if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
   if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
   if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
@@ -361,7 +361,7 @@ export async function* converseStream(
   abortSignal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
   let tools = buildToolsWithCache(settings, ctx)
-  // If tools are disabled (both webSearch and memory off) but the replayed history
+  // If tools are disabled (both webSearchEnabled and memory off) but the replayed history
   // contains toolUse/toolResult blocks, Bedrock still requires a non-empty toolConfig.
   // Re-offer the full tool set so toolConfig is present and valid for the history.
   if (tools.length === 0 && historyHasToolBlocks(messages)) {
@@ -416,6 +416,10 @@ export async function* converseStream(
     if (abortSignal?.aborted) return
 
     // Execute tools, apply cap helper, build tool-result message
+    // A round can fan out many parallel tool_use calls (e.g. the model batching N
+    // web_search calls); their results all land in the same DynamoDB turn item, so the
+    // per-call cap must shrink as the round grows to keep the aggregate bounded.
+    const perCallCap = Math.min(TOOL_RESULT_CAP, Math.floor(TOOL_RESULTS_ROUND_CAP / Math.max(1, result.toolUses.length)))
     const toolResults: ContentBlock[] = []
     for (const tu of result.toolUses) {
       const input = (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })()
@@ -424,7 +428,7 @@ export async function* converseStream(
         ? (toolResult.content[0].text ?? '')
         : ''
       // Cap BEFORE storing (so stored == sent → cache-safe, no replay drift)
-      const cappedContent = capToolResultText(rawContent)
+      const cappedContent = capToolResultText(rawContent, perCallCap)
       const isError = toolResult.status === 'error'
 
       // Emit memoryChanged when manage_memory succeeds (triggers WS memoryUpdated event)

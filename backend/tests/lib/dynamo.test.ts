@@ -131,7 +131,7 @@ test('getUserPrefs returns {} when item has no prefs field', async () => {
 
 test('putUserPrefs calls PutCommand with correct key, prefs, and updatedAt', async () => {
   mockSend.mockResolvedValueOnce({})
-  const prefs = { persona: 'Helpful assistant', webSearch: true }
+  const prefs = { persona: 'Helpful assistant', webSearchEnabled: true }
   await putUserPrefs('sub2', prefs)
 
   expect(mockSend).toHaveBeenCalledTimes(1)

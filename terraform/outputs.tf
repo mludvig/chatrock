@@ -33,3 +33,12 @@ output "cognito_client_id" {
 output "cognito_hosted_ui_domain" {
   value = "https://${aws_cognito_user_pool_domain.chatrock.domain}.auth.${var.aws_region}.amazoncognito.com"
 }
+
+output "agentcore_gateway_id" {
+  description = "Used for the one-time create-gateway-target step — see terraform/agentcore.tf"
+  value       = aws_bedrockagentcore_gateway.web_search.gateway_id
+}
+
+output "agentcore_gateway_url" {
+  value = aws_bedrockagentcore_gateway.web_search.gateway_url
+}

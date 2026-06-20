@@ -963,7 +963,7 @@ test('leaf-resilience: the user prompt is pinned as activeLeaf before streaming 
 
 // ── Increment F: per-turn metadata + web-search toggle ───────────────────────
 
-test('f1: assistant turn row stores thinkingEffort and webSearch from modelSettings', async () => {
+test('f1: assistant turn row stores thinkingEffort and webSearchEnabled from modelSettings', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
@@ -978,7 +978,7 @@ test('f1: assistant turn row stores thinkingEffort and webSearch from modelSetti
 
   await buildHandler(mockPost)(makeEvent({
     chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '',
-    modelSettings: { thinkingEffort: 'high', webSearch: true },
+    modelSettings: { thinkingEffort: 'high', webSearchEnabled: true },
   }))
 
   const assistantPut = mockDynamo.putMessage.mock.calls
@@ -986,10 +986,10 @@ test('f1: assistant turn row stores thinkingEffort and webSearch from modelSetti
     .find(r => r.role === 'assistant')!
 
   expect(assistantPut.thinkingEffort).toBe('high')
-  expect(assistantPut.webSearch).toBe(true)
+  expect(assistantPut.webSearchEnabled).toBe(true)
 })
 
-test('f2: webSearch:false passes empty tools — converseStream called with webSearch:false setting', async () => {
+test('f2: webSearchEnabled:false passes empty tools — converseStream called with webSearchEnabled:false setting', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
@@ -1004,12 +1004,12 @@ test('f2: webSearch:false passes empty tools — converseStream called with webS
 
   await buildHandler(mockPost)(makeEvent({
     chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '',
-    modelSettings: { webSearch: false },
+    modelSettings: { webSearchEnabled: false },
   }))
 
-  // The modelSettings passed to converseStream must include webSearch:false
+  // The modelSettings passed to converseStream must include webSearchEnabled:false
   const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
-  expect((passedSettings as Record<string, unknown>).webSearch).toBe(false)
+  expect((passedSettings as Record<string, unknown>).webSearchEnabled).toBe(false)
 })
 
 test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat history)', async () => {
@@ -1153,8 +1153,8 @@ test('prefs1: uses assembleSystemPrompt with user prefs — persona appears in s
 
 test('prefs2: client modelSettings override user preference defaults', async () => {
   prefsBase()
-  // User default: webSearch off
-  mockDynamo.getUserPrefs.mockResolvedValue({ webSearch: false })
+  // User default: webSearchEnabled off
+  mockDynamo.getUserPrefs.mockResolvedValue({ webSearchEnabled: false })
 
   async function* fakeStream() {
     yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
@@ -1163,10 +1163,10 @@ test('prefs2: client modelSettings override user preference defaults', async () 
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
   // Client explicitly turns web search ON — must win
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { webSearch: true } }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { webSearchEnabled: true } }))
 
   const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
-  expect((passedSettings as Record<string, unknown>).webSearch).toBe(true)
+  expect((passedSettings as Record<string, unknown>).webSearchEnabled).toBe(true)
 })
 
 test('prefs3: getUserPrefs failure propagates as a fatal error — converseStream not called', async () => {

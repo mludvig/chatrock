@@ -84,11 +84,11 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
           <span>Web search</span>
         </label>
         <button
-          className={`toggle-btn${settings.webSearch !== false ? ' active' : ''}`}
-          onClick={() => set({ webSearch: settings.webSearch === false ? true : false })}
+          className={`toggle-btn${settings.webSearchEnabled !== false ? ' active' : ''}`}
+          onClick={() => set({ webSearchEnabled: settings.webSearchEnabled === false ? true : false })}
           title="Toggle web search"
         >
-          {settings.webSearch !== false ? 'On' : 'Off'}
+          {settings.webSearchEnabled !== false ? 'On' : 'Off'}
         </button>
       </div>
       <div className="model-setting-row model-setting-row--inline">

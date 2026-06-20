@@ -110,20 +110,22 @@ export const buildHandler = (postFn: PostFn) => async (
   } : {}
 
   const chatPrefs: UserPreferences = {
-    thinkingEffort:    modelSettings.thinkingEffort,
-    webSearch:         modelSettings.webSearch,
-    memoryEnabled:     modelSettings.memoryEnabled,
-    answerLength:      modelSettings.answerLength as UserPreferences['answerLength'],
-    injectCurrentDate: modelSettings.injectCurrentDate,
+    thinkingEffort:     modelSettings.thinkingEffort,
+    webSearchEnabled:   modelSettings.webSearchEnabled,
+    webSearchProvider:  modelSettings.webSearchProvider,
+    memoryEnabled:      modelSettings.memoryEnabled,
+    answerLength:       modelSettings.answerLength as UserPreferences['answerLength'],
+    injectCurrentDate:  modelSettings.injectCurrentDate,
   }
 
   const effectivePrefs = resolvePreferences({ user: userPrefs, project: projectPrefs, chat: chatPrefs })
   const memoryEnabled = effectivePrefs.memoryEnabled !== false
 
   const effectiveModelSettings: ModelSettings = {
-    thinkingEffort: effectivePrefs.thinkingEffort,
-    webSearch:      effectivePrefs.webSearch,
-    memoryEnabled:  effectivePrefs.memoryEnabled,
+    thinkingEffort:    effectivePrefs.thinkingEffort,
+    webSearchEnabled:  effectivePrefs.webSearchEnabled,
+    webSearchProvider: effectivePrefs.webSearchProvider,
+    memoryEnabled:     effectivePrefs.memoryEnabled,
   }
 
   // Build project manifest and forced files (project chats only)
@@ -219,7 +221,11 @@ export const buildHandler = (postFn: PostFn) => async (
   })
 
   // Build tool context for manage_memory / manage_project_memory / read_project_* (from auth, never client)
-  const toolCtx: ToolContext = { sub, ...(projectId ? { projectId, chatId } : {}) }
+  const toolCtx: ToolContext = {
+    sub,
+    ...(projectId ? { projectId, chatId } : {}),
+    ...(effectiveModelSettings.webSearchProvider ? { webSearchProvider: effectiveModelSettings.webSearchProvider } : {}),
+  }
 
   // Timestamp block: prepended to new user turns when injectCurrentDate is enabled.
   // Stored permanently in DDB; the model reads the actual send time for each turn.
@@ -476,8 +482,8 @@ export const buildHandler = (postFn: PostFn) => async (
             ...(chunk.role === 'assistant' && lastUsage ? { usage: lastUsage } : {}),
             ...(chunk.role === 'assistant' && effectiveModelSettings.thinkingEffort !== undefined
               ? { thinkingEffort: effectiveModelSettings.thinkingEffort } : {}),
-            ...(chunk.role === 'assistant' && effectiveModelSettings.webSearch !== undefined
-              ? { webSearch: effectiveModelSettings.webSearch } : {}),
+            ...(chunk.role === 'assistant' && effectiveModelSettings.webSearchEnabled !== undefined
+              ? { webSearchEnabled: effectiveModelSettings.webSearchEnabled } : {}),
           })
           lastTurnMsgId = turnMsgId
           // Advance the durable leaf as each turn commits, so a mid-stream kill

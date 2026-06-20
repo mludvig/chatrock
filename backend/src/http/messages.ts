@@ -59,7 +59,7 @@ interface RawBubble {
   createdAt: string
   usage?: TokenUsage
   thinkingEffort?: string
-  webSearch?: boolean
+  webSearchEnabled?: boolean
   errored?: boolean
 }
 
@@ -90,7 +90,7 @@ interface TurnRow {
   responseId: string
   usage?: TokenUsage
   thinkingEffort?: string
-  webSearch?: boolean
+  webSearchEnabled?: boolean
   incomplete?: boolean
 }
 
@@ -145,7 +145,7 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
           model: row.model,
           createdAt: row.createdAt,
           ...(row.thinkingEffort !== undefined ? { thinkingEffort: row.thinkingEffort } : {}),
-          ...(row.webSearch !== undefined ? { webSearch: row.webSearch } : {}),
+          ...(row.webSearchEnabled !== undefined ? { webSearchEnabled: row.webSearchEnabled } : {}),
         }
         currentToolSteps = new Map()
         currentResponseId = row.responseId
