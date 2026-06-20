@@ -4,7 +4,7 @@ import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSys
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
-import { resolveLeaf, resolveResponseLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
+import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, deleteChatObjects, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { enrichChatForProject } from '../lib/enrichment'
@@ -312,13 +312,19 @@ export const handler = async (
     await batchDeleteMessages(keys)
 
     // Reset activeLeafId if the active leaf is inside the deleted subtree.
-    // Resolve to the leaf of the surviving branch under the same parent,
-    // so the active path stays on a complete assistant response.
+    // Resolve to the leaf of the surviving branch under the same parent, so the active
+    // path stays on a complete assistant response. Uses resolveSafeLeaf (not bare
+    // resolveLeaf) because targetRow.parentId can itself be absent from remainingRows —
+    // e.g. it was never durably persisted due to an earlier, unrelated failure. A bare
+    // resolveLeaf would silently return that phantom id unchanged; resolveSafeLeaf falls
+    // back to the most-recently-created surviving leaf instead.
     const activeLeafId = chat.activeLeafId as string | undefined
     if (activeLeafId && toDeleteSet.has(activeLeafId)) {
       const remainingRows = rows.filter(r => !toDeleteSet.has(r.msgId))
-      const newLeaf = resolveLeaf(remainingRows, targetRow.parentId)
-      await updateChatActiveLeaf(sub, chatId, newLeaf)
+      const newLeaf = resolveSafeLeaf(remainingRows, targetRow.parentId)
+      // remainingRows always has at least the root (deleting the root is refused above),
+      // so newLeaf should never be null here — but guard rather than write a bad value.
+      if (newLeaf) await updateChatActiveLeaf(sub, chatId, newLeaf)
     }
 
     console.log(JSON.stringify({ event: 'branch_deleted', sub, chatId, msgId, deletedCount: toDelete.length }))

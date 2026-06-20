@@ -100,11 +100,17 @@ Attachments are stored in S3 under `attachments/<sub>/<chatId>/<fileId>/<filenam
 Each turn record has `msgId` (UUID) + `parentId` (null at root) forming a tree. `activeLeafId` on the chat record tracks the current branch tip. `GET /messages` does a single DynamoDB Query of the full `CHAT#<chatId>` partition, then walks the tree in memory to extract the active path and compute sibling metadata.
 
 Key helpers in `backend/src/lib/tree.ts`:
-- `buildActivePath(rows, leafId)` — leaf→root walk, reversed to root→leaf order
+- `buildActivePath(rows, leafId)` — leaf→root walk, reversed to root→leaf order. Falls back to `mostRecentLeaf(rows)` (not raw array order) when `leafId` doesn't resolve.
 - `resolveLeaf(rows, msgId)` — walk DOWN to the deepest descendant (last child at each level)
 - `resolveResponseLeaf(rows, msgId)` — same but stays within one `responseId` group (no crossing into the next bubble)
+- `mostRecentLeaf(rows)` — tree-derived "what's the current leaf" with no starting point: walks down from every root, picks whichever terminal leaf has the latest `createdAt`
+- `resolveSafeLeaf(rows, candidateMsgId)` — validated chokepoint for moving `activeLeafId`: confirms `candidateMsgId` exists in `rows` before resolving it down; falls back to `mostRecentLeaf` otherwise rather than ever persisting a phantom pointer. Used by the delete-branch handler (`http/chats.ts`) when re-resolving the leaf after deleting a subtree — `candidateMsgId` there is the deleted node's own `parentId`, which can itself be absent from `rows` (e.g. a turn that failed to persist for an unrelated reason earlier).
 
 `responseId` groups all turns of a single Bedrock call (the initial assistant text + any tool-use turns + tool-result turns). A display bubble = one `responseId` group collapsed into steps[].
+
+**Atomic tool-use round persistence**: `ws/sendMessage.ts` defers writing an assistant turn that contains `toolUse` blocks until its paired tool-result turn is also ready, then writes both via `dynamo.ts`'s `putMessagePair` (`TransactWriteCommand`, 2 items). This guarantees the durable tree never ends on a dangling `tool_use` — a failure between the two halves (size limit, throttling, etc.) leaves the *prior* complete round as the durable tip instead of a structurally-connected-but-Bedrock-invalid one. `lastTurnMsgId` only ever reflects the latest **durable** turn; a pending (not-yet-paired) turn's msgId is used solely to chain the next turn's `parentId` in memory. As defense-in-depth against any other way this shape could arise (stale data, a different bug), `bedrock.ts`'s `healDanglingToolUse` synthesizes a placeholder error `toolResult` for a tail assistant message with unresolved `toolUse` blocks, right alongside `coalesceMessages` (which handles the sibling failure mode: two consecutive same-role turns from an interrupted loop) — both run unconditionally before every Bedrock call.
+
+`batchPutMessages`/`batchDeleteMessages` (fork-copy, subtree-delete) retry `BatchWriteCommand`'s `UnprocessedItems` (not atomic by default) and throw if items remain unprocessed after retries, rather than silently leaving a partial result.
 
 **WS payload contract** (`ws/sendMessage.ts` / `api/ws.ts`):
 - Normal send: `{ chatId, content, model, systemPrompt, modelSettings }` — persists user turn at current leaf, streams answer
@@ -118,12 +124,12 @@ Key helpers in `backend/src/lib/tree.ts`:
 ```
 backend/src/
   config/models.ts        — model registry with capabilities (temperature/topP/topK/thinking/attachments)
-  lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8)
-  lib/blocks.ts           — block-level helpers: capToolResultText (30 KB cap)
-  lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, batchPutMessages, setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
+  lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8); coalesceMessages + healDanglingToolUse sanitize replayed history before every call
+  lib/blocks.ts           — block-level helpers: capToolResultText (byte-accurate, default 30 KB cap, accepts a custom budget); TOOL_RESULTS_ROUND_CAP (300 KB aggregate per round)
+  lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, putMessagePair (TransactWriteCommand, atomic 2-item write), batchPutMessages/batchDeleteMessages (retry UnprocessedItems), setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
   lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider); ToolContext type
   lib/agentcore/gateway.ts — minimal SigV4-signed MCP client for AgentCore Gateway targets (callGatewayTool); backs agentcoreSearch today, a generic seam for future AgentCore primitives (e.g. Code Interpreter)
-  lib/tree.ts             — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf
+  lib/tree.ts             — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf, mostRecentLeaf, resolveSafeLeaf
   lib/memory.ts           — manage_memory + manage_project_memory executors (remember/update/forget); reconcile() ADD-only dedup
   lib/enrichment.ts       — unified post-turn Haiku call: enrichTurn() returns userFacts + projectFacts + summary + title in one JSON call; enrichChatForProject() summary-only wrapper
   lib/attachments.ts      — S3 presigned PUT, CloudFront signed display URLs (SSM key), hydrateBlocks, copyChatObjects/rewriteBlockUri for fork; deleteProjectObjects

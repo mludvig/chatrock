@@ -5,7 +5,7 @@ jest.mock('../../src/lib/dynamo', () => {
   return jest.requireActual('../../src/lib/dynamo')
 })
 
-import { ddb, batchPutMessages } from '../../src/lib/dynamo'
+import { ddb, batchPutMessages, TABLE } from '../../src/lib/dynamo'
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -57,3 +57,31 @@ test('batchPutMessages batches 26 items into 2 BatchWriteCommand calls (25 + 1)'
   const secondRequests = Object.values(mockSend.mock.calls[1][0].input.RequestItems)[0] as unknown[]
   expect(secondRequests).toHaveLength(1)
 })
+
+// ── UnprocessedItems retry ────────────────────────────────────────────────────
+//
+// BatchWriteCommand is not atomic — a throttled/partial response returns the leftover
+// items in UnprocessedItems without throwing. Silently ignoring that would leave a fork
+// half-copied with no error. batchPutMessages must retry until clear, or throw.
+
+test('batchPutMessages retries UnprocessedItems until they clear', async () => {
+  const itemB = { PK: 'CHAT#c1', SK: 'MSG#ts#0001#b', msgId: 'b' }
+  mockSend
+    .mockResolvedValueOnce({ UnprocessedItems: { [TABLE]: [{ PutRequest: { Item: itemB } }] } })
+    .mockResolvedValueOnce({})
+
+  await batchPutMessages([{ PK: 'CHAT#c1', SK: 'MSG#ts#0000#a', msgId: 'a' }, itemB])
+
+  expect(mockSend).toHaveBeenCalledTimes(2)
+  // The retry resends exactly the unprocessed item, not the whole original batch
+  const retryRequests = Object.values(mockSend.mock.calls[1][0].input.RequestItems)[0] as { PutRequest: { Item: unknown } }[]
+  expect(retryRequests).toHaveLength(1)
+  expect(retryRequests[0]).toMatchObject({ PutRequest: { Item: { msgId: 'b' } } })
+})
+
+test('batchPutMessages throws if items remain unprocessed after all retry attempts', async () => {
+  const itemA = { PK: 'CHAT#c1', SK: 'MSG#ts#0000#a', msgId: 'a' }
+  mockSend.mockResolvedValue({ UnprocessedItems: { [TABLE]: [{ PutRequest: { Item: itemA } }] } })
+
+  await expect(batchPutMessages([itemA])).rejects.toThrow(/unprocessed/)
+}, 10_000)

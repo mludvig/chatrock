@@ -19,6 +19,7 @@ jest.mock('../../src/lib/dynamo', () => ({
   getChat: jest.fn(),
   listMessages: jest.fn(),
   putMessage: jest.fn(),
+  putMessagePair: jest.fn(),
   updateChatTitle: jest.fn(),
   updateChatActiveLeaf: jest.fn(),
   isStreamCancelled: jest.fn().mockResolvedValue(false),
@@ -167,11 +168,15 @@ test('persists multiple turns from a tool-use round (user prompt + 2 assistant +
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
-  // 4 putMessage calls: user prompt + assistant turn 0 + user-toolResult turn 1 + assistant turn 2
-  expect(mockDynamo.putMessage).toHaveBeenCalledTimes(4)
+  // user prompt + final assistant turn 2 are independent putMessage calls; the
+  // tool-use round (assistant turn 0 + its toolResult turn 1) is written atomically
+  // via putMessagePair, not as two separate putMessage calls.
+  expect(mockDynamo.putMessage).toHaveBeenCalledTimes(2)
+  expect(mockDynamo.putMessagePair).toHaveBeenCalledTimes(1)
 
-  const calls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
-  const [userPrompt, asst0, userTool, asst2] = calls
+  const singleCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  const [userPrompt, asst2] = singleCalls
+  const [asst0, userTool] = mockDynamo.putMessagePair.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>]
 
   expect(userPrompt.role).toBe('user')
   expect(userPrompt.blocks).toEqual([{ text: 'Q' }])
@@ -462,9 +467,11 @@ test('inc2: response turns chain parentId from user turn through each assistant/
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
-  const calls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
-  // calls: [userPrompt, asst0, userTool1, asst2]
-  const [userPrompt, asst0, userTool1, asst2] = calls
+  // user prompt + final assistant turn are independent putMessage calls; the tool-use
+  // round (asst0 + its toolResult) is written atomically via putMessagePair.
+  const singleCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  const [userPrompt, asst2] = singleCalls
+  const [asst0, userTool1] = mockDynamo.putMessagePair.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>]
 
   // Each turn's parentId = previous turn's msgId
   expect(asst0.parentId).toBe(userPrompt.msgId)
@@ -1453,18 +1460,64 @@ test('err5: Bedrock error after complete turns — survived turns intact, last t
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
+  // The tool-use round (asst turn 0 + its toolResult turn 1) is written atomically via
+  // putMessagePair; user prompt + flushed partial asst are independent putMessage calls.
+  expect(mockDynamo.putMessagePair).toHaveBeenCalledTimes(1)
+  const [asst0, userTool1] = mockDynamo.putMessagePair.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>]
+
   const putCalls = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
-  // user prompt + asst turn 0 + user tool-result turn 1 + flushed partial asst
-  expect(putCalls).toHaveLength(4)
-  const partialPut = putCalls[3]
+  expect(putCalls).toHaveLength(2)
+  const partialPut = putCalls[1]
   expect(partialPut.role).toBe('assistant')
   expect(partialPut.blocks).toEqual([{ text: 'partial result' }])
   expect(partialPut.incomplete).toBe(true)
+  // The flushed partial correctly chains from the tool-result turn, confirming
+  // lastTurnMsgId was updated once the pair committed.
+  expect(partialPut.parentId).toBe(userTool1.msgId)
+  expect(userTool1.parentId).toBe(asst0.msgId)
 
   // activeLeaf points to the flushed partial (final advance call)
   const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
   const leafArg = leafCalls[leafCalls.length - 1][2] as string
   expect(leafArg).toBe(partialPut.msgId)
+})
+
+test('err6-regression: putMessagePair failure on a later round never advances activeLeafId past the prior complete round', async () => {
+  // Reproduces the production incident directly: round A's pair commits successfully;
+  // round B's pair (a later tool-use round) fails the same way the 400KB-item-size
+  // ValidationException did. activeLeafId must stay at round A's tool-result turn —
+  // never at round B's assistant turn (which would be a dangling, unresolved tool_use).
+  errorBase()
+  mockDynamo.putMessagePair
+    .mockResolvedValueOnce(undefined)   // round A pair succeeds
+    .mockRejectedValueOnce(new Error('ValidationException: Item size has exceeded the maximum allowed size'))
+
+  mockBedrock.converseStream.mockImplementation(() => (async function* () {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 'tA', name: 'web_search', input: {} } }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 'tA', content: [{ text: 'resA' }], status: 'success' as const } }], turnIndex: 1 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 'tB', name: 'web_search', input: {} } }], turnIndex: 2 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 'tB', content: [{ text: 'resB' }], status: 'success' as const } }], turnIndex: 3 }
+  })())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  expect(mockDynamo.putMessagePair).toHaveBeenCalledTimes(2)
+  const [, roundAToolResult] = mockDynamo.putMessagePair.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>]
+
+  // Round B's items were never split into individual putMessage calls — the failed
+  // transaction left nothing durable for round B at all.
+  const allPutMessageContent = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+  expect(allPutMessageContent.some(r => JSON.stringify(r.blocks).includes('tB'))).toBe(false)
+
+  // activeLeafId must point at round A's tool-result turn, never at round B's
+  // (dangling, unresolved) assistant turn.
+  const leafCalls = mockDynamo.updateChatActiveLeaf.mock.calls
+  const leafArg = leafCalls[leafCalls.length - 1][2] as string
+  expect(leafArg).toBe(roundAToolResult.msgId)
+
+  // An error frame was sent to the client.
+  const payloads = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  expect(payloads.find(p => p.type === 'error')).toBeDefined()
 })
 
 // ── Part 3: Continue mechanic ─────────────────────────────────────────────────

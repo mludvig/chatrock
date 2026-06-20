@@ -38,8 +38,14 @@ export function buildActivePath(rows: TurnRow[], activeLeafId: string | null): T
     byId.set(row.msgId, row)
   }
 
-  // Resolve starting leaf
+  // Resolve starting leaf. If activeLeafId is missing/stale, fall back to a tree-derived
+  // choice (most-recently-created reachable leaf) rather than raw array order — array order
+  // isn't guaranteed to correspond to any sensible branch tip.
   let leaf: TurnRow | undefined = activeLeafId != null ? byId.get(activeLeafId) : undefined
+  if (!leaf) {
+    const fallbackId = mostRecentLeaf(rows)
+    leaf = fallbackId != null ? byId.get(fallbackId) : undefined
+  }
   if (!leaf) {
     leaf = rows[rows.length - 1]
   }
@@ -167,4 +173,47 @@ export function resolveLeaf(rows: TurnRow[], msgId: string): string {
     current = kids[kids.length - 1]
   }
   return current
+}
+
+/**
+ * Tree-derived fallback for "what's the current leaf" when there's no (valid) stored
+ * pointer to start from: walk down from every root (parentId == null) via resolveLeaf's
+ * "last child wins" rule, then pick whichever terminal leaf has the latest createdAt.
+ *
+ * Used both as buildActivePath's fallback when activeLeafId doesn't resolve, and as
+ * resolveSafeLeaf's fallback when a candidate msgId isn't found in rows. Returns null only
+ * when rows is empty or contains no reachable root (a malformed/headless tree).
+ */
+export function mostRecentLeaf(rows: TurnRow[]): string | null {
+  if (rows.length === 0) return null
+
+  const byId = new Map<string, TurnRow>()
+  for (const row of rows) byId.set(row.msgId, row)
+
+  const roots = rows.filter(r => r.parentId == null)
+  let best: TurnRow | undefined
+  for (const root of roots) {
+    const leafId = resolveLeaf(rows, root.msgId)
+    const leafRow = byId.get(leafId)
+    if (leafRow && (!best || leafRow.createdAt > best.createdAt)) best = leafRow
+  }
+  return best?.msgId ?? null
+}
+
+/**
+ * Validated chokepoint for resolving a new activeLeafId: confirms candidateMsgId actually
+ * exists in rows before resolving it down to its branch's leaf. If candidateMsgId is null or
+ * doesn't exist (e.g. it referenced a turn that was never durably persisted, or was deleted
+ * separately), falls back to mostRecentLeaf instead of silently persisting a phantom pointer.
+ *
+ * Always returns either a msgId guaranteed to exist in rows, or null (empty/headless tree).
+ * Callers that want to reject an invalid client-supplied id outright (rather than silently
+ * substituting a fallback) should validate existence themselves before calling this.
+ */
+export function resolveSafeLeaf(rows: TurnRow[], candidateMsgId: string | null): string | null {
+  if (rows.length === 0) return null
+  if (candidateMsgId != null && rows.some(r => r.msgId === candidateMsgId)) {
+    return resolveLeaf(rows, candidateMsgId)
+  }
+  return mostRecentLeaf(rows)
 }
