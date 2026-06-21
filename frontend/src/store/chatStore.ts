@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
-import { parseSearchResults, parseBrowserScreenshots } from '../lib/toolResults'
+import { parseSearchResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
 // A tool step that may be in progress (no result yet)
@@ -65,7 +65,7 @@ interface ChatState {
   /** Set the JSON input on a tool step */
   updateToolCallInput: (toolUseId: string, input: string) => void
   /** Attach tool result to the matching tool step */
-  resolveToolCall: (toolUseId: string, result: string, isError: boolean) => void
+  resolveToolCall: (toolUseId: string, result: string, isError: boolean, screenshotUrls?: string[]) => void
   /** Set live usage stats from the 'usage' WS event */
   setStreamUsage: (usage: TokenUsage) => void
   /** Toggle idle indicator — churn-free: no-op when value unchanged */
@@ -251,7 +251,7 @@ export const useChatStore = create<ChatState>()(
         }
       }),
 
-      resolveToolCall: (toolUseId, result, isError) => set((s) => {
+      resolveToolCall: (toolUseId, result, isError, screenshotUrls) => set((s) => {
         if (!s.streamingMsg) return {}
         return {
           streamingMsg: {
@@ -259,7 +259,6 @@ export const useChatStore = create<ChatState>()(
             steps: s.streamingMsg.steps.map(step => {
               if (step.kind !== 'tool' || step.toolUseId !== toolUseId) return step
               const searchResults = parseSearchResults(step.name, result, isError)
-              const screenshotUrls = parseBrowserScreenshots(step.name, result, isError)
               return { ...step, result, isError, searchResults, screenshotUrls }
             }),
           } as StreamingMsg,

@@ -92,16 +92,29 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
         </button>
       </div>
       <div className="model-setting-row model-setting-row--inline">
-        <label className="setting-label" title="Toggle the browser tool. When off, the model cannot call browse_web to interact with JS-heavy pages or take screenshots.">
+        <label className="setting-label" title="Toggle take_screenshot / get_rendered_page. When off, the model cannot screenshot a page or read its JS-rendered content.">
           <FontAwesomeIcon icon={faGlobe} />
-          <span>Browser tool</span>
+          <span>Browser — Core</span>
         </label>
         <button
-          className={`toggle-btn${settings.browserToolEnabled !== false ? ' active' : ''}`}
-          onClick={() => set({ browserToolEnabled: settings.browserToolEnabled === false ? true : false })}
-          title="Toggle browser tool"
+          className={`toggle-btn${settings.browserCoreEnabled !== false ? ' active' : ''}`}
+          onClick={() => set({ browserCoreEnabled: settings.browserCoreEnabled === false ? true : false })}
+          title="Toggle browser core tools"
         >
-          {settings.browserToolEnabled !== false ? 'On' : 'Off'}
+          {settings.browserCoreEnabled !== false ? 'On' : 'Off'}
+        </button>
+      </div>
+      <div className="model-setting-row model-setting-row--inline">
+        <label className="setting-label" title="Toggle browse_web. When on, the model can run multi-step scripted browsing (click, type, navigate between pages) in one isolated browser session.">
+          <FontAwesomeIcon icon={faGlobe} />
+          <span>Browser — Extended</span>
+        </label>
+        <button
+          className={`toggle-btn${settings.browserExtendedEnabled === true ? ' active' : ''}`}
+          onClick={() => set({ browserExtendedEnabled: settings.browserExtendedEnabled === true ? false : true })}
+          title="Toggle scripted browsing"
+        >
+          {settings.browserExtendedEnabled === true ? 'On' : 'Off'}
         </button>
       </div>
       <div className="model-setting-row model-setting-row--inline">

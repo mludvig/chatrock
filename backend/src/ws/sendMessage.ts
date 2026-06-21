@@ -110,24 +110,26 @@ export const buildHandler = (postFn: PostFn) => async (
   } : {}
 
   const chatPrefs: UserPreferences = {
-    thinkingEffort:     modelSettings.thinkingEffort,
-    webSearchEnabled:   modelSettings.webSearchEnabled,
-    webSearchProvider:  modelSettings.webSearchProvider,
-    browserToolEnabled: modelSettings.browserToolEnabled,
-    memoryEnabled:      modelSettings.memoryEnabled,
-    answerLength:       modelSettings.answerLength as UserPreferences['answerLength'],
-    injectCurrentDate:  modelSettings.injectCurrentDate,
+    thinkingEffort:         modelSettings.thinkingEffort,
+    webSearchEnabled:       modelSettings.webSearchEnabled,
+    webSearchProvider:      modelSettings.webSearchProvider,
+    browserCoreEnabled:     modelSettings.browserCoreEnabled,
+    browserExtendedEnabled: modelSettings.browserExtendedEnabled,
+    memoryEnabled:          modelSettings.memoryEnabled,
+    answerLength:           modelSettings.answerLength as UserPreferences['answerLength'],
+    injectCurrentDate:      modelSettings.injectCurrentDate,
   }
 
   const effectivePrefs = resolvePreferences({ user: userPrefs, project: projectPrefs, chat: chatPrefs })
   const memoryEnabled = effectivePrefs.memoryEnabled !== false
 
   const effectiveModelSettings: ModelSettings = {
-    thinkingEffort:     effectivePrefs.thinkingEffort,
-    webSearchEnabled:   effectivePrefs.webSearchEnabled,
-    webSearchProvider:  effectivePrefs.webSearchProvider,
-    browserToolEnabled: effectivePrefs.browserToolEnabled,
-    memoryEnabled:      effectivePrefs.memoryEnabled,
+    thinkingEffort:         effectivePrefs.thinkingEffort,
+    webSearchEnabled:       effectivePrefs.webSearchEnabled,
+    webSearchProvider:      effectivePrefs.webSearchProvider,
+    browserCoreEnabled:     effectivePrefs.browserCoreEnabled,
+    browserExtendedEnabled: effectivePrefs.browserExtendedEnabled,
+    memoryEnabled:          effectivePrefs.memoryEnabled,
   }
 
   // Build project manifest and forced files (project chats only)
@@ -475,6 +477,7 @@ export const buildHandler = (postFn: PostFn) => async (
             name: chunk.name,
             isError: chunk.isError,
             content: chunk.content,
+            ...(chunk.screenshotUrls?.length ? { screenshotUrls: chunk.screenshotUrls } : {}),
           }) })
           break
         case 'heartbeat':

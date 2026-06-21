@@ -81,12 +81,68 @@ export const ALLOWED_BROWSER_TOOLS = [
 export const MAX_BROWSER_STEPS = 15
 export const MAX_BROWSER_SCREENSHOTS = 4
 
+// ── Browser shortcut tool specs (Core) ────────────────────────────────────────
+//
+// These cover the common 80% case — one URL in, one artifact out — without the model
+// having to construct a `steps` array. Both lower to a fixed BrowserStep[] and reuse
+// runBrowserSteps; no new session machinery.
+
+export const TAKE_SCREENSHOT_TOOL: Tool = {
+  toolSpec: {
+    name: 'take_screenshot',
+    description: "Take a screenshot of a web page in a real, isolated browser — including pages that need JavaScript to render (dynamic single-page apps). Returns one image. Use this for 'show me what X looks like' / 'screenshot this page'. For multi-step interactions (click, type, navigate between pages) or more than one screenshot, use browse_web instead.",
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The page URL to screenshot.' },
+          fullPage: { type: 'boolean', description: 'Capture the full scrollable page, not just the visible viewport. Default true.' },
+          width: { type: 'number', description: 'Viewport width in pixels (optional; defaults to a standard desktop size).' },
+          height: { type: 'number', description: 'Viewport height in pixels (optional).' },
+          format: { type: 'string', enum: ['png', 'jpeg'], description: "Image format. Default 'png'." },
+        },
+        required: ['url'],
+      },
+    },
+  },
+}
+
+export const GET_RENDERED_PAGE_TOOL: Tool = {
+  toolSpec: {
+    name: 'get_rendered_page',
+    description: "Load a web page in a real browser (runs JavaScript) and return its rendered content as a structured accessibility-tree snapshot — text only, no image. Use this for JavaScript-heavy / single-page-app pages where web_fetch's static HTML fetch would miss content (the word 'rendered' is the cue: this tool executes the page's JS, web_fetch does not). For plain/static pages, prefer the faster web_fetch. If you also need a visual, use take_screenshot.",
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The page URL to load.' },
+          width: { type: 'number', description: 'Viewport width in pixels (optional).' },
+          height: { type: 'number', description: 'Viewport height in pixels (optional).' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+}
+
 export const BROWSER_TOOL: Tool = {
   toolSpec: {
     name: 'browse_web',
-    description: `Control a real, isolated web browser to interact with pages that need JavaScript, clicking, typing, or visual inspection — things web_search/web_fetch cannot do (dynamic single-page apps, forms, logins, screenshots of rendered pages). Provide an ordered list of steps; they run in one browser session, in order, and the session closes automatically when the call finishes. Call browser_snapshot first to see the page's accessibility tree (with a 'target' reference for each interactive element) before clicking/typing — most interaction tools take a 'target' (the exact reference from a prior snapshot, or a unique CSS selector) and an optional 'element' (a short human-readable description of what you're targeting). Max ${MAX_BROWSER_STEPS} steps and ${MAX_BROWSER_SCREENSHOTS} screenshots per call.
+    description: `Run a sequence of browser actions in one isolated session — the session opens, runs every step in order, and closes automatically when this call returns. browse_web is the ONLY tool here: browser_navigate, browser_click, etc. below are NOT separate top-level tools, they only exist as entries inside this call's "steps" array.
 
-Allowed tools and their params:
+For the common case of just grabbing a screenshot or a JS-rendered page's content, prefer the simpler take_screenshot / get_rendered_page tools instead. Use browse_web only when you need multiple actions in sequence — click, type, navigate between pages, wait for something, fill a form — or more than one screenshot in one session.
+
+Example call:
+{"steps": [
+  {"tool": "browser_navigate", "params": {"url": "https://example.com"}},
+  {"tool": "browser_snapshot", "params": {}},
+  {"tool": "browser_click", "params": {"target": "e3", "element": "Sign in button"}},
+  {"tool": "browser_take_screenshot", "params": {"fullPage": true}}
+]}
+
+Call browser_snapshot first to see the page's accessibility tree (with a 'target' reference for each interactive element) before clicking/typing — most interaction tools take a 'target' (the exact reference from a prior snapshot, or a unique CSS selector) and an optional 'element' (a short human-readable description of what you're targeting). Max ${MAX_BROWSER_STEPS} steps and ${MAX_BROWSER_SCREENSHOTS} screenshots per call.
+
+Allowed step "tool" values and their params:
 - browser_navigate { url }
 - browser_navigate_back {}
 - browser_snapshot { target?, depth?, boxes? } — accessibility tree of the page, better than a screenshot for deciding what to click
@@ -273,6 +329,22 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     if (name === 'browse_web') {
       return await executeBrowserTool(input, ctx)
     }
+    if (name === 'take_screenshot') {
+      return await executeTakeScreenshotTool(input, ctx)
+    }
+    if (name === 'get_rendered_page') {
+      return await executeGetRenderedPageTool(input, ctx)
+    }
+    // The model sometimes tries to call a browse_web step name (e.g. "browser_take_screenshot")
+    // as if it were its own top-level tool — give it a self-correcting hint instead of a bare
+    // "unknown tool" (these are exactly the step names browse_web's description documents).
+    if ((ALLOWED_BROWSER_TOOLS as readonly string[]).includes(name)) {
+      return {
+        toolUseId: '',
+        content: [{ text: `"${name}" is not a standalone tool. Either call browse_web with steps: [{ "tool": "${name}", "params": {...} }, ...], or — if you just need one screenshot or one page's rendered content — use take_screenshot / get_rendered_page instead.` }],
+        status: 'error',
+      }
+    }
     return { toolUseId: '', content: [{ text: `Unknown tool: ${name}` }], status: 'error' }
   } catch (err) {
     return { toolUseId: '', content: [{ text: `Tool error: ${String(err)}` }], status: 'error' }
@@ -284,39 +356,20 @@ interface RawBrowserStep {
   params?: unknown
 }
 
-async function executeBrowserTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
-  const rawSteps = Array.isArray(input.steps) ? input.steps as RawBrowserStep[] : []
-
-  if (rawSteps.length === 0) {
-    return { toolUseId: '', content: [{ text: 'No steps provided' }], status: 'error' }
-  }
-  if (rawSteps.length > MAX_BROWSER_STEPS) {
-    return { toolUseId: '', content: [{ text: `Too many steps: ${rawSteps.length} > ${MAX_BROWSER_STEPS}` }], status: 'error' }
-  }
-
-  const allowed = new Set<string>(ALLOWED_BROWSER_TOOLS)
-  const steps: BrowserStep[] = []
-  for (const s of rawSteps) {
-    if (typeof s.tool !== 'string' || !allowed.has(s.tool)) {
-      return { toolUseId: '', content: [{ text: `Disallowed or missing tool: ${String(s.tool)}` }], status: 'error' }
-    }
-    steps.push({ tool: s.tool, params: (s.params ?? {}) as Record<string, unknown> })
-  }
-
-  const screenshotCount = steps.filter(s => s.tool === 'browser_take_screenshot').length
-  if (screenshotCount > MAX_BROWSER_SCREENSHOTS) {
-    return { toolUseId: '', content: [{ text: `Too many screenshots: ${screenshotCount} > ${MAX_BROWSER_SCREENSHOTS}` }], status: 'error' }
-  }
-
-  // Lazy import: @playwright/mcp (and its transitive playwright/playwright-core deps) is
-  // only bundled with the ws-sendMessage Lambda (see esbuild.config.mjs). A static top-level
-  // import here would make every Lambda that transitively imports tools.ts via bedrock.ts
-  // (e.g. http/chats.ts's converseOnce for retitling) eagerly require a module they don't
-  // ship, crashing at cold start. Deferring the import to call time means it's only ever
-  // resolved inside the one Lambda that actually invokes this function.
+// Lazy import: @playwright/mcp (and its transitive playwright/playwright-core deps) is
+// only bundled with the ws-sendMessage Lambda (see esbuild.config.mjs). A static top-level
+// import here would make every Lambda that transitively imports tools.ts via bedrock.ts
+// (e.g. http/chats.ts's converseOnce for retitling) eagerly require a module they don't
+// ship, crashing at cold start. Deferring the import to call time means it's only ever
+// resolved inside the one Lambda that actually invokes this function.
+async function getRunBrowserSteps() {
   const { runBrowserSteps } = await import('./agentcore/browser')
-  const { results, isError } = await runBrowserSteps(steps)
+  return runBrowserSteps
+}
 
+// Shared by browse_web / take_screenshot / get_rendered_page: turns the mechanical
+// per-step results from runBrowserSteps into Bedrock ToolResultContentBlock[].
+function browserResultsToContent(results: Array<{ tool: string; text: string[]; images: Array<{ format: string; bytes: Uint8Array }>; error?: string }>): { content: ToolResultContentBlock[]; screenshotsFound: number } {
   const content: ToolResultContentBlock[] = []
   let screenshotsFound = 0
   for (const r of results) {
@@ -328,13 +381,104 @@ async function executeBrowserTool(input: Record<string, unknown>, ctx: ToolConte
     if (r.error) content.push({ text: `### ${r.tool} (error)\n${r.error}` })
   }
   if (content.length === 0) content.push({ text: 'No output' })
+  return { content, screenshotsFound }
+}
+
+// Optional width/height -> a leading browser_resize step, omitted when neither is given.
+function resizeSteps(width: unknown, height: unknown): BrowserStep[] {
+  if (typeof width !== 'number' || typeof height !== 'number') return []
+  return [{ tool: 'browser_resize', params: { width, height } }]
+}
+
+async function executeBrowserTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+  const rawSteps = Array.isArray(input.steps) ? input.steps as RawBrowserStep[] : []
+
+  if (rawSteps.length === 0) {
+    return {
+      toolUseId: '',
+      content: [{ text: 'browse_web requires a non-empty "steps" array — e.g. {"steps":[{"tool":"browser_navigate","params":{"url":"https://example.com"}},{"tool":"browser_take_screenshot","params":{"fullPage":true}}]}. browser_navigate, browser_take_screenshot, etc. are not separate top-level tools; they only exist as entries inside this "steps" array. For a single screenshot or page read, take_screenshot / get_rendered_page are simpler.' }],
+      status: 'error',
+    }
+  }
+  if (rawSteps.length > MAX_BROWSER_STEPS) {
+    return { toolUseId: '', content: [{ text: `Too many steps: ${rawSteps.length} > ${MAX_BROWSER_STEPS}` }], status: 'error' }
+  }
+
+  const allowed = new Set<string>(ALLOWED_BROWSER_TOOLS)
+  const steps: BrowserStep[] = []
+  for (const s of rawSteps) {
+    if (typeof s.tool !== 'string' || !allowed.has(s.tool)) {
+      return {
+        toolUseId: '',
+        content: [{ text: `Unknown step tool "${String(s.tool)}". Valid step tools: ${ALLOWED_BROWSER_TOOLS.join(', ')}. These are entries inside browse_web's "steps" array — call browse_web, not the step name directly.` }],
+        status: 'error',
+      }
+    }
+    steps.push({ tool: s.tool, params: (s.params ?? {}) as Record<string, unknown> })
+  }
+
+  const screenshotCount = steps.filter(s => s.tool === 'browser_take_screenshot').length
+  if (screenshotCount > MAX_BROWSER_SCREENSHOTS) {
+    return { toolUseId: '', content: [{ text: `Too many screenshots: ${screenshotCount} > ${MAX_BROWSER_SCREENSHOTS}` }], status: 'error' }
+  }
+
+  const runBrowserSteps = await getRunBrowserSteps()
+  const { results, isError } = await runBrowserSteps(steps)
+  const { content, screenshotsFound } = browserResultsToContent(results)
 
   console.log(JSON.stringify({
     event: 'browser_tool',
+    tool: 'browse_web',
     result: isError ? 'error' : 'success',
     stepCount: steps.length,
     screenshotCount: screenshotsFound,
     chatId: ctx.chatId,
+  }))
+
+  return { toolUseId: '', content, status: isError ? 'error' : 'success' }
+}
+
+async function executeTakeScreenshotTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+  const url = typeof input.url === 'string' ? input.url : ''
+  if (!url) return { toolUseId: '', content: [{ text: 'Missing required field: url' }], status: 'error' }
+  const format = input.format === 'jpeg' ? 'jpeg' : 'png'
+  const fullPage = input.fullPage !== false
+
+  const steps: BrowserStep[] = [
+    ...resizeSteps(input.width, input.height),
+    { tool: 'browser_navigate', params: { url } },
+    { tool: 'browser_take_screenshot', params: { type: format, fullPage } },
+  ]
+
+  const runBrowserSteps = await getRunBrowserSteps()
+  const { results, isError } = await runBrowserSteps(steps)
+  const { content, screenshotsFound } = browserResultsToContent(results)
+
+  console.log(JSON.stringify({
+    event: 'browser_tool', tool: 'take_screenshot', result: isError ? 'error' : 'success',
+    screenshotCount: screenshotsFound, chatId: ctx.chatId,
+  }))
+
+  return { toolUseId: '', content, status: isError ? 'error' : 'success' }
+}
+
+async function executeGetRenderedPageTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+  const url = typeof input.url === 'string' ? input.url : ''
+  if (!url) return { toolUseId: '', content: [{ text: 'Missing required field: url' }], status: 'error' }
+
+  const steps: BrowserStep[] = [
+    ...resizeSteps(input.width, input.height),
+    { tool: 'browser_navigate', params: { url } },
+    { tool: 'browser_snapshot', params: {} },
+  ]
+
+  const runBrowserSteps = await getRunBrowserSteps()
+  const { results, isError } = await runBrowserSteps(steps)
+  const { content, screenshotsFound } = browserResultsToContent(results)
+
+  console.log(JSON.stringify({
+    event: 'browser_tool', tool: 'get_rendered_page', result: isError ? 'error' : 'success',
+    screenshotCount: screenshotsFound, chatId: ctx.chatId,
   }))
 
   return { toolUseId: '', content, status: isError ? 'error' : 'success' }

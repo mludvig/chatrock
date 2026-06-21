@@ -397,7 +397,7 @@ test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserToolEnabled: false }, undefined, undefined)) {
+  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false }, undefined, undefined)) {
     chunks.push(chunk)
   }
 
@@ -449,6 +449,74 @@ test('tools: webSearchEnabled:false, memoryEnabled:true → manage_memory tool p
   expect(toolNames).toContain('manage_memory')
   expect(toolNames).not.toContain('web_search')
   expect(toolNames).not.toContain('web_fetch')
+})
+
+test('tools: browser settings default → Core tools (take_screenshot, get_rendered_page) present, browse_web absent', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, undefined, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('take_screenshot')
+  expect(toolNames).toContain('get_rendered_page')
+  expect(toolNames).not.toContain('browse_web')
+})
+
+test('tools: browserExtendedEnabled:true → browse_web present alongside the Core tools', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], { browserExtendedEnabled: true }, undefined, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('browse_web')
+  expect(toolNames).toContain('take_screenshot')
+  expect(toolNames).toContain('get_rendered_page')
+})
+
+test('tools: browserCoreEnabled:false → take_screenshot/get_rendered_page absent', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], { browserCoreEnabled: false }, undefined, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).not.toContain('take_screenshot')
+  expect(toolNames).not.toContain('get_rendered_page')
 })
 
 test('tools: webSearchEnabled:true, memoryEnabled:true → both web tools AND memory tool present', async () => {
@@ -689,7 +757,7 @@ test('part1c: clean history with webSearchEnabled+memory disabled still sends no
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _chunk of converseStream(
-    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserToolEnabled: false },
+    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false },
   )) { /* drain */ }
 
   // No tool blocks in history → no toolConfig needed (same as before)
@@ -1062,18 +1130,20 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     expect(mockSignCloudFrontUrl).toHaveBeenCalledWith(key)
   })
 
-  test('live tool_result WS frame is a JSON envelope with screenshotUrls when an image is present', async () => {
+  test('live tool_result chunk carries screenshotUrls as a first-class field and plain-text content (no JSON envelope)', async () => {
     mockBrowseWebRound()
 
-    const toolResultChunks: Array<{ content: string }> = []
+    const toolResultChunks: Array<{ content: string; screenshotUrls?: string[] }> = []
     for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
-      if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string })
+      if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string; screenshotUrls?: string[] })
     }
 
     expect(toolResultChunks).toHaveLength(1)
-    const parsed = JSON.parse(toolResultChunks[0].content) as { texts: string[]; screenshotUrls: string[] }
-    expect(parsed.screenshotUrls).toEqual(['https://cdn.example.com/' + s3KeyPrefix(CTX.sub, CTX.chatId) + 'browser-tu-browse-0.png?sig=x'])
-    expect(parsed.texts[0]).toContain('done')
+    expect(toolResultChunks[0].screenshotUrls).toEqual(['https://cdn.example.com/' + s3KeyPrefix(CTX.sub, CTX.chatId) + 'browser-tu-browse-0.png?sig=x'])
+    // content is the plain joined text trace — parsing it as JSON must NOT succeed/round-trip
+    // into a {texts, screenshotUrls} shape; it's just the raw capped text.
+    expect(toolResultChunks[0].content).toContain('done')
+    expect(() => JSON.parse(toolResultChunks[0].content)).toThrow()
   })
 
   test('emits heartbeat chunks while a slow tool call is in flight, so the WS connection carries traffic during the gap', async () => {

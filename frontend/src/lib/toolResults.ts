@@ -33,22 +33,3 @@ export function parseSearchResults(
     return undefined
   }
 }
-
-/**
- * Parse the JSON result of a browse_web tool call into its screenshot URLs.
- * Returns undefined when the tool is not browse_web, when isError is true,
- * when result is missing, or when the JSON cannot be parsed.
- */
-export function parseBrowserScreenshots(
-  name: string,
-  result: string | undefined,
-  isError: boolean | undefined,
-): string[] | undefined {
-  if (!result || isError || name !== 'browse_web') return undefined
-  try {
-    const parsed = JSON.parse(result) as { screenshotUrls?: string[] }
-    return parsed.screenshotUrls?.length ? parsed.screenshotUrls : undefined
-  } catch {
-    return undefined
-  }
-}

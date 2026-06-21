@@ -257,15 +257,24 @@ export default function PreferencesPanel() {
             </div>
           </div>
 
-          {/* Browser tool */}
+          {/* Browser tools */}
           <div className="pref-section">
             <div className="pref-row">
-              <span className="pref-row-label">Browser tool</span>
+              <span className="pref-row-label">Browser — Core</span>
               <button
-                className={`toggle-btn${prefs.browserToolEnabled !== false ? ' active' : ''}`}
-                onClick={() => patch({ browserToolEnabled: prefs.browserToolEnabled === false ? true : false })}
+                className={`toggle-btn${prefs.browserCoreEnabled !== false ? ' active' : ''}`}
+                onClick={() => patch({ browserCoreEnabled: prefs.browserCoreEnabled === false ? true : false })}
               >
-                {prefs.browserToolEnabled !== false ? 'On' : 'Off'}
+                {prefs.browserCoreEnabled !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="pref-row">
+              <span className="pref-row-label">Browser — Extended</span>
+              <button
+                className={`toggle-btn${prefs.browserExtendedEnabled === true ? ' active' : ''}`}
+                onClick={() => patch({ browserExtendedEnabled: prefs.browserExtendedEnabled === true ? false : true })}
+              >
+                {prefs.browserExtendedEnabled === true ? 'On' : 'Off'}
               </button>
             </div>
           </div>
@@ -377,15 +386,24 @@ export default function PreferencesPanel() {
             </div>
           </div>
 
-          {/* Browser tool */}
+          {/* Browser tools */}
           <div className="pref-section">
             <div className="pref-row">
-              <span className="pref-row-label">Browser tool</span>
+              <span className="pref-row-label">Browser — Core</span>
               <button
-                className={`toggle-btn${projectDraft.modelSettings?.browserToolEnabled !== false ? ' active' : ''}`}
-                onClick={() => patchProjectModelSettings({ browserToolEnabled: projectDraft.modelSettings?.browserToolEnabled === false ? true : false })}
+                className={`toggle-btn${projectDraft.modelSettings?.browserCoreEnabled !== false ? ' active' : ''}`}
+                onClick={() => patchProjectModelSettings({ browserCoreEnabled: projectDraft.modelSettings?.browserCoreEnabled === false ? true : false })}
               >
-                {projectDraft.modelSettings?.browserToolEnabled !== false ? 'On' : 'Off'}
+                {projectDraft.modelSettings?.browserCoreEnabled !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="pref-row">
+              <span className="pref-row-label">Browser — Extended</span>
+              <button
+                className={`toggle-btn${projectDraft.modelSettings?.browserExtendedEnabled === true ? ' active' : ''}`}
+                onClick={() => patchProjectModelSettings({ browserExtendedEnabled: projectDraft.modelSettings?.browserExtendedEnabled === true ? false : true })}
+              >
+                {projectDraft.modelSettings?.browserExtendedEnabled === true ? 'On' : 'Off'}
               </button>
             </div>
           </div>

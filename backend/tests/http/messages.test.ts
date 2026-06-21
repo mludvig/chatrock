@@ -509,7 +509,7 @@ test('part4b: assistant bubble has no errored field when no turns have incomplet
 })
 
 describe('browse_web screenshot steps in tool results', () => {
-  test('toolResult row with an image s3Location entry produces a JSON envelope result with screenshotUrls', async () => {
+  test('toolResult row with an image s3Location entry produces a plain-text result plus a first-class screenshotUrls field', async () => {
     const responseId = 'resp-browse'
     mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
     mockDynamo.listMessages.mockResolvedValue([
@@ -557,8 +557,9 @@ describe('browse_web screenshot steps in tool results', () => {
     const toolStep = steps.find(s => s.kind === 'tool')!
 
     expect(toolStep.toolUseId).toBe('tu-browse')
-    const parsed = JSON.parse(toolStep.result as string) as { texts: string[]; screenshotUrls: string[] }
-    expect(parsed.texts[0]).toContain('done')
-    expect(parsed.screenshotUrls).toEqual(['https://cdn.example.com/attachments/sub/chat/fid/shot.png?Sig=x'])
+    // result is the plain joined text trace — no JSON envelope to re-parse client-side
+    expect(toolStep.result).toContain('done')
+    expect(() => JSON.parse(toolStep.result as string)).toThrow()
+    expect(toolStep.screenshotUrls).toEqual(['https://cdn.example.com/attachments/sub/chat/fid/shot.png?Sig=x'])
   })
 })
