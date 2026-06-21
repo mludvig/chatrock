@@ -9,7 +9,7 @@ import {
   type ToolResultBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
-import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, type ToolContext } from './tools'
+import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, type ToolContext } from './tools'
 import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from './attachments'
@@ -26,7 +26,7 @@ export type StreamChunk =
   | { type: 'delta'; text: string }
   | { type: 'tool_call_start'; toolUseId: string; name: string }
   | { type: 'tool_call'; toolUseId: string; name: string; input: string }
-  | { type: 'tool_result'; toolUseId: string; name: string; content: string; isError: boolean }
+  | { type: 'tool_result'; toolUseId: string; name: string; content: string; isError: boolean; screenshotUrls?: string[] }
   // Sent periodically while a single tool call is in flight for longer than a few seconds
   // (e.g. browse_web's AgentCore session) so the WebSocket carries real traffic during an
   // otherwise-silent gap — observed empirically to reduce the WS connection going stale.
@@ -96,7 +96,8 @@ const CACHE_POINT_CONTENT = { cachePoint: { type: 'default' as const } } as unkn
 function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[] {
   const list: Tool[] = []
   if (settings.webSearchEnabled !== false) list.push(...WEB_TOOLS)
-  if (settings.browserToolEnabled !== false) list.push(BROWSER_TOOL)
+  if (settings.browserCoreEnabled !== false) list.push(TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL)
+  if (settings.browserExtendedEnabled === true) list.push(BROWSER_TOOL)
   if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
   if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
   if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
@@ -510,17 +511,17 @@ export async function* converseStream(
         continue
       }
 
-      // Image-bearing result (e.g. browse_web screenshots): upload each image to S3 under the
+      // Image-bearing result (e.g. browser screenshots): upload each image to S3 under the
       // same prefix attachments already use (so chat delete/fork already covers them for
       // free), build live (bytes) + persist (s3Location) content arrays, and eagerly sign the
       // uploaded screenshots so the live WS frame can render them with no reload needed.
+      // `screenshotUrls` travels as its own StreamChunk field (not embedded in `content`) so
+      // the client never has to re-parse a JSON envelope out of a text string.
       const liveContent: NonNullable<ToolResultBlock['content']> = []
       const persistContent: NonNullable<ToolResultBlock['content']> = []
       const screenshotUrls: string[] = []
-      const ENVELOPE_OVERHEAD = 300 // reserve room for JSON punctuation + screenshotUrls array
-      const textCap = Math.max(0, perCallCap - ENVELOPE_OVERHEAD)
       const joinedText = textEntries.map(t => t.text ?? '').join('\n\n')
-      const cappedText = capToolResultText(joinedText, textCap)
+      const cappedText = capToolResultText(joinedText, perCallCap)
       if (cappedText) {
         liveContent.push({ text: cappedText })
         persistContent.push({ text: cappedText })
@@ -542,8 +543,7 @@ export async function* converseStream(
         }
       }
 
-      const liveFrameContent = JSON.stringify({ texts: cappedText ? [cappedText] : [], screenshotUrls })
-      yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: liveFrameContent, isError }
+      yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedText, isError, screenshotUrls }
 
       toolResultsLive.push({ toolResult: { toolUseId: tu.toolUseId, content: liveContent, status: toolResult.status } })
       toolResultsPersist.push({ toolResult: { toolUseId: tu.toolUseId, content: persistContent, status: toolResult.status } })

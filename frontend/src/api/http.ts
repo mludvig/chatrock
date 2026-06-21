@@ -101,7 +101,8 @@ export interface ModelSettings {
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearchEnabled?: boolean
   webSearchProvider?: 'jina' | 'agentcore'
-  browserToolEnabled?: boolean
+  browserCoreEnabled?: boolean
+  browserExtendedEnabled?: boolean
   memoryEnabled?: boolean
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
@@ -146,7 +147,8 @@ export interface UserPreferences {
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearchEnabled?: boolean
   webSearchProvider?: 'jina' | 'agentcore'
-  browserToolEnabled?: boolean
+  browserCoreEnabled?: boolean
+  browserExtendedEnabled?: boolean
   temperature?: number
   topP?: number
   topK?: number
@@ -165,20 +167,26 @@ export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   return {
     ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
     webSearchEnabled: true,
-    browserToolEnabled: true,
+    browserCoreEnabled: true,
+    browserExtendedEnabled: false,
   }
 }
 
 // Carry over settings that are valid for the new model; fill missing with defaults
 export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): ModelSettings {
   const defaults = defaultSettings(caps)
+  // Pre-split-toggle settings only had a single `browserToolEnabled` (the old name for what
+  // is now the scripted/Extended tool); carry an explicit `true` forward as Extended, but
+  // Core always defaults on regardless of the old flag's value.
+  const legacyBrowserToolEnabled = (prev as { browserToolEnabled?: boolean }).browserToolEnabled
   return {
     ...(caps.temperature && prev.temperature !== undefined ? { temperature: prev.temperature } : {}),
     ...(caps.topP && prev.topP !== undefined ? { topP: prev.topP } : {}),
     ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
     ...(caps.thinking !== 'none' ? { thinkingEffort: prev.thinkingEffort ?? defaults.thinkingEffort } : {}),
     webSearchEnabled: prev.webSearchEnabled ?? true,
-    browserToolEnabled: prev.browserToolEnabled ?? true,
+    browserCoreEnabled: prev.browserCoreEnabled ?? true,
+    browserExtendedEnabled: prev.browserExtendedEnabled ?? legacyBrowserToolEnabled ?? false,
     memoryEnabled: prev.memoryEnabled ?? true,
   }
 }

@@ -35,6 +35,7 @@ interface ToolStep {
   input: string
   result?: string
   isError?: boolean
+  screenshotUrls?: string[]
 }
 
 interface AttachmentStep {
@@ -214,8 +215,9 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
           const imageEntries = contentBlocks.filter(c => 'image' in c) as Array<{ image?: { source?: { s3Location?: { uri: string } } } }>
 
           if (imageEntries.length > 0) {
-            // Image-bearing tool result (e.g. browse_web screenshots): same JSON envelope
-            // shape as the live WS tool_result frame, signed fresh on every load (1h expiry).
+            // Image-bearing tool result (e.g. browser screenshots): screenshotUrls is a
+            // first-class field (signed fresh on every load, 1h expiry) — not a JSON envelope
+            // smuggled inside `result`, so the client never has to re-parse it.
             const screenshotUrls: string[] = []
             for (const img of imageEntries) {
               const uri = img.image?.source?.s3Location?.uri
@@ -223,7 +225,8 @@ async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResp
               const key = uri.replace(/^s3:\/\/[^/]+\//, '')
               screenshotUrls.push(await signCloudFrontUrl(key))
             }
-            step.result = JSON.stringify({ texts: textEntries.map(t => t.text ?? ''), screenshotUrls })
+            step.result = textEntries.map(t => t.text ?? '').join('\n\n')
+            step.screenshotUrls = screenshotUrls
           } else {
             step.result = textEntries[0]?.text ?? ''
           }

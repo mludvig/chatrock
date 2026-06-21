@@ -17,7 +17,8 @@ export interface ModelSettings {
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearchEnabled?: boolean                        // false disables web tools
   webSearchProvider?: 'jina' | 'agentcore'           // which backend powers the web_search tool
-  browserToolEnabled?: boolean                      // false disables the browse_web tool
+  browserCoreEnabled?: boolean                      // false disables take_screenshot/get_rendered_page
+  browserExtendedEnabled?: boolean                  // true enables the scripted browse_web tool
   memoryEnabled?: boolean                           // false skips injection + extraction
   answerLength?: 'default' | 'short' | 'extensive' // per-chat answer-length override
   injectCurrentDate?: boolean                       // true = prepend timestamp block to user turns
