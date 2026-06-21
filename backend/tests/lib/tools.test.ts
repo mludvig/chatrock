@@ -573,8 +573,10 @@ describe('get_rendered_page dispatch', () => {
   it('composes navigate + snapshot steps (no resize when width/height omitted)', async () => {
     mockRunBrowserSteps.mockResolvedValueOnce({
       results: [
-        { tool: 'browser_navigate', ok: true, text: ['Navigated'], images: [] },
-        { tool: 'browser_snapshot', ok: true, text: ['- [Snapshot]'], images: [] },
+        // navigate's own auto-attached-snapshot trace is pure noise (code echo + a dead
+        // /tmp file link) and must NOT end up in the tool result.
+        { tool: 'browser_navigate', ok: true, text: ['### Ran Playwright code\n```js\nawait page.goto(\'https://example.com\');\n```\n### Snapshot\n- [Snapshot](../../tmp/page-x.yml)'], images: [] },
+        { tool: 'browser_snapshot', ok: true, text: ['### Page\n- Page URL: https://example.com/\n- Page Title: Example Domain\n### Snapshot\n```yaml\n- heading "Example Domain"\n```'], images: [] },
       ],
       isError: false,
     })
@@ -586,10 +588,29 @@ describe('get_rendered_page dispatch', () => {
       { tool: 'browser_snapshot', params: {} },
     ])
     expect(result.status).toBe('success')
-    expect(result.content).toEqual([
-      { text: '### browser_navigate\nNavigated' },
-      { text: '### browser_snapshot\n- [Snapshot]' },
-    ])
+    expect(result.content).toHaveLength(1)
+    const envelope = JSON.parse((result.content![0] as { text: string }).text) as { result: { title: string; url: string; description: string }; text: string }
+    // Same {result,text} shape web_fetch's jinaFetch() produces — reuses its card rendering.
+    expect(envelope.result.title).toBe('Example Domain')
+    expect(envelope.result.url).toBe('https://example.com/')
+    expect(envelope.text).toContain('heading "Example Domain"')
+    expect(envelope.text).not.toContain('Ran Playwright code')
+    expect(envelope.text).not.toContain('/tmp/')
+  })
+
+  it('falls back to the input url when Page Title/URL cannot be parsed from the snapshot text', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [
+        { tool: 'browser_navigate', ok: true, text: ['nav trace'], images: [] },
+        { tool: 'browser_snapshot', ok: true, text: ['- [Snapshot]'], images: [] },
+      ],
+      isError: false,
+    })
+
+    const result = await executeTool('get_rendered_page', { url: 'https://example.com' }, TEST_CTX)
+    const envelope = JSON.parse((result.content![0] as { text: string }).text) as { result: { title: string; url: string } }
+    expect(envelope.result.title).toBe('https://example.com')
+    expect(envelope.result.url).toBe('https://example.com')
   })
 
   it('adds a leading resize step when width and height are given', async () => {
@@ -608,5 +629,16 @@ describe('get_rendered_page dispatch', () => {
     const result = await executeTool('get_rendered_page', {}, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
     expect(result.status).toBe('error')
+  })
+
+  it('returns the generic multi-step error content (not a JSON envelope) when a step fails', async () => {
+    mockRunBrowserSteps.mockResolvedValueOnce({
+      results: [{ tool: 'browser_navigate', ok: false, text: [], images: [], error: 'net::ERR_NAME_NOT_RESOLVED' }],
+      isError: true,
+    })
+
+    const result = await executeTool('get_rendered_page', { url: 'https://bad.invalid' }, TEST_CTX)
+    expect(result.status).toBe('error')
+    expect((result.content?.[0] as { text: string }).text).toMatch(/ERR_NAME_NOT_RESOLVED/)
   })
 })

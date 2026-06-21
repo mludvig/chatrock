@@ -501,8 +501,12 @@ export async function* converseStream(
       }
 
       if (imageEntries.length === 0) {
-        // Unchanged path for every text-only tool (web_search, manage_memory, etc.)
-        const rawContent = textEntries[0]?.text ?? ''
+        // Text-only tool result. Single-call tools (web_search, manage_memory, etc.) return
+        // exactly one text entry, but multi-step browser tools with no screenshot (e.g.
+        // get_rendered_page's navigate+snapshot, or browse_web with text-only steps) return
+        // one entry per step — join them all, not just the first, or later steps' content
+        // (e.g. the actual snapshot YAML) silently disappears.
+        const rawContent = textEntries.map(t => t.text ?? '').join('\n\n')
         const cappedContent = capToolResultText(rawContent, perCallCap)
         yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedContent, isError }
         const block: ContentBlock = { toolResult: { toolUseId: tu.toolUseId, content: [{ text: cappedContent }], status: toolResult.status } }
