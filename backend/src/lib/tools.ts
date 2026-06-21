@@ -1,7 +1,8 @@
-import type { Tool, ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Tool, ToolResultBlock, ToolResultContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
 import { callGatewayTool } from './agentcore/gateway'
+import type { BrowserStep } from './agentcore/browser'
 
 // ── Tool execution context ────────────────────────────────────────────────────
 
@@ -46,6 +47,84 @@ export const WEB_TOOLS: Tool[] = [
     },
   },
 ]
+
+// ── Browser tool spec ─────────────────────────────────────────────────────────
+//
+// Backed by Amazon Bedrock AgentCore Browser, driven by the official `@playwright/mcp`
+// package embedded in-process (see ./agentcore/browser.ts). The allowed `tool` names below
+// are a curated subset of the real package's tool catalogue — its actual params, copied
+// verbatim from the installed package so the model gets accurate guidance. Excluded
+// deliberately: browser_evaluate / browser_run_code_unsafe (arbitrary JS execution),
+// browser_file_upload / browser_drop (local filesystem access), browser_network_request(s)
+// (out of scope for v1) — none of these are needed for read/navigate/click/type/screenshot
+// workflows and they widen the security surface of a tool driven by arbitrary chat prompts.
+
+export const ALLOWED_BROWSER_TOOLS = [
+  'browser_navigate',
+  'browser_navigate_back',
+  'browser_click',
+  'browser_type',
+  'browser_hover',
+  'browser_press_key',
+  'browser_select_option',
+  'browser_drag',
+  'browser_resize',
+  'browser_handle_dialog',
+  'browser_wait_for',
+  'browser_snapshot',
+  'browser_take_screenshot',
+  'browser_console_messages',
+  'browser_fill_form',
+  'browser_tabs',
+] as const
+
+export const MAX_BROWSER_STEPS = 15
+export const MAX_BROWSER_SCREENSHOTS = 4
+
+export const BROWSER_TOOL: Tool = {
+  toolSpec: {
+    name: 'browse_web',
+    description: `Control a real, isolated web browser to interact with pages that need JavaScript, clicking, typing, or visual inspection — things web_search/web_fetch cannot do (dynamic single-page apps, forms, logins, screenshots of rendered pages). Provide an ordered list of steps; they run in one browser session, in order, and the session closes automatically when the call finishes. Call browser_snapshot first to see the page's accessibility tree (with a 'target' reference for each interactive element) before clicking/typing — most interaction tools take a 'target' (the exact reference from a prior snapshot, or a unique CSS selector) and an optional 'element' (a short human-readable description of what you're targeting). Max ${MAX_BROWSER_STEPS} steps and ${MAX_BROWSER_SCREENSHOTS} screenshots per call.
+
+Allowed tools and their params:
+- browser_navigate { url }
+- browser_navigate_back {}
+- browser_snapshot { target?, depth?, boxes? } — accessibility tree of the page, better than a screenshot for deciding what to click
+- browser_take_screenshot { target?, element?, type?: 'png'|'jpeg', fullPage? } — visual screenshot, shown to you as an image
+- browser_click { target, element?, doubleClick?, button?: 'left'|'right'|'middle', modifiers? }
+- browser_type { target, element?, text, submit?, slowly? }
+- browser_hover { target, element? }
+- browser_select_option { target, element?, values: string[] }
+- browser_drag { startTarget, startElement?, endTarget, endElement? }
+- browser_press_key { key } — e.g. 'Enter', 'ArrowLeft', 'a'
+- browser_fill_form { fields: [{ target, element?, name, type: 'textbox'|'checkbox'|'radio'|'combobox'|'slider', value }] }
+- browser_wait_for { time?, text?, textGone? } — wait seconds, or for text to appear/disappear
+- browser_handle_dialog { accept, promptText? } — accept/dismiss a JS alert/confirm/prompt
+- browser_resize { width, height }
+- browser_console_messages { level: 'error'|'warning'|'info'|'debug', all? } — browser console/JS logs
+- browser_tabs { action: 'list'|'new'|'close'|'select', index?, url? }`,
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          steps: {
+            type: 'array',
+            description: 'Ordered list of browser actions to run in one session.',
+            items: {
+              type: 'object',
+              properties: {
+                tool: { type: 'string', enum: [...ALLOWED_BROWSER_TOOLS] },
+                params: { type: 'object', description: 'Params for this tool — see the tool description for the shape per tool name.' },
+              },
+              required: ['tool'],
+            },
+          },
+        },
+        required: ['steps'],
+      },
+    },
+  },
+}
 
 // ── Memory tool spec ──────────────────────────────────────────────────────────
 
@@ -163,37 +242,102 @@ export const READ_PROJECT_CHAT_TOOL: Tool = {
 
 const JINA_KEY = process.env.JINA_API_KEY ?? ''
 
-export async function executeTool(name: string, input: Record<string, string>, ctx: ToolContext): Promise<ToolResultBlock> {
+export async function executeTool(name: string, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
   try {
     if (name === 'manage_memory') {
-      return await executeMemoryTool(input, ctx)
+      return await executeMemoryTool(input as Record<string, string>, ctx)
     }
     if (name === 'manage_project_memory') {
       if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
-      return await executeProjectMemoryTool(input, { projectId: ctx.projectId })
+      return await executeProjectMemoryTool(input as Record<string, string>, { projectId: ctx.projectId })
     }
     if (name === 'read_project_file') {
       if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
-      return await executeProjectReadFileTool(input, ctx)
+      return await executeProjectReadFileTool(input as Record<string, string>, ctx)
     }
     if (name === 'read_project_chat') {
       if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
-      return await executeProjectReadChatTool(input, ctx)
+      return await executeProjectReadChatTool(input as Record<string, string>, ctx)
     }
     if (name === 'web_search') {
       const provider = ctx.webSearchProvider === 'agentcore' ? 'agentcore' : 'jina'
-      const result = provider === 'agentcore' ? await agentcoreSearch(input.query) : await jinaSearch(input.query)
+      const query = input.query as string
+      const result = provider === 'agentcore' ? await agentcoreSearch(query) : await jinaSearch(query)
       console.log(JSON.stringify({ event: 'web_search', provider, result: 'success' }))
       return { toolUseId: '', content: [{ text: result }], status: 'success' }
     }
     if (name === 'web_fetch') {
-      const result = await jinaFetch(input.url)
+      const result = await jinaFetch(input.url as string)
       return { toolUseId: '', content: [{ text: result }], status: 'success' }
+    }
+    if (name === 'browse_web') {
+      return await executeBrowserTool(input, ctx)
     }
     return { toolUseId: '', content: [{ text: `Unknown tool: ${name}` }], status: 'error' }
   } catch (err) {
     return { toolUseId: '', content: [{ text: `Tool error: ${String(err)}` }], status: 'error' }
   }
+}
+
+interface RawBrowserStep {
+  tool?: unknown
+  params?: unknown
+}
+
+async function executeBrowserTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+  const rawSteps = Array.isArray(input.steps) ? input.steps as RawBrowserStep[] : []
+
+  if (rawSteps.length === 0) {
+    return { toolUseId: '', content: [{ text: 'No steps provided' }], status: 'error' }
+  }
+  if (rawSteps.length > MAX_BROWSER_STEPS) {
+    return { toolUseId: '', content: [{ text: `Too many steps: ${rawSteps.length} > ${MAX_BROWSER_STEPS}` }], status: 'error' }
+  }
+
+  const allowed = new Set<string>(ALLOWED_BROWSER_TOOLS)
+  const steps: BrowserStep[] = []
+  for (const s of rawSteps) {
+    if (typeof s.tool !== 'string' || !allowed.has(s.tool)) {
+      return { toolUseId: '', content: [{ text: `Disallowed or missing tool: ${String(s.tool)}` }], status: 'error' }
+    }
+    steps.push({ tool: s.tool, params: (s.params ?? {}) as Record<string, unknown> })
+  }
+
+  const screenshotCount = steps.filter(s => s.tool === 'browser_take_screenshot').length
+  if (screenshotCount > MAX_BROWSER_SCREENSHOTS) {
+    return { toolUseId: '', content: [{ text: `Too many screenshots: ${screenshotCount} > ${MAX_BROWSER_SCREENSHOTS}` }], status: 'error' }
+  }
+
+  // Lazy import: @playwright/mcp (and its transitive playwright/playwright-core deps) is
+  // only bundled with the ws-sendMessage Lambda (see esbuild.config.mjs). A static top-level
+  // import here would make every Lambda that transitively imports tools.ts via bedrock.ts
+  // (e.g. http/chats.ts's converseOnce for retitling) eagerly require a module they don't
+  // ship, crashing at cold start. Deferring the import to call time means it's only ever
+  // resolved inside the one Lambda that actually invokes this function.
+  const { runBrowserSteps } = await import('./agentcore/browser')
+  const { results, isError } = await runBrowserSteps(steps)
+
+  const content: ToolResultContentBlock[] = []
+  let screenshotsFound = 0
+  for (const r of results) {
+    for (const t of r.text) content.push({ text: `### ${r.tool}\n${t}` })
+    for (const img of r.images) {
+      content.push({ image: { format: img.format as 'png' | 'jpeg', source: { bytes: img.bytes } } } as ToolResultContentBlock)
+      screenshotsFound++
+    }
+    if (r.error) content.push({ text: `### ${r.tool} (error)\n${r.error}` })
+  }
+  if (content.length === 0) content.push({ text: 'No output' })
+
+  console.log(JSON.stringify({
+    event: 'browser_tool',
+    result: isError ? 'error' : 'success',
+    stepCount: steps.length,
+    screenshotCount: screenshotsFound,
+    chatId: ctx.chatId,
+  }))
+
+  return { toolUseId: '', content, status: isError ? 'error' : 'success' }
 }
 
 export interface SearchResult {

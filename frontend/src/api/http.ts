@@ -60,7 +60,7 @@ export interface TokenUsage {
 export type Step =
   | { kind: 'thinking'; text: string }
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }> }
+  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }>; screenshotUrls?: string[] }
   | { kind: 'attachment'; attachmentKind: 'image' | 'document'; filename: string; contentType: string; url: string; s3Key: string; mode?: 'standard' | 'rich' }
 
 export interface Message {
@@ -101,6 +101,7 @@ export interface ModelSettings {
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearchEnabled?: boolean
   webSearchProvider?: 'jina' | 'agentcore'
+  browserToolEnabled?: boolean
   memoryEnabled?: boolean
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
@@ -145,6 +146,7 @@ export interface UserPreferences {
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearchEnabled?: boolean
   webSearchProvider?: 'jina' | 'agentcore'
+  browserToolEnabled?: boolean
   temperature?: number
   topP?: number
   topK?: number
@@ -163,6 +165,7 @@ export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   return {
     ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
     webSearchEnabled: true,
+    browserToolEnabled: true,
   }
 }
 
@@ -175,6 +178,7 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
     ...(caps.thinking !== 'none' ? { thinkingEffort: prev.thinkingEffort ?? defaults.thinkingEffort } : {}),
     webSearchEnabled: prev.webSearchEnabled ?? true,
+    browserToolEnabled: prev.browserToolEnabled ?? true,
     memoryEnabled: prev.memoryEnabled ?? true,
   }
 }

@@ -507,3 +507,58 @@ test('part4b: assistant bubble has no errored field when no turns have incomplet
   expect(asstBubble).toBeDefined()
   expect(asstBubble!.errored).toBeUndefined()
 })
+
+describe('browse_web screenshot steps in tool results', () => {
+  test('toolResult row with an image s3Location entry produces a JSON envelope result with screenshotUrls', async () => {
+    const responseId = 'resp-browse'
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
+    mockDynamo.listMessages.mockResolvedValue([
+      row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'screenshot example.com' }], responseId: 'user-r', turnIndex: 0 }),
+      row({
+        SK: `MSG#${TS}#0001#a0`,
+        msgId: 'a0', parentId: 'u1',
+        role: 'assistant',
+        blocks: [{ toolUse: { toolUseId: 'tu-browse', name: 'browse_web', input: { steps: [{ tool: 'browser_take_screenshot' }] } } }],
+        responseId,
+        turnIndex: 0,
+      }),
+      row({
+        SK: `MSG#${TS}#0002#tr1`,
+        msgId: 'tr1', parentId: 'a0',
+        role: 'user',
+        blocks: [{
+          toolResult: {
+            toolUseId: 'tu-browse',
+            content: [
+              { text: '### browser_take_screenshot\ndone' },
+              { image: { format: 'png', source: { s3Location: { uri: 's3://bucket/attachments/user-1/chat-c1/browser-tu-browse-0.png' } } } },
+            ],
+            status: 'success',
+          },
+        }],
+        responseId,
+        turnIndex: 1,
+      }),
+      row({
+        SK: `MSG#${TS}#0003#a2`,
+        msgId: 'a2', parentId: 'tr1',
+        role: 'assistant',
+        blocks: [{ text: 'Here it is.' }],
+        responseId,
+        turnIndex: 2,
+      }),
+    ])
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(res.statusCode).toBe(200)
+    const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+    const assistantBubble = body.bubbles.find(b => b.role === 'assistant')!
+    const steps = assistantBubble.steps as Array<Record<string, unknown>>
+    const toolStep = steps.find(s => s.kind === 'tool')!
+
+    expect(toolStep.toolUseId).toBe('tu-browse')
+    const parsed = JSON.parse(toolStep.result as string) as { texts: string[]; screenshotUrls: string[] }
+    expect(parsed.texts[0]).toContain('done')
+    expect(parsed.screenshotUrls).toEqual(['https://cdn.example.com/attachments/sub/chat/fid/shot.png?Sig=x'])
+  })
+})

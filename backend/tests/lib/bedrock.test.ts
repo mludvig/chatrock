@@ -11,9 +11,11 @@
  *  6. All existing UI chunks (thinking_delta, thinking_done, delta,
  *     tool_call_start, tool_call, tool_result, stop) still flow through.
  */
-import { converseStream, coalesceMessages, healDanglingToolUse, bedrockClient } from '../../src/lib/bedrock'
+import { converseStream, coalesceMessages, healDanglingToolUse, bedrockClient, HEARTBEAT_INTERVAL_MS } from '../../src/lib/bedrock'
 import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/blocks'
 import * as tools from '../../src/lib/tools'
+import * as attachmentsLib from '../../src/lib/attachments'
+import { s3KeyPrefix } from '../../src/lib/attachments'
 import type { Message } from '@aws-sdk/client-bedrock-runtime'
 
 // Mock the bedrockClient so we never hit AWS
@@ -33,11 +35,24 @@ jest.mock('../../src/lib/tools', () => ({
   executeTool: jest.fn(),
 }))
 
+// Mock S3/CloudFront writes — keep s3KeyPrefix real (pure, deterministic) for key-shape asserts
+jest.mock('../../src/lib/attachments', () => ({
+  ...jest.requireActual('../../src/lib/attachments'),
+  putObjectBytes: jest.fn(),
+  signCloudFrontUrl: jest.fn(),
+}))
+
 const mockExecuteTool = tools.executeTool as jest.MockedFunction<typeof tools.executeTool>
+const mockPutObjectBytes = (attachmentsLib as jest.Mocked<typeof attachmentsLib>).putObjectBytes
+const mockSignCloudFrontUrl = (attachmentsLib as jest.Mocked<typeof attachmentsLib>).signCloudFrontUrl
 
 beforeEach(() => {
   getMockSend().mockReset()
   mockExecuteTool.mockReset()
+  mockPutObjectBytes.mockReset()
+  mockSignCloudFrontUrl.mockReset()
+  mockPutObjectBytes.mockImplementation(async (key: string) => `s3://test-bucket/${key}`)
+  mockSignCloudFrontUrl.mockImplementation(async (key: string) => `https://cdn.example.com/${key}?sig=x`)
 })
 
 // Helper: get the mocked `send` function from the client
@@ -382,7 +397,7 @@ test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false }, undefined, undefined)) {
+  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserToolEnabled: false }, undefined, undefined)) {
     chunks.push(chunk)
   }
 
@@ -674,7 +689,7 @@ test('part1c: clean history with webSearchEnabled+memory disabled still sends no
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _chunk of converseStream(
-    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false },
+    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserToolEnabled: false },
   )) { /* drain */ }
 
   // No tool blocks in history → no toolConfig needed (same as before)
@@ -970,5 +985,151 @@ describe('healDanglingToolUse', () => {
     ]))
     expect(healed).toHaveLength(3)
     expect(healed[2].role).toBe('user')
+  })
+})
+
+describe('browse_web image-bearing tool results: live/persist bifurcation', () => {
+  const CTX = { sub: 'user-1', chatId: 'chat-1' }
+  const PNG_BYTES = Buffer.from('fakepngbytes')
+
+  function mockBrowseWebRound() {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-browse', name: 'browse_web' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"steps":[{"tool":"browser_take_screenshot","params":{}}]}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({
+      toolUseId: 'tu-browse',
+      content: [
+        { text: '### browser_take_screenshot\ndone' },
+        { image: { format: 'png', source: { bytes: PNG_BYTES } } },
+      ],
+      status: 'success',
+    })
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Here is the screenshot.' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+      { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+    ]))
+  }
+
+  test('persisted turn chunk uses s3Location, not inline bytes', async () => {
+    mockBrowseWebRound()
+
+    const turnChunks: Array<{ role: string; content: unknown[] }> = []
+    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+      if ((chunk as { type: string }).type === 'turn') turnChunks.push(chunk as { role: string; content: unknown[] })
+    }
+
+    const toolResultTurn = turnChunks.find(t => t.role === 'user')!
+    const block = toolResultTurn.content[0] as { toolResult: { content: Array<Record<string, unknown>> } }
+    const imageEntry = block.toolResult.content.find(c => 'image' in c) as { image: { source: { s3Location?: { uri: string }; bytes?: Uint8Array } } }
+    expect(imageEntry.image.source.s3Location).toBeDefined()
+    expect(imageEntry.image.source.bytes).toBeUndefined()
+    expect(imageEntry.image.source.s3Location!.uri).toContain(s3KeyPrefix(CTX.sub, CTX.chatId))
+  })
+
+  test('the next round\'s outgoing Bedrock request uses inline bytes, not s3Location', async () => {
+    mockBrowseWebRound()
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of converseStream('test-model', '', [], {}, CTX)) { /* drain */ }
+
+    // Second send() call is the next round's request, replaying newMessages
+    const secondCallInput = getMockSend().mock.calls[1][0].input as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> }
+    const toolResultMsg = secondCallInput.messages.find(m => m.role === 'user' && m.content.some(c => 'toolResult' in c))!
+    const block = toolResultMsg.content[0] as { toolResult: { content: Array<Record<string, unknown>> } }
+    const imageEntry = block.toolResult.content.find(c => 'image' in c) as { image: { source: { bytes?: Uint8Array; s3Location?: unknown } } }
+    expect(imageEntry.image.source.bytes).toEqual(PNG_BYTES)
+    expect(imageEntry.image.source.s3Location).toBeUndefined()
+  })
+
+  test('uploads the image via putObjectBytes under the chat attachment prefix and signs it', async () => {
+    mockBrowseWebRound()
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of converseStream('test-model', '', [], {}, CTX)) { /* drain */ }
+
+    expect(mockPutObjectBytes).toHaveBeenCalledTimes(1)
+    const [key, bytes, contentType] = mockPutObjectBytes.mock.calls[0]
+    expect(key).toBe(`${s3KeyPrefix(CTX.sub, CTX.chatId)}browser-tu-browse-0.png`)
+    expect(bytes).toEqual(PNG_BYTES)
+    expect(contentType).toBe('image/png')
+    expect(mockSignCloudFrontUrl).toHaveBeenCalledWith(key)
+  })
+
+  test('live tool_result WS frame is a JSON envelope with screenshotUrls when an image is present', async () => {
+    mockBrowseWebRound()
+
+    const toolResultChunks: Array<{ content: string }> = []
+    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+      if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string })
+    }
+
+    expect(toolResultChunks).toHaveLength(1)
+    const parsed = JSON.parse(toolResultChunks[0].content) as { texts: string[]; screenshotUrls: string[] }
+    expect(parsed.screenshotUrls).toEqual(['https://cdn.example.com/' + s3KeyPrefix(CTX.sub, CTX.chatId) + 'browser-tu-browse-0.png?sig=x'])
+    expect(parsed.texts[0]).toContain('done')
+  })
+
+  test('emits heartbeat chunks while a slow tool call is in flight, so the WS connection carries traffic during the gap', async () => {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-slow', name: 'browse_web' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"steps":[{"tool":"browser_navigate","params":{"url":"https://example.com"}}]}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+    ]))
+    // Resolve executeTool only after the heartbeat interval has genuinely elapsed, so the
+    // race inside the round loop has time to fire at least one heartbeat tick.
+    mockExecuteTool.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({
+      toolUseId: 'tu-slow', content: [{ text: 'done' }], status: 'success',
+    }), HEARTBEAT_INTERVAL_MS + 200)))
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Answer' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+      { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+    ]))
+
+    const chunkTypes: string[] = []
+    for await (const chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' })) {
+      chunkTypes.push((chunk as { type: string }).type)
+    }
+
+    expect(chunkTypes).toContain('heartbeat')
+    expect(chunkTypes.indexOf('heartbeat')).toBeLessThan(chunkTypes.indexOf('tool_result'))
+  }, HEARTBEAT_INTERVAL_MS + 5000)
+
+  test('text-only tool results (e.g. web_search) are unaffected — plain text, no S3 calls', async () => {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-ws', name: 'web_search' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"hi"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({ toolUseId: 'tu-ws', content: [{ text: 'plain result' }], status: 'success' })
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Answer' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+      { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+    ]))
+
+    const toolResultChunks: Array<{ content: string }> = []
+    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+      if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string })
+    }
+
+    expect(toolResultChunks[0].content).toBe('plain result')
+    expect(mockPutObjectBytes).not.toHaveBeenCalled()
+    expect(mockSignCloudFrontUrl).not.toHaveBeenCalled()
   })
 })

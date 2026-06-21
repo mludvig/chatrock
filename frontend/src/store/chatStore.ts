@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
-import { parseSearchResults } from '../lib/toolResults'
+import { parseSearchResults, parseBrowserScreenshots } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
 // A tool step that may be in progress (no result yet)
@@ -259,7 +259,8 @@ export const useChatStore = create<ChatState>()(
             steps: s.streamingMsg.steps.map(step => {
               if (step.kind !== 'tool' || step.toolUseId !== toolUseId) return step
               const searchResults = parseSearchResults(step.name, result, isError)
-              return { ...step, result, isError, searchResults }
+              const screenshotUrls = parseBrowserScreenshots(step.name, result, isError)
+              return { ...step, result, isError, searchResults, screenshotUrls }
             }),
           } as StreamingMsg,
         }

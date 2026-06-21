@@ -16,6 +16,7 @@ export type WSEvent =
   | { type: 'memoryUpdated';  count: number }
   | { type: 'error';          message: string; responseId?: string; leafId?: string }
   | { type: 'warning';        message: string }
+  | { type: 'heartbeat' }
 
 type EventHandler = (evt: WSEvent) => void
 

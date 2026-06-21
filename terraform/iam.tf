@@ -95,6 +95,28 @@ data "aws_iam_policy_document" "lambda_policy" {
     actions   = ["bedrock-agentcore:InvokeGateway"]
     resources = [aws_bedrockagentcore_gateway.web_search.gateway_arn]
   }
+
+  # AgentCore Browser — unlike Web Search, this is a direct data-plane session API (no
+  # Gateway, no second assumed role): the Lambda's own execution role signs StartBrowserSession/
+  # StopBrowserSession calls and the CDP WebSocket handshake directly (see
+  # backend/src/lib/agentcore/browser.ts). Confirmed working natively in ap-southeast-2 (no
+  # cross-region pin needed, unlike Web Search's us-east-1-only Gateway).
+  #
+  # The AWS-managed system browser (aws.browser.v1) lives under the literal "aws"
+  # pseudo-account, not the caller's own account — same pattern as Web Search's system tool
+  # ARN below (arn:...:tool/web-search.v1). Confirmed via the actual AccessDeniedException
+  # message when this was first scoped to the caller's account: resource
+  # "arn:aws:bedrock-agentcore:ap-southeast-2:aws:browser/aws.browser.v1".
+  statement {
+    sid = "InvokeBrowser"
+    actions = [
+      "bedrock-agentcore:StartBrowserSession",
+      "bedrock-agentcore:GetBrowserSession",
+      "bedrock-agentcore:StopBrowserSession",
+      "bedrock-agentcore:ConnectBrowserAutomationStream",
+    ]
+    resources = ["arn:aws:bedrock-agentcore:${var.aws_region}:aws:browser/aws.browser.v1"]
+  }
 }
 
 resource "aws_iam_role_policy" "lambda" {
