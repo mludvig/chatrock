@@ -31,6 +31,7 @@ import {
   signCloudFrontUrl,
   attachmentBlock,
   hydrateBlocks,
+  rewriteBlockUri,
   s3KeyPrefix,
 } from '../../src/lib/attachments'
 import { getSignedUrl as s3SignedUrl } from '@aws-sdk/s3-request-presigner'
@@ -88,7 +89,7 @@ test('attachmentBlock builds image block with s3Location', () => {
       format: 'png',
       source: {
         s3Location: {
-          uri: `s3://chatrock-attachments-123456789012-ap-southeast-2-an/attachments/sub/chat/fid/screenshot.png`,
+          uri: `s3://${process.env.ATTACHMENTS_BUCKET}/attachments/sub/chat/fid/screenshot.png`,
         },
       },
     },
@@ -148,8 +149,9 @@ test('hydrateBlocks replaces s3Location with bytes for image blocks', async () =
     Body: { transformToByteArray: async () => fakeBytes },
   })
 
+  const bucket = process.env.ATTACHMENTS_BUCKET!
   const blocks = [
-    { image: { format: 'png', source: { s3Location: { uri: 's3://bucket/key.png' } } } },
+    { image: { format: 'png', source: { s3Location: { uri: `s3://${bucket}/key.png` } } } },
   ]
   const result = await hydrateBlocks(blocks as never, s3Client)
   expect(result[0]).toMatchObject({ image: { format: 'png', source: { bytes: fakeBytes } } })
@@ -163,6 +165,84 @@ test('hydrateBlocks passes through text blocks unchanged', async () => {
   const result = await hydrateBlocks(blocks as never, s3Client)
   expect(result).toEqual([{ text: 'hello' }])
   expect(s3Client.send).not.toHaveBeenCalled()
+})
+
+test('hydrateBlocks rehydrates nested image inside toolResult.content[]', async () => {
+  // Regression test: browser screenshots are persisted as s3Location inside toolResult.content[].
+  // Without this fix, the raw s3Uri reaches Bedrock on follow-up sends and causes
+  // "ValidationException: This model doesn't support the s3Uri field."
+  const fakeBytes = Buffer.from('PNG screenshot')
+  const s3Client = new S3Client({}) as jest.Mocked<S3Client>
+  s3Client.send = jest.fn().mockResolvedValue({
+    Body: { transformToByteArray: async () => fakeBytes },
+  })
+
+  const blocks = [
+    {
+      toolResult: {
+        toolUseId: 'tu-1',
+        status: 'success',
+        content: [
+          { text: 'Screenshot taken' },
+          { image: { format: 'png', source: { s3Location: { uri: `s3://${process.env.ATTACHMENTS_BUCKET}/browser-tu-1-0.png` } } } },
+        ],
+      },
+    },
+  ]
+  const result = await hydrateBlocks(blocks as never, s3Client)
+  const tr = (result[0] as { toolResult: { toolUseId: string; status: string; content: unknown[] } }).toolResult
+  expect(tr.toolUseId).toBe('tu-1')
+  expect(tr.status).toBe('success')
+  expect(tr.content[0]).toEqual({ text: 'Screenshot taken' })
+  expect(tr.content[1]).toMatchObject({ image: { format: 'png', source: { bytes: fakeBytes } } })
+  expect(s3Client.send).toHaveBeenCalledTimes(1)
+})
+
+test('hydrateBlocks leaves text-only toolResult unchanged without S3 calls', async () => {
+  const s3Client = new S3Client({}) as jest.Mocked<S3Client>
+  s3Client.send = jest.fn()
+
+  const blocks = [
+    {
+      toolResult: {
+        toolUseId: 'tu-2',
+        status: 'success',
+        content: [{ text: 'web_search result' }],
+      },
+    },
+  ]
+  const result = await hydrateBlocks(blocks as never, s3Client)
+  expect(result).toEqual(blocks)
+  expect(s3Client.send).not.toHaveBeenCalled()
+})
+
+test('rewriteBlockUri remaps nested toolResult image s3Location via keyMap', () => {
+  const bucket = process.env.ATTACHMENTS_BUCKET!
+  const keyMap = new Map([
+    ['attachments/sub/chat-src/browser-tu-1-0.png', 'attachments/sub/chat-dst/browser-tu-1-0.png'],
+  ])
+  const block = {
+    toolResult: {
+      toolUseId: 'tu-1',
+      status: 'success',
+      content: [
+        { text: 'snap' },
+        {
+          image: {
+            format: 'png',
+            source: { s3Location: { uri: `s3://${bucket}/attachments/sub/chat-src/browser-tu-1-0.png` } },
+          },
+        },
+      ],
+    },
+  }
+  const result = rewriteBlockUri(block as never, keyMap) as {
+    toolResult: { content: Array<{ image?: { source?: { s3Location?: { uri: string } } } }> }
+  }
+  expect(result.toolResult.content[0]).toEqual({ text: 'snap' })
+  expect(result.toolResult.content[1].image?.source?.s3Location?.uri).toBe(
+    `s3://${bucket}/attachments/sub/chat-dst/browser-tu-1-0.png`
+  )
 })
 
 // ── s3KeyPrefix ───────────────────────────────────────────────────────────────
