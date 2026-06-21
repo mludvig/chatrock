@@ -61,14 +61,36 @@ export const buildHandler = (postFn: PostFn) => async (
   if (!conn) return { statusCode: 410, body: 'Gone' }
   const sub = conn.userSub as string
 
+  // Wrap postFn to swallow GoneException (HTTP 410) — the client disconnected.
+  // When this happens mid-stream we set a flag and keep draining: turns continue to
+  // be persisted in DynamoDB and post-turn enrichment (title, memory) still runs.
+  // Without this, the first GoneException propagates as an "error", the errored-path
+  // then calls postFn again (also GoneException, uncaught), and the Lambda crashes
+  // before enrichment ever executes.
+  let connectionGone = false
+  const safePost = async (params: { ConnectionId: string; Data: string }) => {
+    if (connectionGone) return
+    try {
+      await postFn(params)
+    } catch (e: unknown) {
+      const httpStatus = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode
+      if (httpStatus === 410) {
+        connectionGone = true
+        console.log(JSON.stringify({ event: 'ws_gone', chatId, connId }))
+        return
+      }
+      throw e
+    }
+  }
+
   if (!isValidModelId(model)) {
-    await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Invalid model' }) })
+    await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Invalid model' }) })
     return { statusCode: 200, body: '' }
   }
 
   const chat = await getChat(sub, chatId)
   if (!chat) {
-    await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Chat not found' }) })
+    await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Chat not found' }) })
     return { statusCode: 200, body: '' }
   }
 
@@ -76,7 +98,10 @@ export const buildHandler = (postFn: PostFn) => async (
   // The client arms a short watchdog after sending; receiving any frame (this
   // ack first) proves the WebSocket is live. No ack ⇒ the frame was dropped by
   // a stale connection, and the client recovers instead of hanging on "Processing…".
-  await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'ack' }) })
+  await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'ack' }) })
+  // If the ack itself 410'd, the client is already gone — no point starting an
+  // expensive Bedrock call. Nothing to persist yet either, so return immediately.
+  if (connectionGone) return { statusCode: 200, body: '' }
 
   // Advance the chat's activeLeafId to a just-persisted turn. Called after EVERY
   // turn write (user prompt + each assistant/tool turn + partial flush) so that a
@@ -263,7 +288,7 @@ export const buildHandler = (postFn: PostFn) => async (
     // so the replay is always inclusive of the true leaf.
     const priorById = new Map((priorRows as unknown as TurnRow[]).map(r => [r.msgId, r]))
     if (!priorById.has(rerunParentId!)) {
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Continue parentId not found' }) })
+      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Continue parentId not found' }) })
       return { statusCode: 200, body: '' }
     }
     // Resolve bubble msgId → deepest turn within its responseId group
@@ -286,7 +311,7 @@ export const buildHandler = (postFn: PostFn) => async (
     // Validate: parentId must resolve to a known row
     const priorById = new Map((priorRows as unknown as TurnRow[]).map(r => [r.msgId, r]))
     if (!priorById.has(rerunParentId!)) {
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Re-run parentId not found' }) })
+      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Re-run parentId not found' }) })
       return { statusCode: 200, body: '' }
     }
     // Replay history: root→parentId (user turn that prompted the original answer).
@@ -308,7 +333,7 @@ export const buildHandler = (postFn: PostFn) => async (
     if (editParentId !== null) {
       const priorById = new Map((priorRows as unknown as TurnRow[]).map(r => [r.msgId, r]))
       if (!priorById.has(editParentId)) {
-        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Edit parentId not found' }) })
+        await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Edit parentId not found' }) })
         return { statusCode: 200, body: '' }
       }
     }
@@ -445,25 +470,25 @@ export const buildHandler = (postFn: PostFn) => async (
     for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, toolCtx, abortController.signal)) {
       switch (chunk.type) {
         case 'thinking_delta':
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
           break
         case 'thinking_done':
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_done' }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_done' }) })
           break
         case 'delta':
           partialText += chunk.text
           assistantTextForMemory += chunk.text
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'delta', text: chunk.text }) })
           break
         case 'tool_call_start':
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({
             type: 'tool_call_start',
             toolUseId: chunk.toolUseId,
             name: chunk.name,
           }) })
           break
         case 'tool_call':
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({
             type: 'tool_call',
             toolUseId: chunk.toolUseId,
             name: chunk.name,
@@ -471,7 +496,7 @@ export const buildHandler = (postFn: PostFn) => async (
           }) })
           break
         case 'tool_result':
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({
             type: 'tool_result',
             toolUseId: chunk.toolUseId,
             name: chunk.name,
@@ -481,7 +506,7 @@ export const buildHandler = (postFn: PostFn) => async (
           }) })
           break
         case 'heartbeat':
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'heartbeat' }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'heartbeat' }) })
           break
         case 'turn': {
           // Backend-only: persist one record per Converse turn (format C, tree-aware)
@@ -537,12 +562,12 @@ export const buildHandler = (postFn: PostFn) => async (
         case 'usage':
           lastUsage = chunk.usage
           // Forward as a compact WS event for live token stats display
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'usage', usage: chunk.usage }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'usage', usage: chunk.usage }) })
           break
         case 'memoryChanged':
           // Tool loop signalled that manage_memory succeeded — notify the client
           memoryChangedDuringStream = true
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: 1 }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: 1 }) })
           break
         case 'stop':
           // Update activeLeafId before sending 'done' so the client's
@@ -552,7 +577,7 @@ export const buildHandler = (postFn: PostFn) => async (
           } catch (e) {
             console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
           }
-          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
           console.log(JSON.stringify({
             event: 'llm_call',
             purpose: 'chat',
@@ -593,7 +618,7 @@ export const buildHandler = (postFn: PostFn) => async (
     } catch (e) {
       console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
     }
-    await postFn({ ConnectionId: connId, Data: JSON.stringify({
+    await safePost({ ConnectionId: connId, Data: JSON.stringify({
       type: 'error',
       message: errorMessage,
       responseId,
@@ -610,7 +635,7 @@ export const buildHandler = (postFn: PostFn) => async (
     }
     await clearStreamCancel(connId)
     console.log(JSON.stringify({ event: 'stream_cancelled', chatId, connId }))
-    await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'cancelled' }) })
+    await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'cancelled' }) })
     return { statusCode: 200, body: '' }
   }
 
@@ -655,7 +680,7 @@ export const buildHandler = (postFn: PostFn) => async (
       // Title
       if (userResult.title) {
         await updateChatTitle(sub, chatId, userResult.title)
-        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title: userResult.title }) })
+        await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title: userResult.title }) })
       }
 
       // ── Project facts + summary (reuse projectMemoriesRaw already loaded) ──
@@ -687,13 +712,13 @@ export const buildHandler = (postFn: PostFn) => async (
       }
 
       if (totalChanged > 0 && !memoryChangedDuringStream) {
-        await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged }) })
+        await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged }) })
       }
 
       console.log(JSON.stringify({ event: 'llm_call', purpose: 'enrich_turn', model: MEMORY_EXTRACTION_MODEL, chatId }))
     } catch (err) {
       console.error(JSON.stringify({ event: 'enrich_turn_error', chatId, error: String(err) }))
-      await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'warning', message: 'Post-turn enrichment failed (memory/summary not updated)' }) })
+      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'warning', message: 'Post-turn enrichment failed (memory/summary not updated)' }) })
       // Never re-throw — enrichment failure must not break the chat turn
     }
   }
