@@ -113,6 +113,7 @@ export const buildHandler = (postFn: PostFn) => async (
     thinkingEffort:     modelSettings.thinkingEffort,
     webSearchEnabled:   modelSettings.webSearchEnabled,
     webSearchProvider:  modelSettings.webSearchProvider,
+    browserToolEnabled: modelSettings.browserToolEnabled,
     memoryEnabled:      modelSettings.memoryEnabled,
     answerLength:       modelSettings.answerLength as UserPreferences['answerLength'],
     injectCurrentDate:  modelSettings.injectCurrentDate,
@@ -122,10 +123,11 @@ export const buildHandler = (postFn: PostFn) => async (
   const memoryEnabled = effectivePrefs.memoryEnabled !== false
 
   const effectiveModelSettings: ModelSettings = {
-    thinkingEffort:    effectivePrefs.thinkingEffort,
-    webSearchEnabled:  effectivePrefs.webSearchEnabled,
-    webSearchProvider: effectivePrefs.webSearchProvider,
-    memoryEnabled:     effectivePrefs.memoryEnabled,
+    thinkingEffort:     effectivePrefs.thinkingEffort,
+    webSearchEnabled:   effectivePrefs.webSearchEnabled,
+    webSearchProvider:  effectivePrefs.webSearchProvider,
+    browserToolEnabled: effectivePrefs.browserToolEnabled,
+    memoryEnabled:      effectivePrefs.memoryEnabled,
   }
 
   // Build project manifest and forced files (project chats only)
@@ -220,10 +222,14 @@ export const buildHandler = (postFn: PostFn) => async (
     projectReadToolsEnabled: !!projectId,
   })
 
-  // Build tool context for manage_memory / manage_project_memory / read_project_* (from auth, never client)
+  // Build tool context for manage_memory / manage_project_memory / read_project_* / browse_web
+  // (from auth, never client). chatId is always included — browse_web's screenshot storage
+  // needs it for every chat, not just project chats (project-scoped tools additionally gate
+  // on projectId themselves, so this is safe for them too).
   const toolCtx: ToolContext = {
     sub,
-    ...(projectId ? { projectId, chatId } : {}),
+    chatId,
+    ...(projectId ? { projectId } : {}),
     ...(effectiveModelSettings.webSearchProvider ? { webSearchProvider: effectiveModelSettings.webSearchProvider } : {}),
   }
 
@@ -470,6 +476,9 @@ export const buildHandler = (postFn: PostFn) => async (
             isError: chunk.isError,
             content: chunk.content,
           }) })
+          break
+        case 'heartbeat':
+          await postFn({ ConnectionId: connId, Data: JSON.stringify({ type: 'heartbeat' }) })
           break
         case 'turn': {
           // Backend-only: persist one record per Converse turn (format C, tree-aware)

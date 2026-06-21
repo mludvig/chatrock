@@ -92,6 +92,19 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
         </button>
       </div>
       <div className="model-setting-row model-setting-row--inline">
+        <label className="setting-label" title="Toggle the browser tool. When off, the model cannot call browse_web to interact with JS-heavy pages or take screenshots.">
+          <FontAwesomeIcon icon={faGlobe} />
+          <span>Browser tool</span>
+        </label>
+        <button
+          className={`toggle-btn${settings.browserToolEnabled !== false ? ' active' : ''}`}
+          onClick={() => set({ browserToolEnabled: settings.browserToolEnabled === false ? true : false })}
+          title="Toggle browser tool"
+        >
+          {settings.browserToolEnabled !== false ? 'On' : 'Off'}
+        </button>
+      </div>
+      <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Toggle memory. When off, your saved memories are not injected into the system prompt and no new memories are extracted from this chat.">
           <FontAwesomeIcon icon={faMemory} />
           <span>Memory</span>

@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-crypto/sha256-js": "^5",
     "@aws-sdk/client-apigatewaymanagementapi": "^3",
+    "@aws-sdk/client-bedrock-agentcore": "^3.1067.0",
     "@aws-sdk/client-bedrock-runtime": "^3",
     "@aws-sdk/client-dynamodb": "^3",
     "@aws-sdk/client-s3": "^3.1067.0",
@@ -21,6 +22,7 @@
     "@aws-sdk/lib-dynamodb": "^3",
     "@aws-sdk/s3-request-presigner": "^3.1067.0",
     "@modelcontextprotocol/sdk": "^1",
+    "@playwright/mcp": "^0.0.76",
     "@smithy/protocol-http": "^4",
     "@smithy/signature-v4": "^5",
     "aws-jwt-verify": "^4",

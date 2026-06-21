@@ -1859,6 +1859,24 @@ $mobile: 720px;
   }
 }
 
+// ── Browser tool screenshots in tool pill ──────────────────────────────────────
+
+.browser-screenshots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0 4px;
+
+  a { display: block; }
+  .attachment-thumbnail {
+    max-width: 360px;
+    max-height: 300px;
+    border-radius: 8px;
+    border: 1px solid #3a3a3a;
+    display: block;
+  }
+}
+
 // ── Projects ────────────────────────────────────────────────────────────────
 
 .projects-panel {

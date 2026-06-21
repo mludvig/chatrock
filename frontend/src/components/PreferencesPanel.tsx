@@ -257,6 +257,19 @@ export default function PreferencesPanel() {
             </div>
           </div>
 
+          {/* Browser tool */}
+          <div className="pref-section">
+            <div className="pref-row">
+              <span className="pref-row-label">Browser tool</span>
+              <button
+                className={`toggle-btn${prefs.browserToolEnabled !== false ? ' active' : ''}`}
+                onClick={() => patch({ browserToolEnabled: prefs.browserToolEnabled === false ? true : false })}
+              >
+                {prefs.browserToolEnabled !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+
           {/* Answer length */}
           <div className="pref-section">
             <div className="pref-label">Answer length</div>
@@ -360,6 +373,19 @@ export default function PreferencesPanel() {
                 onClick={() => patchProjectModelSettings({ webSearchEnabled: projectDraft.modelSettings?.webSearchEnabled === false ? true : false })}
               >
                 {projectDraft.modelSettings?.webSearchEnabled !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+
+          {/* Browser tool */}
+          <div className="pref-section">
+            <div className="pref-row">
+              <span className="pref-row-label">Browser tool</span>
+              <button
+                className={`toggle-btn${projectDraft.modelSettings?.browserToolEnabled !== false ? ' active' : ''}`}
+                onClick={() => patchProjectModelSettings({ browserToolEnabled: projectDraft.modelSettings?.browserToolEnabled === false ? true : false })}
+              >
+                {projectDraft.modelSettings?.browserToolEnabled !== false ? 'On' : 'Off'}
               </button>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, DeleteObjectsCommand, CopyObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand, CopyObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
 import { getSignedUrl as s3GetSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { getSignedUrl as cfGetSignedUrl } from '@aws-sdk/cloudfront-signer'
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
@@ -79,12 +79,18 @@ export async function deleteS3Objects(keys: string[]): Promise<void> {
 const s3 = new S3Client({})
 
 export async function presignPut(key: string, contentType: string): Promise<string> {
-  const { PutObjectCommand } = await import('@aws-sdk/client-s3')
   return s3GetSignedUrl(
     s3,
     new PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: contentType }),
     { expiresIn: 900 },
   )
+}
+
+// ── Direct S3 write (server-side, e.g. tool-generated artifacts like browser screenshots) ────
+
+export async function putObjectBytes(key: string, bytes: Uint8Array, contentType: string): Promise<string> {
+  await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: bytes, ContentType: contentType }))
+  return `s3://${BUCKET}/${key}`
 }
 
 // ── CloudFront signed URL (for display) ──────────────────────────────────────

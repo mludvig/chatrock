@@ -6,11 +6,13 @@ import {
   type Tool,
   type ContentBlock,
   type SystemContentBlock,
+  type ToolResultBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
-import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, type ToolContext } from './tools'
+import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, type ToolContext } from './tools'
 import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
+import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from './attachments'
 
 export const bedrockClient = new BedrockRuntimeClient({
   region: process.env.AWS_REGION ?? 'ap-southeast-2',
@@ -25,6 +27,10 @@ export type StreamChunk =
   | { type: 'tool_call_start'; toolUseId: string; name: string }
   | { type: 'tool_call'; toolUseId: string; name: string; input: string }
   | { type: 'tool_result'; toolUseId: string; name: string; content: string; isError: boolean }
+  // Sent periodically while a single tool call is in flight for longer than a few seconds
+  // (e.g. browse_web's AgentCore session) so the WebSocket carries real traffic during an
+  // otherwise-silent gap — observed empirically to reduce the WS connection going stale.
+  | { type: 'heartbeat' }
   | { type: 'stop'; stopReason: string }
   // Backend-only: drives per-turn persistence; never sent raw over WS
   | { type: 'turn'; role: 'user' | 'assistant'; content: ContentBlock[]; turnIndex: number }
@@ -90,6 +96,7 @@ const CACHE_POINT_CONTENT = { cachePoint: { type: 'default' as const } } as unkn
 function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[] {
   const list: Tool[] = []
   if (settings.webSearchEnabled !== false) list.push(...WEB_TOOLS)
+  if (settings.browserToolEnabled !== false) list.push(BROWSER_TOOL)
   if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
   if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
   if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
@@ -387,6 +394,7 @@ async function* streamOneTurn(
 
 // Maximum number of tool-use rounds before we force a final text answer
 const MAX_TOOL_ROUNDS = 8
+export const HEARTBEAT_INTERVAL_MS = 4000
 
 export async function* converseStream(
   modelId: string,
@@ -457,15 +465,33 @@ export async function* converseStream(
     // web_search calls); their results all land in the same DynamoDB turn item, so the
     // per-call cap must shrink as the round grows to keep the aggregate bounded.
     const perCallCap = Math.min(TOOL_RESULT_CAP, Math.floor(TOOL_RESULTS_ROUND_CAP / Math.max(1, result.toolUses.length)))
-    const toolResults: ContentBlock[] = []
+    // Two representations of the same round's tool results: `toolResultsLive` carries inline
+    // image bytes (replayed to Bedrock in the *next* round of this same invocation — nothing
+    // re-hydrates `newMessages` mid-loop), `toolResultsPersist` carries S3 locations instead
+    // (small, durable — matches how user attachments are stored at rest). Text-only tool
+    // results are identical in both and unaffected by this split.
+    const toolResultsLive: ContentBlock[] = []
+    const toolResultsPersist: ContentBlock[] = []
     for (const tu of result.toolUses) {
       const input = (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })()
-      const toolResult = await executeTool(tu.name, input, ctx ?? { sub: '' })
-      const rawContent = toolResult.content?.[0] && 'text' in toolResult.content[0]
-        ? (toolResult.content[0].text ?? '')
-        : ''
-      // Cap BEFORE storing (so stored == sent → cache-safe, no replay drift)
-      const cappedContent = capToolResultText(rawContent, perCallCap)
+      const toolPromise = executeTool(tu.name, input, ctx ?? { sub: '' })
+      let toolResult: ToolResultBlock | undefined
+      while (!toolResult) {
+        const timerId = { current: undefined as ReturnType<typeof setTimeout> | undefined }
+        const outcome = await Promise.race([
+          toolPromise.then(r => ({ done: true as const, r })),
+          new Promise<{ done: false }>(resolve => { timerId.current = setTimeout(() => resolve({ done: false }), HEARTBEAT_INTERVAL_MS) }),
+        ])
+        clearTimeout(timerId.current)
+        if (outcome.done) {
+          toolResult = outcome.r
+        } else {
+          yield { type: 'heartbeat' }
+        }
+      }
+      const contentBlocks = toolResult.content ?? []
+      const textEntries = contentBlocks.filter(c => 'text' in c) as Array<{ text?: string }>
+      const imageEntries = contentBlocks.filter(c => 'image' in c) as Array<{ image?: { format?: string; source?: { bytes?: Uint8Array } } }>
       const isError = toolResult.status === 'error'
 
       // Emit memoryChanged when manage_memory succeeds (triggers WS memoryUpdated event)
@@ -473,22 +499,62 @@ export async function* converseStream(
         yield { type: 'memoryChanged' as const }
       }
 
-      yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedContent, isError }
+      if (imageEntries.length === 0) {
+        // Unchanged path for every text-only tool (web_search, manage_memory, etc.)
+        const rawContent = textEntries[0]?.text ?? ''
+        const cappedContent = capToolResultText(rawContent, perCallCap)
+        yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedContent, isError }
+        const block: ContentBlock = { toolResult: { toolUseId: tu.toolUseId, content: [{ text: cappedContent }], status: toolResult.status } }
+        toolResultsLive.push(block)
+        toolResultsPersist.push(block)
+        continue
+      }
 
-      toolResults.push({
-        toolResult: {
-          toolUseId: tu.toolUseId,
-          content: [{ text: cappedContent }],
-          status: toolResult.status,
-        },
-      })
+      // Image-bearing result (e.g. browse_web screenshots): upload each image to S3 under the
+      // same prefix attachments already use (so chat delete/fork already covers them for
+      // free), build live (bytes) + persist (s3Location) content arrays, and eagerly sign the
+      // uploaded screenshots so the live WS frame can render them with no reload needed.
+      const liveContent: NonNullable<ToolResultBlock['content']> = []
+      const persistContent: NonNullable<ToolResultBlock['content']> = []
+      const screenshotUrls: string[] = []
+      const ENVELOPE_OVERHEAD = 300 // reserve room for JSON punctuation + screenshotUrls array
+      const textCap = Math.max(0, perCallCap - ENVELOPE_OVERHEAD)
+      const joinedText = textEntries.map(t => t.text ?? '').join('\n\n')
+      const cappedText = capToolResultText(joinedText, textCap)
+      if (cappedText) {
+        liveContent.push({ text: cappedText })
+        persistContent.push({ text: cappedText })
+      }
+      for (let i = 0; i < imageEntries.length; i++) {
+        const format = imageEntries[i].image?.format ?? 'png'
+        const bytes = imageEntries[i].image?.source?.bytes
+        if (!bytes) continue
+        liveContent.push({ image: { format: format as 'png' | 'jpeg', source: { bytes } } })
+        if (ctx?.sub && ctx?.chatId) {
+          const key = `${s3KeyPrefix(ctx.sub, ctx.chatId)}browser-${tu.toolUseId}-${i}.${format}`
+          const uri = await putObjectBytes(key, bytes, `image/${format}`)
+          persistContent.push({ image: { format: format as 'png' | 'jpeg', source: { s3Location: { uri } } } } as unknown as NonNullable<ToolResultBlock['content']>[number])
+          screenshotUrls.push(await signCloudFrontUrl(key))
+        } else {
+          // No durable chat context (e.g. a unit test ctx) — keep bytes in the persisted form
+          // too rather than silently dropping the image.
+          persistContent.push({ image: { format: format as 'png' | 'jpeg', source: { bytes } } })
+        }
+      }
+
+      const liveFrameContent = JSON.stringify({ texts: cappedText ? [cappedText] : [], screenshotUrls })
+      yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: liveFrameContent, isError }
+
+      toolResultsLive.push({ toolResult: { toolUseId: tu.toolUseId, content: liveContent, status: toolResult.status } })
+      toolResultsPersist.push({ toolResult: { toolUseId: tu.toolUseId, content: persistContent, status: toolResult.status } })
     }
 
-    // Yield the user tool-result turn for persistence
-    yield { type: 'turn', role: 'user', content: toolResults, turnIndex }
+    // Yield the user tool-result turn for persistence (s3Location form)
+    yield { type: 'turn', role: 'user', content: toolResultsPersist, turnIndex }
     turnIndex++
 
-    newMessages.push({ role: 'user', content: toolResults })
+    // Continue the loop with the bytes-inline form (this invocation's next round only)
+    newMessages.push({ role: 'user', content: toolResultsLive })
     // Loop → next turn with tool results injected
   }
 
