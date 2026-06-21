@@ -1,5 +1,5 @@
 import { build } from 'esbuild'
-import { mkdirSync, createWriteStream } from 'fs'
+import { mkdirSync, createWriteStream, existsSync } from 'fs'
 import archiver from 'archiver'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -27,8 +27,8 @@ mkdirSync(distDir, { recursive: true })
 // relative to its own package directory; single-file bundling breaks that relative path.
 // chromium-bidi is required unconditionally too, but is dead code for our Chromium-over-CDP-
 // only usage and isn't even installed. Both must stay external — for ws-sendMessage (the only
-// handler that imports them, via lib/agentcore/browser.ts), the real package directories are
-// copied into the zip below so Node's normal require() resolution finds them at runtime.
+// handler that imports them, via lib/agentcore/browser.ts), the real package directory is
+// copied into the zip below so Node's normal require() resolution finds it at runtime.
 const PLAYWRIGHT_EXTERNAL = ['@playwright/mcp', 'playwright-core', 'playwright', 'chromium-bidi']
 const rootNodeModules = path.join(__dirname, '..', 'node_modules')
 
@@ -56,8 +56,20 @@ for (const { name, entry } of handlers) {
     archive.pipe(output)
     archive.file(outfile, { name: 'index.js' })
     if (name === 'ws-sendMessage') {
-      for (const pkg of ['playwright', 'playwright-core', '@playwright/mcp']) {
-        archive.directory(path.join(rootNodeModules, pkg), `node_modules/${pkg}`)
+      archive.directory(path.join(rootNodeModules, '@playwright/mcp'), 'node_modules/@playwright/mcp')
+      // @playwright/mcp pins a newer playwright/playwright-core than this repo's e2e test
+      // harness (@playwright/test) hoists to the root node_modules, so npm normally installs
+      // private nested copies under @playwright/mcp/node_modules/ — those are the ones Node
+      // actually require()'s at runtime (nearest node_modules wins), already included by the
+      // directory copy above. Don't also ship the root copies (they'd be dead weight — pure
+      // e2e-test-harness baggage). Re-check at build time rather than assuming: if npm's
+      // dedup behavior ever changes (e.g. the e2e harness version is bumped to match) and no
+      // nested copy exists, fall back to shipping the root one so the bundle still resolves.
+      for (const pkg of ['playwright', 'playwright-core']) {
+        const nested = path.join(rootNodeModules, '@playwright/mcp', 'node_modules', pkg)
+        if (!existsSync(nested)) {
+          archive.directory(path.join(rootNodeModules, pkg), `node_modules/${pkg}`)
+        }
       }
     }
     archive.finalize()
