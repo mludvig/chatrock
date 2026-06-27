@@ -5,6 +5,7 @@ import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen, fa
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { useChatActions } from '../lib/useChatActions'
+import { sortByRecent } from '../lib/sort'
 
 export default function ChatsPanel() {
   const navigate = useNavigate()
@@ -33,9 +34,7 @@ export default function ChatsPanel() {
     }
   }
 
-  const sorted = [...chats]
-    .filter(c => showProjectChats || !c.projectId)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+  const sorted = sortByRecent(chats.filter(c => showProjectChats || !c.projectId))
 
   return (
     <>

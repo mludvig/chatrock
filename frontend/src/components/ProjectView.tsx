@@ -8,6 +8,7 @@ import {
 import { api, uploadToS3 } from '../api/http'
 import type { Chat, ProjectMemory, ProjectFile } from '../api/http'
 import { useChatStore } from '../store/chatStore'
+import { sortByRecent } from '../lib/sort'
 
 interface Props {
   defaultModel: string
@@ -233,7 +234,7 @@ export default function ProjectView({ defaultModel }: Props) {
           ) : projectChats.length === 0 ? (
             <div className="panel-empty">No chats in this project yet.</div>
           ) : (
-            projectChats.map(chat => (
+            sortByRecent(projectChats).map(chat => (
               <div key={chat.chatId} className="chat-item" onClick={() => navigate(`/c/${chat.chatId}`)}>
                 <div className="chat-item-content">
                   <span className="chat-title">{chat.title}</span>

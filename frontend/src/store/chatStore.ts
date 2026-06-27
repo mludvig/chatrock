@@ -347,7 +347,10 @@ export const useChatStore = create<ChatState>()(
       })),
 
       setProjects: (projects) => set({ projects }),
-      addProject: (project) => set((s) => ({ projects: [...s.projects, project] })),
+      // Prepend, not append: the projects list relies on backend ULID
+      // ordering (newest-first) plus this for same-session creates — there's
+      // no client-side sort layer for the project list itself (unlike chats).
+      addProject: (project) => set((s) => ({ projects: [project, ...s.projects] })),
       updateProject: (projectId, fields) => set((s) => ({
         projects: s.projects.map(p => p.projectId === projectId ? { ...p, ...fields } : p),
       })),
