@@ -5,7 +5,7 @@ import {
   listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey,
   listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey,
 } from './dynamo'
-import { v4 as uuidv4 } from 'uuid'
+import { newId } from './ids'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -238,7 +238,7 @@ export async function executeMemoryTool(
         return successResult('Already known.')
       }
 
-      const memId = uuidv4()
+      const memId = newId()
       const now = new Date().toISOString()
       await putUserMemory({
         ...buildUserMemKey(ctx.sub, memId),
@@ -340,7 +340,7 @@ export async function executeProjectMemoryTool(
         return successResult('Already known.')
       }
 
-      const memId = uuidv4()
+      const memId = newId()
       const now = new Date().toISOString()
       await putProjectMemory({
         ...buildProjectMemKey(ctx.projectId, memId),

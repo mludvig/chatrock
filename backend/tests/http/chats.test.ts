@@ -616,7 +616,7 @@ test('POST /api/chats/{chatId}/fork calls copyChatObjects', async () => {
 test('POST /api/chats with valid client chatId uses that id', async () => {
   mockDynamo.putChat.mockResolvedValue(undefined)
   mockDynamo.getChat.mockResolvedValue(undefined)  // not a duplicate
-  const clientId = '11111111-2222-3333-4444-555555555555'
+  const clientId = '01arz3ndektsv4rrffq69g5fav'
   const res = result(await handler(makeEvent('POST', '/api/chats', {
     model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: clientId,
   }) as any))
@@ -635,9 +635,17 @@ test('POST /api/chats with invalid chatId returns 400', async () => {
   expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid chatId' })
 })
 
+test('POST /api/chats with uppercase ULID chatId returns 400 (lowercase-only invariant)', async () => {
+  const res = result(await handler(makeEvent('POST', '/api/chats', {
+    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid chatId' })
+})
+
 test('POST /api/chats with duplicate chatId returns 409', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#existing' })
-  const clientId = '11111111-2222-3333-4444-555555555555'
+  const clientId = '01arz3ndektsv4rrffq69g5fav'
   const res = result(await handler(makeEvent('POST', '/api/chats', {
     model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: clientId,
   }) as any))

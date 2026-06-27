@@ -1,5 +1,5 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
-import { v4 as uuidv4 } from 'uuid'
+import { newId } from '../lib/ids'
 import {
   listProjects,
   getProject,
@@ -72,7 +72,7 @@ export const handler = async (
     if (!body.name || typeof body.name !== 'string' || (body.name as string).trim() === '') {
       return err(400, 'name is required and must be a non-empty string')
     }
-    const projectId = uuidv4()
+    const projectId = newId()
     const now = new Date().toISOString()
     await putProject({
       ...buildProjectKey(sub, projectId),
@@ -249,9 +249,9 @@ export const handler = async (
     if (!filename || !contentType || typeof sizeBytes !== 'number') {
       return err(400, 'Missing required fields: filename, contentType, sizeBytes')
     }
-    try { validateAttachment(contentType, sizeBytes) } catch (e) { return err(400, (e as Error).message) }
+    try { validateAttachment(contentType, sizeBytes, filename) } catch (e) { return err(400, (e as Error).message) }
 
-    const fileId = uuidv4()
+    const fileId = newId()
     const safeName = (filename as string).replace(/[/\\]/g, '-').replace(/\0/g, '').replace(/^\.+/, '_')
     const s3Key = `${projectFilePrefix(sub, projectId)}${fileId}/${safeName}`
     const now = new Date().toISOString()

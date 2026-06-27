@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
+import { newId } from '../lib/ids'
 import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
@@ -57,13 +58,16 @@ export const handler = async (
     const model = (body.model as string | undefined) ?? process.env.DEFAULT_MODEL ?? ''
     if (body.model !== undefined && !isValidModelId(model)) return err(400, 'Invalid model')
     const clientId = body.chatId as string | undefined
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    if (clientId !== undefined && !UUID_RE.test(clientId)) return err(400, 'Invalid chatId')
+    // Lowercase-only: chatId becomes the CHAT# sort key, so a client-supplied
+    // id must match newId()'s shape exactly or it breaks ULID sort ordering
+    // for that one record (see lib/ids.ts).
+    const ULID_RE = /^[0-9a-hjkmnp-tv-z]{26}$/
+    if (clientId !== undefined && !ULID_RE.test(clientId)) return err(400, 'Invalid chatId')
     if (clientId) {
       const existing = await getChat(sub, clientId)
       if (existing) return err(409, 'Chat already exists')
     }
-    const chatId = clientId ?? uuidv4()
+    const chatId = clientId ?? newId()
     const now = new Date().toISOString()
     if (body.projectId !== undefined && body.projectId !== null && typeof body.projectId !== 'string') {
       return err(400, 'projectId must be a string')
@@ -101,7 +105,7 @@ export const handler = async (
       return err(400, 'Missing required fields: chatId, filename, contentType, sizeBytes')
     }
     try {
-      validateAttachment(contentType as string, sizeBytes)
+      validateAttachment(contentType as string, sizeBytes, filename as string)
     } catch (e) {
       return err(400, (e as Error).message)
     }
@@ -237,7 +241,7 @@ export const handler = async (
     const path = cloneLeaf ? buildActivePath(rows, cloneLeaf) : []
 
     // Remap rows into the new chat partition with fresh msgIds and responseIds
-    const newChatId = uuidv4()
+    const newChatId = newId()
     const now = new Date().toISOString()
     const idMap = new Map<string, string>()     // old msgId → new msgId
     const respMap = new Map<string, string>()   // old responseId → new responseId

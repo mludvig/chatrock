@@ -11,6 +11,7 @@ import { api } from '../api/http'
 import type { ProjectFile, ProjectMemory } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { useChatActions } from '../lib/useChatActions'
+import { sortByRecent } from '../lib/sort'
 
 export default function ProjectsPanel() {
   const navigate = useNavigate()
@@ -174,7 +175,7 @@ export default function ProjectsPanel() {
         {projects.map(project => {
           const isExpanded = project.projectId === expandedProjectId
           const sections = expandedSections[project.projectId] ?? new Set<'files' | 'memory'>()
-          const projectChats = chats.filter(c => c.projectId === project.projectId)
+          const projectChats = sortByRecent(chats.filter(c => c.projectId === project.projectId))
           const files = loadedFiles[project.projectId] ?? []
           const memories = loadedMemories[project.projectId] ?? []
           const isLoading = loadingData.has(project.projectId)

@@ -1,6 +1,7 @@
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk/client-apigatewaymanagementapi'
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
+import { newId } from '../lib/ids'
 import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
@@ -665,7 +666,7 @@ export const buildHandler = (postFn: PostFn) => async (
       const userOps = reconcileMemoryList(userResult.memories, existingUserMems)
       for (const op of userOps) {
         if (op.op === 'ADD') {
-          const memId = uuidv4()
+          const memId = newId()
           await putUserMemory({ ...buildUserMemKey(sub, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
           totalChanged++
         } else if (op.op === 'UPDATE') {
@@ -699,7 +700,7 @@ export const buildHandler = (postFn: PostFn) => async (
         const projectOps = reconcileMemoryList(projectResult.memories, existingProjectMems)
         for (const op of projectOps) {
           if (op.op === 'ADD') {
-            const memId = uuidv4()
+            const memId = newId()
             await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
             totalChanged++
           } else if (op.op === 'UPDATE') {

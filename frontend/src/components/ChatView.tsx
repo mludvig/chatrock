@@ -5,6 +5,7 @@ import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevro
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults } from '../lib/toolResults'
+import { newId } from '../lib/ids'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
@@ -109,20 +110,49 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     'text/x-markdown': 1 * 1024 * 1024, 'text/csv': 1 * 1024 * 1024,
     'application/octet-stream': 1 * 1024 * 1024,
   }
+  // Browsers report wildly inconsistent (or empty) contentType for text/code files
+  // depending on OS file associations (e.g. .csv as application/vnd.ms-excel on
+  // Windows, .json/.yaml/.py often with no contentType at all) -- extension is the
+  // reliable signal for these, so they're classified by extension instead.
+  const TEXT_EXTENSIONS = new Set([
+    'csv', 'tsv', 'md', 'markdown', 'txt', 'log', 'json', 'jsonl', 'ndjson',
+    'yaml', 'yml', 'xml', 'html', 'htm', 'css', 'scss', 'less',
+    'ini', 'cfg', 'conf', 'toml', 'env', 'properties',
+    'sh', 'bash', 'zsh', 'bat', 'ps1', 'sql', 'py', 'rb', 'php', 'go', 'rs',
+    'js', 'jsx', 'mjs', 'cjs', 'ts', 'tsx', 'java', 'kt', 'kts',
+    'c', 'h', 'cpp', 'cc', 'hpp', 'cs', 'swift', 'lua', 'pl', 'r',
+    'scala', 'dart', 'vue', 'svelte', 'graphql', 'gql', 'proto', 'diff', 'patch',
+    'gitignore', 'dockerfile', 'makefile', 'rst', 'tex',
+  ])
+
+  function extOf(filename: string): string {
+    const m = /\.([a-zA-Z0-9]+)$/.exec(filename)
+    return m ? m[1].toLowerCase() : ''
+  }
 
   function newChatUploadId(): string {
-    if (!pendingNewChatIdRef.current) pendingNewChatIdRef.current = crypto.randomUUID()
+    if (!pendingNewChatIdRef.current) pendingNewChatIdRef.current = newId()
     return pendingNewChatIdRef.current
   }
 
   function addFiles(files: File[]) {
     const currentChatId = chatId && chatId !== 'new' ? chatId : newChatUploadId()
     for (const file of files) {
-      const ct = file.type || 'application/octet-stream'
-      const kind = ALLOWED_TYPES[ct]
+      let ct = file.type || 'application/octet-stream'
+      let kind = ALLOWED_TYPES[ct]
+
       if (!kind) {
-        pushToast({ kind: 'error', text: `File type not supported: ${file.name}` })
-        continue
+        const ext = extOf(file.name)
+        if (TEXT_EXTENSIONS.has(ext) || file.type.startsWith('text/')) {
+          ct = ext === 'csv' || ext === 'tsv' ? 'text/csv' : ext === 'md' || ext === 'markdown' ? 'text/markdown' : 'text/plain'
+          kind = 'document'
+        } else if (confirm(`Chatrock doesn't recognize "${file.name}" as a supported file type. Attach it as plain text anyway?`)) {
+          ct = 'text/plain'
+          kind = 'document'
+        } else {
+          pushToast({ kind: 'error', text: `File type not supported: ${file.name}` })
+          continue
+        }
       }
       const maxBytes = MAX_SIZES[ct] ?? 1 * 1024 * 1024
       if (file.size > maxBytes) {
@@ -735,8 +765,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       pendingScrollTopRef.current = true
 
       try {
-        const newId = pendingNewChatIdRef.current ?? crypto.randomUUID()
-        const res = await api.createChat(model, systemPrompt, newId, draftModelSettings)
+        const newChatId = pendingNewChatIdRef.current ?? newId()
+        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings)
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
         useChatStore.getState().addChat({
@@ -996,7 +1026,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             ref={fileInputRef}
             type="file"
             multiple
-            accept={Object.keys(ALLOWED_TYPES).join(',')}
+            accept={[...Object.keys(ALLOWED_TYPES), ...[...TEXT_EXTENSIONS].map(ext => `.${ext}`)].join(',')}
             style={{ display: 'none' }}
             onChange={e => {
               const files = Array.from(e.target.files ?? [])
@@ -1025,7 +1055,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             onPaste={e => {
               const items = Array.from(e.clipboardData.items)
               const files = items
-                .filter(item => item.kind === 'file' && ALLOWED_TYPES[item.type])
+                .filter(item => item.kind === 'file')
                 .map(item => item.getAsFile())
                 .filter((f): f is File => f !== null)
               if (files.length > 0) {

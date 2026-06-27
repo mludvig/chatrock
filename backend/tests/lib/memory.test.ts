@@ -53,9 +53,9 @@ jest.mock('../../src/lib/dynamo', () => ({
 
 const mockDynamo = dynamoLib as jest.Mocked<typeof dynamoLib>
 
-// ── uuid mock for deterministic memIds ────────────────────────────────────────
-jest.mock('uuid', () => ({
-  v4: jest.fn(() => 'new-mem-id'),
+// ── ids mock for deterministic memIds ─────────────────────────────────────────
+jest.mock('../../src/lib/ids', () => ({
+  newId: jest.fn(() => 'new-mem-id'),
 }))
 
 beforeEach(() => {
