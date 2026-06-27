@@ -1,7 +1,7 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
-import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
@@ -177,6 +177,21 @@ export const handler = async (
         return err(400, 'projectId must be a string or null')
       }
       updatedFields.push('projectId')
+    }
+    if (body.summary !== undefined || body.topics !== undefined) {
+      if (body.summary !== undefined && typeof body.summary !== 'string') {
+        return err(400, 'summary must be a string')
+      }
+      if (body.topics !== undefined && (
+        !Array.isArray(body.topics) || !body.topics.every(t => typeof t === 'string')
+      )) {
+        return err(400, 'topics must be an array of strings')
+      }
+      await updateChatSummary(sub, chatId, {
+        ...(body.summary !== undefined ? { summary: body.summary as string } : {}),
+        ...(body.topics !== undefined ? { topics: body.topics as string[] } : {}),
+      })
+      updatedFields.push(...(body.summary !== undefined ? ['summary'] : []), ...(body.topics !== undefined ? ['topics'] : []))
     }
     console.log(JSON.stringify({ event: 'chat_updated', sub, chatId, fields: updatedFields }))
     return ok({ ok: true })

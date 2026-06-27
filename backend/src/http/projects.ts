@@ -12,6 +12,7 @@ import {
   buildProjectKey,
   listProjectMemories,
   deleteProjectMemory,
+  updateProjectMemory,
   listProjectFiles,
   getProjectFile,
   putProjectFile,
@@ -234,6 +235,33 @@ export const handler = async (
     return { statusCode: 204, body: '' }
   }
 
+  if (route === 'PATCH /api/projects/{projectId}/memory/{memId}') {
+    const memId = event.pathParameters?.memId
+    if (!memId) return err(400, 'Missing memId')
+    const project = await getProject(sub, projectId)
+    if (!project) return err(404, 'Not found')
+
+    let body: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(event.body ?? '{}')
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed as Record<string, unknown>
+    } catch { return err(400, 'Invalid JSON body') }
+
+    if (body.text !== undefined && (typeof body.text !== 'string' || body.text.trim() === '')) {
+      return err(400, 'text cannot be empty')
+    }
+    const validCategories = ['decision', 'convention', 'fact', 'constraint', 'glossary', 'other']
+    if (body.category !== undefined && !validCategories.includes(body.category as string)) {
+      return err(400, `category must be one of: ${validCategories.join(', ')}`)
+    }
+
+    const fields: Partial<{ text: string; category: string }> = {}
+    if (body.text !== undefined) fields.text = (body.text as string).trim()
+    if (body.category !== undefined) fields.category = body.category as string
+    await updateProjectMemory(projectId, memId, fields)
+    return ok({ ok: true })
+  }
+
   // ── File routes ─────────────────────────────────────────────────────────────
 
   if (route === 'POST /api/projects/{projectId}/files') {
@@ -344,12 +372,23 @@ export const handler = async (
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) body = parsed as Record<string, unknown>
     } catch { return err(400, 'Invalid JSON body') }
 
-    const { inclusion } = body
+    const { inclusion, summary, microLabel } = body
     if (inclusion !== undefined && !['auto', 'always', 'never'].includes(inclusion as string)) {
       return err(400, "inclusion must be 'auto', 'always', or 'never'")
     }
-    if (inclusion !== undefined) {
-      await updateProjectFile(projectId, fileId, { inclusion: inclusion as string })
+    if (summary !== undefined && (typeof summary !== 'string' || summary.trim() === '')) {
+      return err(400, 'summary cannot be empty')
+    }
+    if (microLabel !== undefined && (typeof microLabel !== 'string' || microLabel.trim() === '')) {
+      return err(400, 'microLabel cannot be empty')
+    }
+
+    const fields: Partial<{ inclusion: string; summary: string; microLabel: string }> = {}
+    if (inclusion !== undefined) fields.inclusion = inclusion as string
+    if (summary !== undefined) fields.summary = (summary as string).trim()
+    if (microLabel !== undefined) fields.microLabel = (microLabel as string).trim()
+    if (Object.keys(fields).length > 0) {
+      await updateProjectFile(projectId, fileId, fields)
     }
     return ok({ ok: true })
   }

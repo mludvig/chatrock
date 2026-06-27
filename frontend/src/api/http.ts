@@ -232,6 +232,8 @@ export const api = {
     req<void>('PATCH', `/api/chats/${chatId}`, { projectId }),
   listProjectMemory: (projectId: string) =>
     req<{ memories: ProjectMemory[] }>('GET', `/api/projects/${projectId}/memory`),
+  updateProjectMemory: (projectId: string, memId: string, fields: Partial<Pick<ProjectMemory, 'text' | 'category'>>) =>
+    req<{ ok: boolean }>('PATCH', `/api/projects/${projectId}/memory/${memId}`, fields),
   deleteProjectMemory: (projectId: string, memId: string) =>
     req<void>('DELETE', `/api/projects/${projectId}/memory/${memId}`),
   listProjectFiles: (projectId: string) =>
@@ -240,10 +242,12 @@ export const api = {
     req<{ fileId: string; s3Key: string; uploadUrl: string }>('POST', `/api/projects/${projectId}/files`, { filename, contentType, sizeBytes }),
   finalizeProjectFile: (projectId: string, fileId: string) =>
     req<{ file: ProjectFile }>('PUT', `/api/projects/${projectId}/files/${fileId}`),
-  setFileInclusion: (projectId: string, fileId: string, inclusion: 'auto' | 'always' | 'never') =>
-    req<{ ok: boolean }>('PATCH', `/api/projects/${projectId}/files/${fileId}`, { inclusion }),
+  updateProjectFile: (projectId: string, fileId: string, fields: Partial<Pick<ProjectFile, 'inclusion' | 'summary' | 'microLabel'>>) =>
+    req<{ ok: boolean }>('PATCH', `/api/projects/${projectId}/files/${fileId}`, fields),
   deleteProjectFile: (projectId: string, fileId: string) =>
     req<void>('DELETE', `/api/projects/${projectId}/files/${fileId}`),
+  updateChatSummary: (chatId: string, fields: Partial<Pick<Chat, 'summary' | 'topics'>>) =>
+    req<void>('PATCH', `/api/chats/${chatId}`, fields),
 }
 
 export interface UploadRequest {

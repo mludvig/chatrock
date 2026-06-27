@@ -509,6 +509,26 @@ export async function putProjectMemory(item: Record<string, unknown>): Promise<v
   await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
 }
 
+export async function updateProjectMemory(
+  projectId: string,
+  memId: string,
+  fields: Partial<{ text: string; category: string; updatedAt: string }>,
+) {
+  const updates = Object.entries({ ...fields, updatedAt: new Date().toISOString() })
+    .filter(([, v]) => v !== undefined)
+  if (updates.length === 0) return
+  const sets = updates.map(([_k], i) => `#f${i} = :v${i}`)
+  const names = Object.fromEntries(updates.map(([k], i) => [`#f${i}`, k]))
+  const values = Object.fromEntries(updates.map(([, v], i) => [`:v${i}`, v]))
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildProjectMemKey(projectId, memId),
+    UpdateExpression: `SET ${sets.join(', ')}`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+  }))
+}
+
 export async function deleteProjectMemory(projectId: string, memId: string): Promise<void> {
   await ddb.send(new DeleteCommand({
     TableName: TABLE,

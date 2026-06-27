@@ -682,6 +682,57 @@ test('B-null: PATCH modelSettings with null → 400', async () => {
   expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'modelSettings must be a plain object' })
 })
 
+// ── PATCH summary / topics ────────────────────────────────────────────────────
+
+test('PATCH summary+topics → updateChatSummary called with both fields', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.updateChatSummary.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', {
+    summary: 'Edited summary', topics: ['edited topic'],
+  }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'c1', {
+    summary: 'Edited summary', topics: ['edited topic'],
+  })
+})
+
+test('PATCH summary only → updateChatSummary called with summary only', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.updateChatSummary.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', {
+    summary: 'Edited summary',
+  }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'c1', { summary: 'Edited summary' })
+})
+
+test('PATCH topics with non-array → 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', {
+    topics: 'not-an-array',
+  }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
+})
+
+test('PATCH topics with non-string elements → 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', {
+    topics: ['ok', 42],
+  }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
+})
+
+test('PATCH summary with non-string → 400', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', {
+    summary: 42,
+  }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
+})
+
 test('B4: GET /api/chats includes modelSettings when present on chat record', async () => {
   mockDynamo.listChats.mockResolvedValue([
     { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '', modelSettings: { webSearchEnabled: false } },
@@ -689,6 +740,15 @@ test('B4: GET /api/chats includes modelSettings when present on chat record', as
   const res = result(await handler(makeEvent('GET', '/api/chats') as any))
   const body = JSON.parse(res.body ?? '{}')
   expect(body.chats[0].modelSettings).toEqual({ webSearchEnabled: false })
+})
+
+test('GET /api/chats includes topics when present on chat record', async () => {
+  mockDynamo.listChats.mockResolvedValue([
+    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '', createdAt: '', updatedAt: '', topics: ['a', 'b'] },
+  ])
+  const res = result(await handler(makeEvent('GET', '/api/chats') as any))
+  const body = JSON.parse(res.body ?? '{}')
+  expect(body.chats[0].topics).toEqual(['a', 'b'])
 })
 
 test('B5: GET /api/chats omits modelSettings when absent', async () => {
