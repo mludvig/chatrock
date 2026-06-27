@@ -18,3 +18,7 @@ TODO*.md
 .auth/
 playwright-report/
 test-results/
+.agents/
+.claude/settings.local.json
+.claude/skills/
+skills-lock.json
