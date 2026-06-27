@@ -8,7 +8,7 @@ import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, deleteChatObjects, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import { enrichChatForProject } from '../lib/enrichment'
+import { summarizeChatById } from '../lib/enrichment'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -41,6 +41,7 @@ export const handler = async (
       ...(i.modelSettings !== undefined ? { modelSettings: i.modelSettings } : {}),
       ...(i.projectId !== undefined ? { projectId: i.projectId } : {}),
       ...(i.summary !== undefined ? { summary: i.summary } : {}),
+      ...(i.topics !== undefined ? { topics: i.topics } : {}),
     }))
     return ok({ chats })
   }
@@ -171,7 +172,7 @@ export const handler = async (
         const proj = await getProject(sub, body.projectId)
         if (!proj) return err(400, 'Invalid projectId')
         await updateChatProject(sub, chatId, body.projectId)
-        if (!prevProjectId) await enrichChatForProject(sub, chatId)
+        if (!prevProjectId) await summarizeChatById(sub, chatId)
       } else {
         return err(400, 'projectId must be a string or null')
       }

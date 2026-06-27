@@ -34,6 +34,7 @@ export interface Chat {
   modelSettings?: ModelSettings
   projectId?: string
   summary?: string
+  topics?: string[]
 }
 
 export interface Project {

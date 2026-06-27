@@ -25,7 +25,7 @@ import { subFromClaims } from '../lib/auth'
 import { QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { summarizeFile } from '../lib/projectFiles'
 import { validateAttachment, presignPut, projectFilePrefix, deleteProjectObjects, deleteS3Objects } from '../lib/attachments'
-import { enrichChatForProject } from '../lib/enrichment'
+import { summarizeChatById } from '../lib/enrichment'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -108,13 +108,14 @@ export const handler = async (
       ...(c.modelSettings !== undefined ? { modelSettings: c.modelSettings } : {}),
       projectId: c.projectId,
       ...(c.summary !== undefined ? { summary: c.summary } : {}),
+      ...(c.topics !== undefined ? { topics: c.topics } : {}),
     }))
 
-    // Fire-and-forget: enrich any member chats that have no summary yet
+    // Fire-and-forget: summarize any member chats that have no summary yet
     const unsummarized = memberChats.filter(c => c.summary === undefined)
     if (unsummarized.length > 0) {
       void Promise.allSettled(
-        unsummarized.map(c => enrichChatForProject(sub, (c.SK as string).replace('CHAT#', '')))
+        unsummarized.map(c => summarizeChatById(sub, (c.SK as string).replace('CHAT#', '')))
       )
     }
 

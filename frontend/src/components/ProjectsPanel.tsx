@@ -255,7 +255,7 @@ export default function ProjectsPanel() {
                         key={chat.chatId}
                         className={`project-chat-item${chat.chatId === activeChatId ? ' active' : ''}`}
                         onClick={() => navigate(`/c/${chat.chatId}`)}
-                        title={chat.title}
+                        title={[chat.title, chat.summary, chat.topics?.join(', ')].filter(Boolean).join(' — ')}
                       >
                         {editingId === chat.chatId ? (
                           <input
