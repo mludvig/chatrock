@@ -9,6 +9,7 @@ export interface UserPreferences {
   browserCoreEnabled?: boolean        // false = disable take_screenshot/get_rendered_page
   browserExtendedEnabled?: boolean    // true = enable the scripted browse_web tool
   memoryEnabled?: boolean             // false = skip user memory injection + extraction
+  searchEnabled?: boolean             // false = omit the search_history tool from organic tool choice
   temperature?: number
   topP?: number
   topK?: number

@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
-import { parseSearchResults, parseFindResults } from '../lib/toolResults'
+import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
@@ -204,7 +204,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             return {
               ...step,
               searchResults: parseSearchResults(step.name, step.result, step.isError),
-              findResults: parseFindResults(step.name, step.result, step.isError),
+              searchHistoryResults: parseSearchHistoryResults(step.name, step.result, step.isError),
             }
           }),
         }
@@ -219,16 +219,16 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (isNew && defaultModel && !newModel) setNewModel(defaultModel)
   }, [defaultModel, isNew, newModel])
 
-  // A Find submitted from the global header (App.tsx) lands here as a single-use pendingFind —
+  // A Search submitted from the global header (App.tsx) lands here as a single-use pendingSearch —
   // fire the same new-chat-send flow handleSend() uses for a normal first message, but with the
-  // typed query as content and find:{scope} threaded through so the backend forces the
+  // typed query as content and search:{scope} threaded through so the backend forces the
   // search_history tool. Cleared synchronously (before the async send) so a StrictMode
   // double-invoke of this effect can't fire it twice.
   useEffect(() => {
     if (!isNew) return
-    const pf = useChatStore.getState().pendingFind
+    const pf = useChatStore.getState().pendingSearch
     if (!pf) return
-    useChatStore.getState().setPendingFind(null)
+    useChatStore.getState().setPendingSearch(null)
     void handleSend(pf.query, { scope: pf.scope }, pf.projectId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew])
@@ -422,7 +422,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             return {
               ...step,
               searchResults: parseSearchResults(step.name, step.result, step.isError),
-              findResults: parseFindResults(step.name, step.result, step.isError),
+              searchHistoryResults: parseSearchHistoryResults(step.name, step.result, step.isError),
             }
           }),
         }
@@ -721,9 +721,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     cancelMessage()
   }
 
-  // overrideContent/find/projectIdOverride are set only by the pendingFind mount effect below —
-  // a normal send from the composer passes none of them and reads from `input` as before.
-  async function handleSend(overrideContent?: string, find?: { scope: 'project' | 'global' }, projectIdOverride?: string) {
+  // overrideContent/search/projectIdOverride are set only by the pendingSearch mount effect
+  // below — a normal send from the composer passes none of them and reads from `input` as before.
+  async function handleSend(overrideContent?: string, search?: { scope: 'project' | 'global' }, projectIdOverride?: string) {
     const content = (overrideContent ?? input).trim()
     const readyAttachments = attachments.filter(a => a.status === 'ready')
     if ((!content && readyAttachments.length === 0) || sending || creatingChat) return
@@ -800,7 +800,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         await ensureConnected(accessToken)
         sendMessage({
           chatId: res.chatId, content, model, systemPrompt, modelSettings: draftModelSettings, attachments: attachmentsPayload,
-          ...(find ? { find } : {}),
+          ...(search ? { search } : {}),
         })
         armAckWatchdog()
         navigate(`/c/${res.chatId}`, { replace: true })

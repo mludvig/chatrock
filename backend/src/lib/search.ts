@@ -6,7 +6,7 @@ import { listChats, listProjectFiles, listProjects } from './dynamo'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface FindCorpusItem {
+export interface SearchHistoryCorpusItem {
   kind: 'chat' | 'file'
   id: string                 // chatId or fileId
   title: string              // chat title or filename
@@ -15,7 +15,7 @@ export interface FindCorpusItem {
   projectId?: string         // link target: file's project, or chat's project
 }
 
-export interface FindResult {
+export interface SearchHistoryResult {
   kind: 'chat' | 'file'
   id: string
   title: string
@@ -26,9 +26,9 @@ export interface FindResult {
 // Bound the corpus handed to the model — same purpose as sendMessage.ts's manifest caps
 // (FILE_MANIFEST_CAP/CHAT_MANIFEST_CAP). Corpus is assumed pre-ordered most-recent-first
 // (ULID desc / sortByRecent), so slicing keeps the most recent items.
-export const FIND_CORPUS_CAP = 200
+export const SEARCH_HISTORY_CORPUS_CAP = 200
 
-const FIND_SYSTEM_PROMPT = `You are a retrieval ranker over the user's own past chats and project files.
+const SEARCH_HISTORY_SYSTEM_PROMPT = `You are a retrieval ranker over the user's own past chats and project files.
 
 You receive a search query and a corpus of items, one per line, formatted as:
 [<kind>:<id>] <title> :: <topics, comma-separated> :: <summary>
@@ -42,13 +42,13 @@ Rules:
 - Copy the "id" token exactly as shown in brackets, including the kind prefix.
 - If nothing matches: return { "results": [] }.`
 
-function corpusLine(item: FindCorpusItem): string {
+function corpusLine(item: SearchHistoryCorpusItem): string {
   const topics = (item.topics ?? []).join(', ')
   const summary = item.summary.slice(0, 300)
   return `[${item.kind}:${item.id}] ${item.title} :: ${topics} :: ${summary}`
 }
 
-interface RawFindResult {
+interface RawSearchHistoryResult {
   id?: unknown
   reason?: unknown
 }
@@ -58,15 +58,15 @@ interface RawFindResult {
  * Never throws — returns [] on any failure (empty corpus, blank query, parse failure, or
  * a Bedrock error), the same defensive shape as enrichUserFacts/summarizeChat.
  */
-export async function findContext(
-  corpus: FindCorpusItem[],
+export async function searchHistory(
+  corpus: SearchHistoryCorpusItem[],
   query: string,
   opts?: { chatId?: string; scope?: 'project' | 'global' },
-): Promise<FindResult[]> {
+): Promise<SearchHistoryResult[]> {
   if (corpus.length === 0) return []
   if (!query.trim()) return []
 
-  const kept = corpus.length > FIND_CORPUS_CAP ? corpus.slice(0, FIND_CORPUS_CAP) : corpus
+  const kept = corpus.length > SEARCH_HISTORY_CORPUS_CAP ? corpus.slice(0, SEARCH_HISTORY_CORPUS_CAP) : corpus
   if (kept.length < corpus.length) {
     console.log(JSON.stringify({
       event: 'search_history_truncated', total: corpus.length, kept: kept.length, scope: opts?.scope, chatId: opts?.chatId,
@@ -84,19 +84,19 @@ export async function findContext(
 
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
-      FIND_SYSTEM_PROMPT,
+      SEARCH_HISTORY_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ text: userMsg }] }],
       { maxTokens: 1024 },
     )
 
     const obj = safeParse(response)
     if (!obj) {
-      console.error(JSON.stringify({ event: 'find_parse_error', chatId: opts?.chatId, response: response?.slice(0, 500) }))
+      console.error(JSON.stringify({ event: 'search_history_parse_error', chatId: opts?.chatId, response: response?.slice(0, 500) }))
       return []
     }
 
-    const rawResults = Array.isArray(obj.results) ? (obj.results as RawFindResult[]) : []
-    const results: FindResult[] = []
+    const rawResults = Array.isArray(obj.results) ? (obj.results as RawSearchHistoryResult[]) : []
+    const results: SearchHistoryResult[] = []
     for (const r of rawResults) {
       if (typeof r.id !== 'string') continue
       const item = byToken.get(r.id)
@@ -111,31 +111,31 @@ export async function findContext(
     }
     return results
   } catch (err) {
-    console.error(JSON.stringify({ event: 'find_error', chatId: opts?.chatId, error: String(err) }))
+    console.error(JSON.stringify({ event: 'search_history_error', chatId: opts?.chatId, error: String(err) }))
     return []
   }
 }
 
 // ── search_history tool executor ──────────────────────────────────────────────
 //
-// Co-located with findContext (rather than tools.ts/projectContext.ts) since this is the
+// Co-located with searchHistory() (rather than tools.ts/projectContext.ts) since this is the
 // "retrieval seam" the north-star context-assembly layer grows from — ranking and corpus
 // assembly belong together. The Tool *spec* (name/description/inputSchema) lives in tools.ts,
 // matching the existing split (e.g. MEMORY_TOOL spec in tools.ts, executeMemoryTool in memory.ts).
 
-// Cross-project file sweep for global scope is capped — same purpose as FIND_CORPUS_CAP, just
-// bounding the number of listProjectFiles calls rather than the corpus size itself.
-const FIND_PROJECT_SWEEP_CAP = 20
+// Cross-project file sweep for global scope is capped — same purpose as SEARCH_HISTORY_CORPUS_CAP,
+// just bounding the number of listProjectFiles calls rather than the corpus size itself.
+const SEARCH_HISTORY_PROJECT_SWEEP_CAP = 20
 
 export interface SearchHistoryContext {
   sub: string
   projectId?: string
   chatId?: string
-  // Set only for a forced/explicit Find turn (see ws/sendMessage.ts) — when present, this is
+  // Set only for a forced/explicit Search turn (see ws/sendMessage.ts) — when present, this is
   // authoritative and model-supplied `input.scope` is ignored. Organic mid-conversation calls
   // leave this undefined and the model's own `scope` choice (still bounded: 'project' always
   // resolves to ctx.projectId, never a model-supplied project id) is used instead.
-  findScope?: 'project' | 'global'
+  searchScope?: 'project' | 'global'
 }
 
 function chatIdFromRow(row: Record<string, unknown>): string {
@@ -146,7 +146,7 @@ function projectIdFromRow(row: Record<string, unknown>): string {
   return (row.SK as string).replace('PROJECT#', '')
 }
 
-async function chatCorpusItems(sub: string, filterProjectId?: string): Promise<FindCorpusItem[]> {
+async function chatCorpusItems(sub: string, filterProjectId?: string): Promise<SearchHistoryCorpusItem[]> {
   const rows = await listChats(sub)
   return rows
     .filter(r => (filterProjectId ? r.projectId === filterProjectId : true))
@@ -161,7 +161,7 @@ async function chatCorpusItems(sub: string, filterProjectId?: string): Promise<F
     }))
 }
 
-async function fileCorpusItemsForProject(projectId: string): Promise<FindCorpusItem[]> {
+async function fileCorpusItemsForProject(projectId: string): Promise<SearchHistoryCorpusItem[]> {
   const rows = await listProjectFiles(projectId)
   return rows
     .filter(r => r.status === 'ready' && (r.summary || r.microLabel))
@@ -179,13 +179,13 @@ async function fileCorpusItemsForProject(projectId: string): Promise<FindCorpusI
 /**
  * Builds the search_history corpus for one scope. 'project' covers chats + files of exactly
  * ctx.projectId. 'global' covers all of the user's chats plus a capped sweep of their projects'
- * files. Exported for direct unit testing alongside findContext.
+ * files. Exported for direct unit testing alongside searchHistory().
  */
-export async function buildFindCorpus(
+export async function buildSearchHistoryCorpus(
   sub: string,
   scope: 'project' | 'global',
   projectId?: string,
-): Promise<FindCorpusItem[]> {
+): Promise<SearchHistoryCorpusItem[]> {
   if (scope === 'project' && projectId) {
     const [chats, files] = await Promise.all([
       chatCorpusItems(sub, projectId),
@@ -195,7 +195,7 @@ export async function buildFindCorpus(
   }
 
   const [chats, projectRows] = await Promise.all([chatCorpusItems(sub), listProjects(sub)])
-  const sweepProjects = projectRows.slice(0, FIND_PROJECT_SWEEP_CAP)
+  const sweepProjects = projectRows.slice(0, SEARCH_HISTORY_PROJECT_SWEEP_CAP)
   const fileLists = await Promise.all(
     sweepProjects.map(p => fileCorpusItemsForProject(projectIdFromRow(p))),
   )
@@ -203,7 +203,7 @@ export async function buildFindCorpus(
 }
 
 /**
- * The search_history tool executor. Builds the scoped corpus, ranks it via findContext, and
+ * The search_history tool executor. Builds the scoped corpus, ranks it via searchHistory(), and
  * returns a {results,text} JSON envelope — the same {result(s),text} shape web_search/web_fetch
  * already use, so the model can both render cards (results) and talk about what it found (text).
  */
@@ -217,10 +217,10 @@ export async function executeSearchHistoryTool(
   }
 
   const requestedScope = input.scope === 'project' || input.scope === 'global' ? input.scope : undefined
-  const scope: 'project' | 'global' = ctx.findScope ?? requestedScope ?? (ctx.projectId ? 'project' : 'global')
+  const scope: 'project' | 'global' = ctx.searchScope ?? requestedScope ?? (ctx.projectId ? 'project' : 'global')
 
-  const corpus = await buildFindCorpus(ctx.sub, scope, ctx.projectId)
-  const results = await findContext(corpus, query, { scope, chatId: ctx.chatId })
+  const corpus = await buildSearchHistoryCorpus(ctx.sub, scope, ctx.projectId)
+  const results = await searchHistory(corpus, query, { scope, chatId: ctx.chatId })
 
   console.log(JSON.stringify({ event: 'search_history', scope, corpusSize: corpus.length, resultCount: results.length, chatId: ctx.chatId }))
 

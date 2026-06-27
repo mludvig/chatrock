@@ -52,7 +52,7 @@ import {
 import type { Message, Step, TokenUsage } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import type { StreamingMsg } from '../store/chatStore'
-import type { SearchResult, FindResult } from '../lib/toolResults'
+import type { SearchResult, SearchHistoryResult } from '../lib/toolResults'
 
 // ── URL sanitizer — blocks javascript: and data: URIs ────────────────────────
 
@@ -131,10 +131,11 @@ function SearchResultCard({ r, index }: { r: SearchResult; index: number }) {
   )
 }
 
-// Find result card — internal navigation (chat → /c/:id, file → its project at /p/:projectId,
-// since there's no standalone file route). A file result with no projectId (shouldn't happen
-// in practice — every file belongs to a project) renders inert rather than a dead link.
-function FindResultCard({ r }: { r: FindResult }) {
+// Search-history result card — internal navigation (chat → /c/:id, file → its project at
+// /p/:projectId, since there's no standalone file route). A file result with no projectId
+// (shouldn't happen in practice — every file belongs to a project) renders inert rather than a
+// dead link.
+function SearchHistoryResultCard({ r }: { r: SearchHistoryResult }) {
   const to = r.kind === 'chat' ? `/c/${r.id}` : (r.projectId ? `/p/${r.projectId}` : undefined)
   const body = (
     <span className="src-body">
@@ -145,14 +146,14 @@ function FindResultCard({ r }: { r: FindResult }) {
   const icon = r.kind === 'chat' ? faComments : faFile
   if (!to) {
     return (
-      <span className="search-result-card find-result-card disabled">
+      <span className="search-result-card search-history-result-card disabled">
         <FontAwesomeIcon icon={icon} className="src-index" />
         {body}
       </span>
     )
   }
   return (
-    <Link className="search-result-card find-result-card" to={to}>
+    <Link className="search-result-card search-history-result-card" to={to}>
       <FontAwesomeIcon icon={icon} className="src-index" />
       {body}
     </Link>
@@ -166,11 +167,11 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
   const { projectFilesById, chats } = useChatStore()
   const pending = step.result === undefined
   const hasResults = !!step.searchResults?.length
-  const hasFindResults = !!step.findResults?.length
+  const hasSearchHistoryResults = !!step.searchHistoryResults?.length
   const hasScreenshots = !!step.screenshotUrls?.length
   const icon = pending ? faSpinner : step.isError ? faCircleXmark : faCircleCheck
   const label = step.name === 'search_history'
-    ? `Find: ${safeInput(step.input, 'query')}`
+    ? `Search history: ${safeInput(step.input, 'query')}`
     : step.name === 'web_search'
     ? `Search: ${safeInput(step.input, 'query')}`
     : step.name === 'web_fetch'
@@ -220,10 +221,10 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
               ))}
             </div>
           )}
-          {hasFindResults ? (
+          {hasSearchHistoryResults ? (
             <div className="search-results">
-              {step.findResults!.map((r: FindResult) => (
-                <FindResultCard key={`${r.kind}:${r.id}`} r={r} />
+              {step.searchHistoryResults!.map((r: SearchHistoryResult) => (
+                <SearchHistoryResultCard key={`${r.kind}:${r.id}`} r={r} />
               ))}
             </div>
           ) : hasResults ? (

@@ -20,7 +20,7 @@ export interface ModelSettings {
   browserCoreEnabled?: boolean                      // false disables take_screenshot/get_rendered_page
   browserExtendedEnabled?: boolean                  // true enables the scripted browse_web tool
   memoryEnabled?: boolean                           // false skips injection + extraction
-  findEnabled?: boolean                             // false omits the search_history tool
+  searchEnabled?: boolean                           // false omits the search_history tool from organic tool choice
   answerLength?: 'default' | 'short' | 'extensive' // per-chat answer-length override
   injectCurrentDate?: boolean                       // true = prepend timestamp block to user turns
 }

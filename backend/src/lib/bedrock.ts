@@ -101,10 +101,10 @@ function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[]
   if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
   if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
   if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
-  // ctx.findScope is set only for a forced/explicit Find turn (ws/sendMessage.ts) — force the
-  // tool into the list even if findEnabled:false, since Bedrock's toolChoice requires the named
-  // tool to be present in `tools`.
-  if (settings.findEnabled !== false || ctx?.findScope) list.push(SEARCH_HISTORY_TOOL)
+  // ctx.searchScope is set only for a forced/explicit Search turn (ws/sendMessage.ts) — force
+  // the tool into the list even if searchEnabled:false, since Bedrock's toolChoice requires the
+  // named tool to be present in `tools`.
+  if (settings.searchEnabled !== false || ctx?.searchScope) list.push(SEARCH_HISTORY_TOOL)
   if (list.length === 0) return []
   return [...list, CACHE_POINT_TOOL]
 }
@@ -411,10 +411,10 @@ export async function* converseStream(
   settings: ModelSettings = {},
   ctx?: ToolContext,
   abortSignal?: AbortSignal,
-  // Set only for a forced/explicit Find turn (ws/sendMessage.ts) — forces Bedrock toolChoice to
+  // Set only for a forced/explicit Search turn (ws/sendMessage.ts) — forces Bedrock toolChoice to
   // this tool name on the FIRST round only (subsequent rounds, if any, are auto-choice as
-  // normal). The named tool must already be in `tools` (ctx.findScope makes buildToolsWithCache
-  // include SEARCH_HISTORY_TOOL even when findEnabled:false) or Bedrock rejects the request.
+  // normal). The named tool must already be in `tools` (ctx.searchScope makes buildToolsWithCache
+  // include SEARCH_HISTORY_TOOL even when searchEnabled:false) or Bedrock rejects the request.
   forceToolName?: string,
 ): AsyncGenerator<StreamChunk> {
   let tools = buildToolsWithCache(settings, ctx)

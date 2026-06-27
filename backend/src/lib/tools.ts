@@ -1,7 +1,7 @@
 import type { Tool, ToolResultBlock, ToolResultContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
-import { executeSearchHistoryTool } from './find'
+import { executeSearchHistoryTool } from './search'
 import { callGatewayTool } from './agentcore/gateway'
 import type { BrowserStep } from './agentcore/browser'
 
@@ -12,9 +12,9 @@ export interface ToolContext {
   projectId?: string
   chatId?: string
   webSearchProvider?: 'jina' | 'agentcore'
-  // Set only for a forced/explicit Find turn (ws/sendMessage.ts) — see SearchHistoryContext
-  // in lib/find.ts for why this overrides any model-supplied scope on that turn.
-  findScope?: 'project' | 'global'
+  // Set only for a forced/explicit Search turn (ws/sendMessage.ts) — see SearchHistoryContext
+  // in lib/search.ts for why this overrides any model-supplied scope on that turn.
+  searchScope?: 'project' | 'global'
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -298,12 +298,13 @@ export const READ_PROJECT_CHAT_TOOL: Tool = {
   },
 }
 
-// ── Find tool spec ─────────────────────────────────────────────────────────────
+// ── Search history tool spec ─────────────────────────────────────────────────────
 //
-// Model-facing name is deliberately descriptive (not the terse "find") — a vague name gives the
-// model little to anchor invocation decisions on. User-facing feature/UI is still called "Find";
-// only this tool name differs. Executor (executeSearchHistoryTool) + corpus assembly live in
-// lib/find.ts, co-located with the ranking call — see the "retrieval seam" framing there.
+// Model-facing name is deliberately descriptive (not a terse "find"/"search") — a vague name
+// gives the model little to anchor invocation decisions on, and "search" alone would collide
+// with web_search above. User-facing feature/UI is "Search"; this tool name spells out exactly
+// what's searched. Executor (executeSearchHistoryTool) + corpus assembly live in lib/search.ts,
+// co-located with the ranking call — see the "retrieval seam" framing there.
 export const SEARCH_HISTORY_TOOL: Tool = {
   toolSpec: {
     name: 'search_history',
@@ -347,7 +348,7 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
       return await executeProjectReadChatTool(input as Record<string, string>, ctx)
     }
     if (name === 'search_history') {
-      return await executeSearchHistoryTool(input, { sub: ctx.sub, projectId: ctx.projectId, chatId: ctx.chatId, findScope: ctx.findScope })
+      return await executeSearchHistoryTool(input, { sub: ctx.sub, projectId: ctx.projectId, chatId: ctx.chatId, searchScope: ctx.searchScope })
     }
     if (name === 'web_search') {
       const provider = ctx.webSearchProvider === 'agentcore' ? 'agentcore' : 'jina'

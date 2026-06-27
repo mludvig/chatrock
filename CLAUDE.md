@@ -113,7 +113,7 @@ Key helpers in `backend/src/lib/tree.ts`:
 `batchPutMessages`/`batchDeleteMessages` (fork-copy, subtree-delete) retry `BatchWriteCommand`'s `UnprocessedItems` (not atomic by default) and throw if items remain unprocessed after retries, rather than silently leaving a partial result.
 
 **WS payload contract** (`ws/sendMessage.ts` / `api/ws.ts`):
-- Normal send: `{ chatId, content, model, systemPrompt, modelSettings, find? }` — persists user turn at current leaf, streams answer. `find: { scope: 'project'|'global' }` is set only by the explicit Find entry point (see "Find" below) — it forces the `search_history` tool on this turn instead of leaving tool choice to the model.
+- Normal send: `{ chatId, content, model, systemPrompt, modelSettings, search? }` — persists user turn at current leaf, streams answer. `search: { scope: 'project'|'global' }` is set only by the explicit Search entry point (see "Search history" below) — it forces the `search_history` tool on this turn instead of leaving tool choice to the model.
 - Re-run: `{ chatId, parentId, model, systemPrompt, modelSettings }` — no `content`; streams new sibling answer under `parentId`
 - Edit: `{ chatId, parentId, content, model, systemPrompt, modelSettings }` — persists new user sibling under `parentId`, streams answer
 
@@ -127,8 +127,8 @@ backend/src/
   lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8); coalesceMessages + healDanglingToolUse sanitize replayed history before every call
   lib/blocks.ts           — block-level helpers: capToolResultText (byte-accurate, default 30 KB cap, accepts a custom budget); TOOL_RESULTS_ROUND_CAP (300 KB aggregate per round)
   lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, putMessagePair (TransactWriteCommand, atomic 2-item write), batchPutMessages/batchDeleteMessages (retry UnprocessedItems), setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
-  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, BROWSER_TOOL, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, SEARCH_HISTORY_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider; search_history dispatches to lib/find.ts); ToolContext type (incl. findScope)
-  lib/find.ts             — the "Find" retrieval seam (see "Find" below): findContext() ranks a corpus of chat/file summaries against a query (Haiku, JSON); buildFindCorpus() assembles that corpus (project- or global-scoped, chats + project files); executeSearchHistoryTool() is the search_history tool executor
+  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, BROWSER_TOOL, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, SEARCH_HISTORY_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider; search_history dispatches to lib/search.ts); ToolContext type (incl. searchScope)
+  lib/search.ts           — the "Search" retrieval seam (see "Search history" below): searchHistory() ranks a corpus of chat/file summaries against a query (Haiku, JSON); buildSearchHistoryCorpus() assembles that corpus (project- or global-scoped, chats + project files); executeSearchHistoryTool() is the search_history tool executor
   lib/agentcore/gateway.ts — minimal SigV4-signed MCP client for AgentCore Gateway targets (callGatewayTool); backs agentcoreSearch today, a generic seam for future AgentCore primitives (e.g. Code Interpreter)
   lib/agentcore/browser.ts — AgentCore Browser session executor (runBrowserSteps): StartBrowserSession -> SigV4-signed CDP WebSocket -> drives an embedded `@playwright/mcp` server -> StopBrowserSession, one session per call, no state held across agentic rounds; backs take_screenshot/get_rendered_page/browse_web — see "Browser tools" below
   lib/tree.ts             — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf, mostRecentLeaf, resolveSafeLeaf
@@ -188,10 +188,10 @@ frontend/src/
   api/http.ts             — REST client; types: Model/ModelCapabilities/ModelSettings/UserPreferences/UserMemory/Project/ProjectMemory/ProjectFile; migrateSettings(); requestUpload/uploadToS3; project + file API methods
   api/ws.ts               — WebSocket client (connect/send/cancelMessage/event routing); routes 'warning' frame → error toast
   store/chatStore.ts      — Zustand store; persists lastModel, sidebarWidth, activePanel, userPreferences; projects[] slice
-  lib/toolResults.ts      — shared helpers: parses web_search JSON into SearchResult[], and search_history JSON into FindResult[], for cards
+  lib/toolResults.ts      — shared helpers: parses web_search JSON into SearchResult[], and search_history JSON into SearchHistoryResult[], for cards
   lib/useAsyncAction.ts   — hook: wraps async fn → {run, pending}; errors auto-push to toast store
   components/
-    App.tsx                — root layout: global header (brand + Find box + new-chat btn), ActivityBar, Sidebar, ChatView; routes /p/:projectId → ProjectView
+    App.tsx                — root layout: global header (brand + Search box + new-chat btn), ActivityBar, Sidebar, ChatView; routes /p/:projectId → ProjectView
     ActivityBar.tsx        — 48 px icon rail; four panel-switch buttons (Chats/Projects/Memory/Preferences) + sign-out
     Sidebar.tsx            — thin container; renders ChatsPanel | ProjectsPanel | MemoryPanel | PreferencesPanel per activePanel
     ChatsPanel.tsx         — chat list: navigate, rename, delete, AI retitle; per-item project chip + move-to-project dropdown
@@ -210,7 +210,7 @@ React Router v6: `/` → `/c/new`, `/c/:chatId` for chats, `/p/:projectId` for p
 
 Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `sidebarWidth`, `activePanel`, `userPreferences`. Everything else is ephemeral.
 
-`ModelSettings.webSearchEnabled` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.webSearchProvider` (`'jina' | 'agentcore'`, default `jina`) selects which backend powers the `web_search` tool — see "Web search providers" below. `ModelSettings.browserCoreEnabled` (default `true`) gates `take_screenshot`/`get_rendered_page`; `ModelSettings.browserExtendedEnabled` (default `false`) gates the scripted `browse_web` tool — see "Browser tools" below. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. `ModelSettings.findEnabled` defaults to `true`; when `false`, the `search_history` tool is omitted from organic tool choice — but the explicit Find entry point still forces it in, since that path is independent of model choice — see "Find" below. Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in DynamoDB and surfaced in the bubble metadata line.
+`ModelSettings.webSearchEnabled` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.webSearchProvider` (`'jina' | 'agentcore'`, default `jina`) selects which backend powers the `web_search` tool — see "Web search providers" below. `ModelSettings.browserCoreEnabled` (default `true`) gates `take_screenshot`/`get_rendered_page`; `ModelSettings.browserExtendedEnabled` (default `false`) gates the scripted `browse_web` tool — see "Browser tools" below. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. `ModelSettings.searchEnabled` defaults to `true`; when `false`, the `search_history` tool is omitted from organic tool choice — but the explicit Search entry point still forces it in, since that path is independent of model choice — see "Search history" below. Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in DynamoDB and surfaced in the bubble metadata line.
 
 ### Frontend env vars
 
@@ -276,50 +276,60 @@ self-correcting: if the model calls a `browse_web` step name (e.g. `browser_take
 if it were its own tool, the error explicitly says to nest it inside `browse_web`'s `steps` array
 or use `take_screenshot`/`get_rendered_page` instead, rather than a bare "unknown tool".
 
-### Find
+### Search history
 
-A deliberate **retrieval seam**, not a one-off search feature: today it's an LLM ranking stored
-summaries; the same `search_history` tool / `findContext()` interface is where a future hybrid
-retriever (vectors + memories + project files + web history) plugs in without changing the tool
-contract or the frontend surface.
+The user-facing feature is called **"Search"** (header search box) — it searches across past
+chats and project files, distinct from "Web search" above. Every identifier in this feature —
+tool name, `ModelSettings` flag, log events, file name — uses the literal words `search`/
+`search_history`, never "find", so the vocabulary stays one consistent thing for a model (or a
+future coding agent) to reason about. A deliberate **retrieval seam**, not a one-off feature:
+today it's an LLM ranking stored summaries; the same `search_history` tool / `searchHistory()`
+interface is where a future hybrid retriever (vectors + memories + project files + web history)
+plugs in without changing the tool contract or the frontend surface.
 
-- **`search_history` tool** (`lib/tools.ts` `SEARCH_HISTORY_TOOL` spec, `lib/find.ts`
+- **`search_history` tool** (`lib/tools.ts` `SEARCH_HISTORY_TOOL` spec, `lib/search.ts`
   `executeSearchHistoryTool`): input `{ query, scope?: 'project'|'global' }`. The model can pick
   `scope` itself for organic mid-conversation retrieval ("did we discuss X before?") — bounded to
   the user's own data either way: `'project'` always resolves to `ctx.projectId` (never a
   model-supplied project id), `'global'` is all of *this user's* chats. Gated by
-  `ModelSettings.findEnabled` (default `true`) the same way every other tool is gated in
-  `buildToolsWithCache`.
-- **Corpus** (`buildFindCorpus(sub, scope, projectId?)`): chats (any with a non-empty `summary`)
-  plus, for `'project'` scope, that project's ready files (`summary`/`microLabel`); for `'global'`
-  scope, a capped sweep (`FIND_PROJECT_SWEEP_CAP`=20 projects) of all the user's projects' files.
-  Capped overall at `FIND_CORPUS_CAP`=200 items (logs `search_history_truncated`), mirroring the
-  `manifest_truncated` pattern in `sendMessage.ts`.
-- **Ranking** (`findContext(corpus, query)`): one Haiku call returning
+  `ModelSettings.searchEnabled` (default `true`) the same way every other tool is gated in
+  `buildToolsWithCache`, and surfaced as a "Search history" toggle in `ModelSettingsPanel.tsx`
+  (mirroring the `memoryEnabled`/"Memory" toggle) — threaded through the same
+  user→project→chat `resolvePreferences()` layering as every other per-chat tool flag.
+- **Corpus** (`buildSearchHistoryCorpus(sub, scope, projectId?)`): chats (any with a non-empty
+  `summary`) plus, for `'project'` scope, that project's ready files (`summary`/`microLabel`); for
+  `'global'` scope, a capped sweep (`SEARCH_HISTORY_PROJECT_SWEEP_CAP`=20 projects) of all the
+  user's projects' files. Capped overall at `SEARCH_HISTORY_CORPUS_CAP`=200 items (logs
+  `search_history_truncated`), mirroring the `manifest_truncated` pattern in `sendMessage.ts`.
+- **Ranking** (`searchHistory(corpus, query)`): one Haiku call returning
   `{"results":[{"id":"<kind>:<id>","reason":"..."}]}` — an **object wrapper, not a bare array**
   (reuses `enrichment.ts`'s exported `safeParse`, which rejects non-objects including arrays, so
   the prompt contract is deliberately shaped around that). Hallucinated ids not present in the
   corpus are dropped; model order is preserved as the ranking. Result envelope from the tool is
-  `{results, text}` — same shape `web_search` uses — so `lib/toolResults.ts`'s `parseFindResults`
-  feeds `FindResult[]` cards exactly like `parseSearchResults` does for web search.
-- **Explicit Find entry point** (header search box, `App.tsx`): not a REST call — it creates a
+  `{results, text}` — same shape `web_search` uses — so `lib/toolResults.ts`'s
+  `parseSearchHistoryResults` feeds `SearchHistoryResult[]` cards exactly like
+  `parseSearchResults` does for web search.
+- **Explicit Search entry point** (header search box, `App.tsx`): not a REST call — it creates a
   **new chat** (carrying `projectId` when scoped to a project) and issues the *first* WS send with
-  `find: { scope }` set (see WS payload contract above). `sendMessage.ts` threads this into
-  `ToolContext.findScope` (authoritative — never re-derived from the model) and into
+  `search: { scope }` set (see WS payload contract above). `sendMessage.ts` threads this into
+  `ToolContext.searchScope` (authoritative — never re-derived from the model) and into
   `converseStream`'s `forceToolName` param, which sets Bedrock `toolChoice: { tool: { name:
   'search_history' } }` on round 0 only — round 1+ (the model narrating/using the result) is free
   choice again. Forcing `toolChoice` requires thinking to be off for that round (Bedrock rejects
   the two together), so `converseStream` overrides `thinkingEffort: 'off'` only for the forced
-  round. After this first turn the chat is a perfectly normal chat; no "find-chat" kind is
+  round. After this first turn the chat is a perfectly normal chat; no special chat kind is
   persisted — it's just a chat whose first turn happened to call `search_history`. The frontend
-  passes the query/scope through `chatStore`'s single-use `pendingFind` field, consumed by
+  passes the query/scope through `chatStore`'s single-use `pendingSearch` field, consumed by
   `ChatView`'s `/c/new` mount effect.
-- **Cards** (`MessageBubble.tsx` `FindResultCard`): internal navigation, not external links — a
-  chat result links to `/c/:chatId`, a file result links to its project at `/p/:projectId` (no
-  standalone file route exists).
-- Tool name is deliberately `search_history`, not `find` — a terse name reads like shell/file
-  `find` to the model and gives it little to anchor invocation decisions on. The user-facing
-  feature is still called "Find"; only the model-facing tool name differs.
+- **Cards** (`MessageBubble.tsx` `SearchHistoryResultCard`): internal navigation, not external
+  links — a chat result links to `/c/:chatId`, a file result links to its project at
+  `/p/:projectId` (no standalone file route exists). Tool-call pill label is "Search history: …",
+  not bare "Search: …", so it's never confused with a `web_search` pill in the same transcript.
+- Tool name is deliberately `search_history`, not a bare `search` — a bare name would collide
+  with the pre-existing `web_search` tool's vocabulary and give the model nothing to distinguish
+  the two by. "History" is the qualifier used everywhere this ambiguity could arise (the pill
+  label, the corpus/cap constant names); elsewhere ("Search" the feature, `searchEnabled`, the
+  `search` WS field) plain "search" is unambiguous from context.
 
 ### Memory
 
@@ -391,8 +401,8 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout 
 | `memory_tool` | `memory.ts` per call | op (remember/update/forget), scope (user/project), result |
 | `web_search` | `tools.ts` per call | provider (jina/agentcore), result |
 | `browser_tool` | `tools.ts` per call | tool (take_screenshot/get_rendered_page/browse_web), result, stepCount?, screenshotCount, chatId |
-| `search_history` | `lib/find.ts` per call | scope (project/global), corpusSize, resultCount, chatId |
-| `search_history_truncated` | `lib/find.ts` corpus build | total, kept, scope, chatId |
+| `search_history` | `lib/search.ts` per call | scope (project/global), corpusSize, resultCount, chatId |
+| `search_history_truncated` | `lib/search.ts` corpus build | total, kept, scope, chatId |
 | `stream_start` / `stream_error` / `stream_cancelled` | `sendMessage.ts` | — |
 | `enrich_turn_error` | `sendMessage.ts` post-turn | chatId, error |
 | `manifest_truncated` | `sendMessage.ts` manifest build | kind (files/chats), total, kept, projectId, chatId |
@@ -415,7 +425,7 @@ Projects group related chats + files and give the model project-scoped memory an
 ## Key gotchas
 
 - **Inference profiles**: models use `global.*` cross-region inference profiles (`global.anthropic.claude-opus-4-8` etc.), not direct model IDs. Verify with `aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED`.
-- **Thinking API**: adaptive thinking (`type=adaptive` + `output_config.effort`) is what Opus 4.8 and Sonnet 4.6 expect — not `type=enabled`/`budget_tokens`. Temperature/topP must be absent when thinking is active. Forced `toolChoice` (used by the explicit Find entry, see "Find") and thinking are also mutually exclusive — `converseStream` disables thinking for the one forced-toolChoice round.
+- **Thinking API**: adaptive thinking (`type=adaptive` + `output_config.effort`) is what Opus 4.8 and Sonnet 4.6 expect — not `type=enabled`/`budget_tokens`. Temperature/topP must be absent when thinking is active. Forced `toolChoice` (used by the explicit Search entry, see "Search history") and thinking are also mutually exclusive — `converseStream` disables thinking for the one forced-toolChoice round.
 - **WS authorizer**: TTL caching (`authorizer_result_ttl_in_seconds`) is not valid for WebSocket APIs — omit it.
 - **`cd` in Bash**: avoid `cd` in commands; use `--prefix` or absolute paths to keep auto-approval working.
 - **Screenshots**: save to `.screenshots/YYYY-MM-DD-description.jpg`.

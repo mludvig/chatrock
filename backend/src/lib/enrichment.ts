@@ -119,7 +119,7 @@ function parseMemItems(raw: unknown): MemItem[] {
   return result
 }
 
-// Exported for reuse by other defensive-JSON-parsing callers (e.g. lib/find.ts) — single
+// Exported for reuse by other defensive-JSON-parsing callers (e.g. lib/search.ts) — single
 // implementation of "strip code fences, parse, require a plain object" rather than duplicating it.
 export function safeParse(response: string | null | undefined): Record<string, unknown> | null {
   try {

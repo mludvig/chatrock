@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
-import { parseSearchResults, parseFindResults } from '../lib/toolResults'
+import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
 // A tool step that may be in progress (no result yet)
@@ -30,10 +30,10 @@ let _toastSeq = 0
 
 export type ActivePanel = 'chats' | 'memory' | 'prefs' | 'projects'
 
-// A Find submitted from the global header (see App.tsx) — consumed once by ChatView's
-// /c/new mount effect, which issues the first send with `find: {scope}` and clears this.
-// Not persisted (see partialize below): a stale pending Find must never survive a reload.
-export interface PendingFind {
+// A Search submitted from the global header (see App.tsx) — consumed once by ChatView's
+// /c/new mount effect, which issues the first send with `search: {scope}` and clears this.
+// Not persisted (see partialize below): a stale pending search must never survive a reload.
+export interface PendingSearch {
   query: string
   scope: 'project' | 'global'
   projectId?: string
@@ -112,8 +112,8 @@ interface ChatState {
   projectFilesById: Record<string, ProjectFile>
   mergeProjectFiles: (files: ProjectFile[]) => void
 
-  pendingFind: PendingFind | null
-  setPendingFind: (pf: PendingFind | null) => void
+  pendingSearch: PendingSearch | null
+  setPendingSearch: (pf: PendingSearch | null) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -176,7 +176,7 @@ export const useChatStore = create<ChatState>()(
       draftSystemPrompt: '',
       projects: [],
       projectFilesById: {},
-      pendingFind: null,
+      pendingSearch: null,
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -272,8 +272,8 @@ export const useChatStore = create<ChatState>()(
             steps: s.streamingMsg.steps.map(step => {
               if (step.kind !== 'tool' || step.toolUseId !== toolUseId) return step
               const searchResults = parseSearchResults(step.name, result, isError)
-              const findResults = parseFindResults(step.name, result, isError)
-              return { ...step, result, isError, searchResults, findResults, screenshotUrls }
+              const searchHistoryResults = parseSearchHistoryResults(step.name, result, isError)
+              return { ...step, result, isError, searchResults, searchHistoryResults, screenshotUrls }
             }),
           } as StreamingMsg,
         }
@@ -381,7 +381,7 @@ export const useChatStore = create<ChatState>()(
         },
       })),
 
-      setPendingFind: (pendingFind) => set({ pendingFind }),
+      setPendingSearch: (pendingSearch) => set({ pendingSearch }),
     }),
     {
       name: 'chatrock-store',

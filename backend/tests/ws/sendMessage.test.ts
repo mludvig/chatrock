@@ -2247,61 +2247,61 @@ describe('project chat enrichment', () => {
   })
 })
 
-// ── Find: explicit/forced search_history turn ─────────────────────────────────
+// ── Search: explicit/forced search_history turn ─────────────────────────────────
 
-describe('Find (forced search_history turn)', () => {
-  async function* simpleFindStream() {
+describe('Search (forced search_history turn)', () => {
+  async function* simpleSearchStream() {
     yield { type: 'delta' as const, text: 'No relevant past chats or files found.' }
     yield { type: 'usage' as const, usage: { inputTokens: 10, outputTokens: 5 } }
     yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'No relevant past chats or files found.' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
 
-  test('body.find.scope sets toolCtx.findScope and forces search_history as the 7th converseStream arg', async () => {
+  test('body.search.scope sets toolCtx.searchScope and forces search_history as the 7th converseStream arg', async () => {
     mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
     mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
     mockDynamo.listMessages.mockResolvedValue([])
-    mockBedrock.converseStream.mockReturnValue(simpleFindStream())
+    mockBedrock.converseStream.mockReturnValue(simpleSearchStream())
 
     await buildHandler(mockPost)(makeEvent({
       chatId: 'c1', content: 'did we discuss athena tuning before?', model: MODEL, systemPrompt: '',
-      find: { scope: 'global' },
+      search: { scope: 'global' },
     }))
 
     const callArgs = mockBedrock.converseStream.mock.calls[0]
     const toolCtxArg = callArgs[4]
-    expect(toolCtxArg).toMatchObject({ sub: 'user-1', findScope: 'global' })
+    expect(toolCtxArg).toMatchObject({ sub: 'user-1', searchScope: 'global' })
     expect(callArgs[6]).toBe('search_history') // forceToolName
   })
 
-  test('without body.find, toolCtx has no findScope and forceToolName is undefined', async () => {
+  test('without body.search, toolCtx has no searchScope and forceToolName is undefined', async () => {
     mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
     mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
     mockDynamo.listMessages.mockResolvedValue([])
-    mockBedrock.converseStream.mockReturnValue(simpleFindStream())
+    mockBedrock.converseStream.mockReturnValue(simpleSearchStream())
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'just a normal message', model: MODEL, systemPrompt: '' }))
 
     const callArgs = mockBedrock.converseStream.mock.calls[0]
     const toolCtxArg = callArgs[4]
-    expect(toolCtxArg?.findScope).toBeUndefined()
+    expect(toolCtxArg?.searchScope).toBeUndefined()
     expect(callArgs[6]).toBeUndefined()
   })
 
-  test('find.scope:"project" is forwarded as-is — buildFindCorpus/findContext (not sendMessage) own the no-projectId fallback', async () => {
+  test('search.scope:"project" is forwarded as-is — buildSearchHistoryCorpus/searchHistory (not sendMessage) own the no-projectId fallback', async () => {
     mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-    // Chat has no projectId — a project-scoped Find from a non-project context.
+    // Chat has no projectId — a project-scoped Search from a non-project context.
     mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
     mockDynamo.listMessages.mockResolvedValue([])
-    mockBedrock.converseStream.mockReturnValue(simpleFindStream())
+    mockBedrock.converseStream.mockReturnValue(simpleSearchStream())
 
     await buildHandler(mockPost)(makeEvent({
       chatId: 'c1', content: 'find my notes', model: MODEL, systemPrompt: '',
-      find: { scope: 'project' },
+      search: { scope: 'project' },
     }))
 
     const toolCtxArg = mockBedrock.converseStream.mock.calls[0][4]
-    expect(toolCtxArg?.findScope).toBe('project')
+    expect(toolCtxArg?.searchScope).toBe('project')
     expect(toolCtxArg?.projectId).toBeUndefined()
   })
 })
