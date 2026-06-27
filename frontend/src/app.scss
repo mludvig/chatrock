@@ -253,6 +253,32 @@ $header-h: 45px;
   opacity: 0.55;
 }
 
+.chat-summary--editable {
+  cursor: pointer;
+  &:hover { text-decoration: underline; text-decoration-style: dotted; }
+}
+
+.chat-summary--placeholder {
+  cursor: pointer;
+  font-style: italic;
+  &:hover { opacity: 0.8; }
+}
+
+// Shared inline-edit textarea (project memory text, file/chat summaries)
+.inline-edit-textarea {
+  width: 100%;
+  min-height: 50px;
+  resize: vertical;
+  background: $surface;
+  border: 1px solid $accent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: $font;
+  color: $text;
+  outline: none;
+}
+
 // Topic chips — read-only labels surfacing a chat's extracted topics
 // (ProjectsPanel/ProjectView chat lists, PreferencesPanel "This chat" tab)
 .topic-chips {
@@ -1820,6 +1846,8 @@ $mobile: 720px;
     flex: 1;
     font-size: 0.875rem;
     line-height: 1.4;
+    cursor: pointer;
+    &:hover { text-decoration: underline; text-decoration-style: dotted; }
   }
 
   .memory-delete {
@@ -2297,6 +2325,8 @@ $mobile: 720px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      cursor: pointer;
+      &:hover { text-decoration: underline; text-decoration-style: dotted; }
     }
 
     .file-status {
@@ -2344,6 +2374,8 @@ $mobile: 720px;
       color: $muted;
       line-height: 1.5;
       white-space: pre-wrap;
+      cursor: pointer;
+      &:hover { background: $surface2; }
     }
   }
 }

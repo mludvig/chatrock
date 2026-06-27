@@ -265,6 +265,14 @@ resource "aws_apigatewayv2_route" "delete_project_memory" {
   target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
 }
 
+resource "aws_apigatewayv2_route" "patch_project_memory" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "PATCH /api/projects/{projectId}/memory/{memId}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}
+
 resource "aws_apigatewayv2_route" "post_project_files" {
   api_id             = aws_apigatewayv2_api.http.id
   route_key          = "POST /api/projects/{projectId}/files"

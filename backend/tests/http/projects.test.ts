@@ -376,6 +376,65 @@ test('DELETE /api/projects/{projectId}/memory/{memId} returns 400 when memId mis
   expect(mockDynamo.deleteProjectMemory).not.toHaveBeenCalled()
 })
 
+// ── PATCH /api/projects/{projectId}/memory/{memId} ────────────────────────────
+
+test('PATCH /api/projects/{projectId}/memory/{memId} updates text and category', async () => {
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'P' })
+  mockDynamo.updateProjectMemory.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/memory/{memId}', {
+    text: 'Updated fact', category: 'fact',
+  }, { projectId: 'proj-1', memId: 'mem-1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(JSON.parse(res.body ?? '{}')).toEqual({ ok: true })
+  expect(mockDynamo.updateProjectMemory).toHaveBeenCalledWith('proj-1', 'mem-1', { text: 'Updated fact', category: 'fact' })
+})
+
+test('PATCH /api/projects/{projectId}/memory/{memId} updates text only', async () => {
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'P' })
+  mockDynamo.updateProjectMemory.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/memory/{memId}', {
+    text: 'Updated fact',
+  }, { projectId: 'proj-1', memId: 'mem-1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateProjectMemory).toHaveBeenCalledWith('proj-1', 'mem-1', { text: 'Updated fact' })
+})
+
+test('PATCH /api/projects/{projectId}/memory/{memId} rejects empty text', async () => {
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'P' })
+  const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/memory/{memId}', {
+    text: '   ',
+  }, { projectId: 'proj-1', memId: 'mem-1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateProjectMemory).not.toHaveBeenCalled()
+})
+
+test('PATCH /api/projects/{projectId}/memory/{memId} rejects invalid category', async () => {
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'P' })
+  const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/memory/{memId}', {
+    category: 'not-a-real-category',
+  }, { projectId: 'proj-1', memId: 'mem-1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateProjectMemory).not.toHaveBeenCalled()
+})
+
+test('PATCH /api/projects/{projectId}/memory/{memId} returns 404 if project not found', async () => {
+  mockDynamo.getProject.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/memory/{memId}', {
+    text: 'X',
+  }, { projectId: 'no-such', memId: 'mem-1' }) as any))
+  expect(res.statusCode).toBe(404)
+  expect(mockDynamo.updateProjectMemory).not.toHaveBeenCalled()
+})
+
+test('PATCH /api/projects/{projectId}/memory/{memId} returns 400 when memId missing', async () => {
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'P' })
+  const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/memory/{memId}', {
+    text: 'X',
+  }, { projectId: 'proj-1' }) as any))
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateProjectMemory).not.toHaveBeenCalled()
+})
+
 // ── File routes ───────────────────────────────────────────────────────────────
 
 describe('File routes', () => {
@@ -560,6 +619,33 @@ describe('File routes', () => {
     expect(res.statusCode).toBe(200)
     expect(JSON.parse(res.body ?? '{}')).toEqual({ ok: true })
     expect(mockDynamo.updateProjectFile).toHaveBeenCalledWith('proj-1', 'file-1', { inclusion: 'always' })
+  })
+
+  test('PATCH /files/{fileId}: updates summary and microLabel', async () => {
+    mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'P' })
+    mockDynamo.getProjectFile.mockResolvedValue(fileRecord)
+    mockDynamo.updateProjectFile.mockResolvedValue(undefined)
+
+    const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/files/{fileId}', {
+      summary: 'A corrected summary.', microLabel: 'Corrected label',
+    }, { projectId: 'proj-1', fileId: 'file-1' }) as any))
+
+    expect(res.statusCode).toBe(200)
+    expect(mockDynamo.updateProjectFile).toHaveBeenCalledWith('proj-1', 'file-1', {
+      summary: 'A corrected summary.', microLabel: 'Corrected label',
+    })
+  })
+
+  test('PATCH /files/{fileId}: rejects empty summary', async () => {
+    mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'P' })
+    mockDynamo.getProjectFile.mockResolvedValue(fileRecord)
+
+    const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}/files/{fileId}', {
+      summary: '   ',
+    }, { projectId: 'proj-1', fileId: 'file-1' }) as any))
+
+    expect(res.statusCode).toBe(400)
+    expect(mockDynamo.updateProjectFile).not.toHaveBeenCalled()
   })
 
   test('PATCH /files/{fileId}: 400 for invalid inclusion value', async () => {

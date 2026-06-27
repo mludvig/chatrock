@@ -307,7 +307,7 @@ Two writers, two stores (user and project):
 |-------|---------|
 | `GET /api/chats` | list chats (includes `projectId?`) |
 | `POST /api/chats` | create chat (accepts optional `projectId`) |
-| `PATCH /api/chats/{chatId}` | update title / systemPrompt / model / activeLeafId / modelSettings / **projectId** |
+| `PATCH /api/chats/{chatId}` | update title / systemPrompt / model / activeLeafId / modelSettings / **projectId** / summary / topics |
 | `DELETE /api/chats/{chatId}` | delete chat + S3 objects |
 | `POST /api/chats/{chatId}/retitle` | AI-generated title via `converseOnce` |
 | `POST /api/chats/{chatId}/fork` | clone active-path into new chat (carries `projectId`) |
@@ -325,11 +325,12 @@ Two writers, two stores (user and project):
 | `PATCH /api/projects/{projectId}` | update project fields |
 | `DELETE /api/projects/{projectId}` | delete project (un-assigns chats, removes memory/files/S3) |
 | `GET /api/projects/{projectId}/memory` | list project memories |
+| `PATCH /api/projects/{projectId}/memory/{memId}` | edit a project memory's `text`/`category` |
 | `DELETE /api/projects/{projectId}/memory/{memId}` | delete a project memory |
 | `GET /api/projects/{projectId}/files` | list project files |
 | `POST /api/projects/{projectId}/files` | request file upload → `{fileId, s3Key, uploadUrl}` |
 | `PUT /api/projects/{projectId}/files/{fileId}` | finalize/process file → generates microLabel + summary |
-| `PATCH /api/projects/{projectId}/files/{fileId}` | update inclusion mode (`auto|always|never`) |
+| `PATCH /api/projects/{projectId}/files/{fileId}` | update inclusion mode (`auto|always|never`) and/or edit `summary`/`microLabel` |
 | `DELETE /api/projects/{projectId}/files/{fileId}` | delete file + S3 objects |
 
 ### CloudWatch logging

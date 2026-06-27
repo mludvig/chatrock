@@ -4,7 +4,7 @@ import {
   buildChatKey, buildMsgKey, buildConnKey, buildTurnKey, ddb, listMessages,
   buildUserPrefKey, getUserPrefs, putUserPrefs,
   buildUserMemKey, listUserMemories, putUserMemory, deleteUserMemory,
-  updateChatSummary,
+  updateChatSummary, updateProjectMemory,
 } from '../../src/lib/dynamo'
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb'
 
@@ -254,4 +254,28 @@ test('updateChatSummary writes only the provided field when the other is omitted
 test('updateChatSummary is a no-op (no ddb call) when neither field is provided', async () => {
   await updateChatSummary('sub1', 'chat1', {})
   expect(mockSend).not.toHaveBeenCalled()
+})
+
+// ── updateProjectMemory ──────────────────────────────────────────────────────
+
+test('updateProjectMemory writes provided fields plus a fresh updatedAt', async () => {
+  mockSend.mockResolvedValueOnce({})
+  await updateProjectMemory('proj-1', 'mem-1', { text: 'New text', category: 'fact' })
+
+  expect(mockSend).toHaveBeenCalledTimes(1)
+  const call = mockSend.mock.calls[0][0]
+  expect(call).toBeInstanceOf(UpdateCommand)
+  expect(call.input.Key).toEqual({ PK: 'PROJECT#proj-1', SK: 'MEM#mem-1' })
+  expect(call.input.ExpressionAttributeNames).toEqual({ '#f0': 'text', '#f1': 'category', '#f2': 'updatedAt' })
+  expect(call.input.ExpressionAttributeValues[':v0']).toBe('New text')
+  expect(call.input.ExpressionAttributeValues[':v1']).toBe('fact')
+  expect(typeof call.input.ExpressionAttributeValues[':v2']).toBe('string')
+})
+
+test('updateProjectMemory with no text/category still touches updatedAt (mirrors updateProjectFile)', async () => {
+  mockSend.mockResolvedValueOnce({})
+  await updateProjectMemory('proj-1', 'mem-1', {})
+  expect(mockSend).toHaveBeenCalledTimes(1)
+  const call = mockSend.mock.calls[0][0]
+  expect(call.input.ExpressionAttributeNames).toEqual({ '#f0': 'updatedAt' })
 })

@@ -39,6 +39,21 @@ export default function ProjectView({ defaultModel }: Props) {
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
+  const [editMemoryText, setEditMemoryText] = useState('')
+
+  const [editingFileSummaryId, setEditingFileSummaryId] = useState<string | null>(null)
+  const [editFileSummaryText, setEditFileSummaryText] = useState('')
+  const [editingFileLabelId, setEditingFileLabelId] = useState<string | null>(null)
+  const [editFileLabelText, setEditFileLabelText] = useState('')
+
+  const [editingChatSummaryId, setEditingChatSummaryId] = useState<string | null>(null)
+  const [editChatSummaryText, setEditChatSummaryText] = useState('')
+
+  const [descDraft, setDescDraft] = useState('')
+  const [instrDraft, setInstrDraft] = useState('')
+  const settingsInitRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!projectId) return
     setLoading(true)
@@ -71,6 +86,14 @@ export default function ProjectView({ defaultModel }: Props) {
       setExpandedSummaries(prev => new Set([...prev, selectedFileId]))
     }
   }, [selectedFileId])
+
+  useEffect(() => {
+    if (project && settingsInitRef.current !== project.projectId) {
+      setDescDraft(project.description ?? '')
+      setInstrDraft(project.instructions ?? '')
+      settingsInitRef.current = project.projectId
+    }
+  }, [project])
 
   async function handleRename() {
     setEditingName(false)
@@ -165,7 +188,7 @@ export default function ProjectView({ defaultModel }: Props) {
     if (!projectId) return
     setProjectFiles(prev => prev.map(f => f.fileId === fileId ? { ...f, inclusion } : f))
     try {
-      await api.setFileInclusion(projectId, fileId, inclusion)
+      await api.updateProjectFile(projectId, fileId, { inclusion })
     } catch (err) {
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
       api.listProjectFiles(projectId).then(r => setProjectFiles(r.files)).catch(() => {})
@@ -190,6 +213,125 @@ export default function ProjectView({ defaultModel }: Props) {
       if (next.has(fileId)) { next.delete(fileId) } else { next.add(fileId) }
       return next
     })
+  }
+
+  function startMemoryEdit(e: React.MouseEvent, mem: ProjectMemory) {
+    e.stopPropagation()
+    setEditingMemoryId(mem.memId)
+    setEditMemoryText(mem.text)
+  }
+
+  async function commitMemoryEdit(memId: string) {
+    setEditingMemoryId(null)
+    if (!projectId) return
+    const text = editMemoryText.trim()
+    const prev = projectMemories.find(m => m.memId === memId)
+    if (!text || prev?.text === text) return
+    setProjectMemories(p => p.map(m => m.memId === memId ? { ...m, text } : m))
+    try {
+      await api.updateProjectMemory(projectId, memId, { text })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+      api.listProjectMemory(projectId).then(r => setProjectMemories(r.memories)).catch(() => {})
+    }
+  }
+
+  function startFileSummaryEdit(e: React.MouseEvent, file: ProjectFile) {
+    e.stopPropagation()
+    setEditingFileSummaryId(file.fileId)
+    setEditFileSummaryText(file.summary ?? '')
+  }
+
+  async function commitFileSummaryEdit(fileId: string) {
+    setEditingFileSummaryId(null)
+    if (!projectId) return
+    const summary = editFileSummaryText.trim()
+    const prev = projectFiles.find(f => f.fileId === fileId)
+    if (!summary || prev?.summary === summary) return
+    setProjectFiles(p => p.map(f => f.fileId === fileId ? { ...f, summary } : f))
+    try {
+      await api.updateProjectFile(projectId, fileId, { summary })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+      api.listProjectFiles(projectId).then(r => setProjectFiles(r.files)).catch(() => {})
+    }
+  }
+
+  function startFileLabelEdit(e: React.MouseEvent, file: ProjectFile) {
+    e.stopPropagation()
+    setEditingFileLabelId(file.fileId)
+    setEditFileLabelText(file.microLabel ?? '')
+  }
+
+  async function commitFileLabelEdit(fileId: string) {
+    setEditingFileLabelId(null)
+    if (!projectId) return
+    const microLabel = editFileLabelText.trim()
+    const prev = projectFiles.find(f => f.fileId === fileId)
+    if (!microLabel || prev?.microLabel === microLabel) return
+    setProjectFiles(p => p.map(f => f.fileId === fileId ? { ...f, microLabel } : f))
+    try {
+      await api.updateProjectFile(projectId, fileId, { microLabel })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+      api.listProjectFiles(projectId).then(r => setProjectFiles(r.files)).catch(() => {})
+    }
+  }
+
+  function startChatSummaryEdit(e: React.MouseEvent, chat: Chat) {
+    e.stopPropagation()
+    setEditingChatSummaryId(chat.chatId)
+    setEditChatSummaryText(chat.summary ?? '')
+  }
+
+  async function commitChatSummaryEdit(chatId: string) {
+    setEditingChatSummaryId(null)
+    const summary = editChatSummaryText.trim()
+    const prev = projectChats.find(c => c.chatId === chatId)
+    if (prev?.summary === summary) return
+    setProjectChats(p => p.map(c => c.chatId === chatId ? { ...c, summary } : c))
+    try {
+      await api.updateChatSummary(chatId, { summary })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+      if (projectId) api.getProject(projectId).then(res => setProjectChats(res.chats)).catch(() => {})
+    }
+  }
+
+  async function handleDescriptionBlur() {
+    if (!projectId) return
+    const description = descDraft
+    if (project?.description === description) return
+    updateProject(projectId, { description })
+    try {
+      await api.updateProject(projectId, { description })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  async function handleInstructionsBlur() {
+    if (!projectId) return
+    const instructions = instrDraft
+    if (project?.instructions === instructions) return
+    updateProject(projectId, { instructions })
+    try {
+      await api.updateProject(projectId, { instructions })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  async function handleToggleMemoryEnabled() {
+    if (!projectId || !project) return
+    const memoryEnabled = !(project.memoryEnabled ?? true)
+    updateProject(projectId, { memoryEnabled })
+    try {
+      await api.updateProject(projectId, { memoryEnabled })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+      updateProject(projectId, { memoryEnabled: !memoryEnabled })
+    }
   }
 
   const memoryCategories: Array<ProjectMemory['category']> = ['decision', 'convention', 'fact', 'constraint', 'glossary', 'other']
@@ -238,7 +380,27 @@ export default function ProjectView({ defaultModel }: Props) {
               <div key={chat.chatId} className="chat-item" onClick={() => navigate(`/c/${chat.chatId}`)}>
                 <div className="chat-item-content">
                   <span className="chat-title">{chat.title}</span>
-                  {chat.summary && <span className="chat-summary">{chat.summary}</span>}
+                  {editingChatSummaryId === chat.chatId ? (
+                    <textarea
+                      autoFocus
+                      className="inline-edit-textarea"
+                      value={editChatSummaryText}
+                      onChange={e => setEditChatSummaryText(e.target.value)}
+                      onBlur={() => commitChatSummaryEdit(chat.chatId)}
+                      onClick={e => e.stopPropagation()}
+                      onKeyDown={e => {
+                        if (e.key === 'Escape') setEditingChatSummaryId(null)
+                      }}
+                    />
+                  ) : chat.summary ? (
+                    <span className="chat-summary chat-summary--editable" title="Click to edit" onClick={e => startChatSummaryEdit(e, chat)}>
+                      {chat.summary}
+                    </span>
+                  ) : (
+                    <span className="chat-summary chat-summary--placeholder" title="Click to add a summary" onClick={e => startChatSummaryEdit(e, chat)}>
+                      Add a summary…
+                    </span>
+                  )}
                   {chat.topics && chat.topics.length > 0 && (
                     <div className="topic-chips">
                       {chat.topics.map(topic => (
@@ -299,8 +461,25 @@ export default function ProjectView({ defaultModel }: Props) {
                       {file.status === 'error' && (
                         <span className="file-status file-status--error">processing failed</span>
                       )}
-                      {file.status === 'ready' && file.microLabel && (
-                        <span className="file-micro-label">{file.microLabel}</span>
+                      {file.status === 'ready' && (
+                        editingFileLabelId === file.fileId ? (
+                          <input
+                            autoFocus
+                            className="rename-input"
+                            value={editFileLabelText}
+                            onChange={e => setEditFileLabelText(e.target.value)}
+                            onBlur={() => commitFileLabelEdit(file.fileId)}
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitFileLabelEdit(file.fileId)
+                              if (e.key === 'Escape') setEditingFileLabelId(null)
+                            }}
+                          />
+                        ) : file.microLabel ? (
+                          <span className="file-micro-label" title="Click to edit" onClick={e => startFileLabelEdit(e, file)}>
+                            {file.microLabel}
+                          </span>
+                        ) : null
                       )}
                     </div>
                     <div className="file-actions">
@@ -323,7 +502,22 @@ export default function ProjectView({ defaultModel }: Props) {
                     </div>
                   </div>
                   {expandedSummaries.has(file.fileId) && file.summary && (
-                    <div className="file-summary">{file.summary}</div>
+                    editingFileSummaryId === file.fileId ? (
+                      <textarea
+                        autoFocus
+                        className="inline-edit-textarea"
+                        value={editFileSummaryText}
+                        onChange={e => setEditFileSummaryText(e.target.value)}
+                        onBlur={() => commitFileSummaryEdit(file.fileId)}
+                        onKeyDown={e => {
+                          if (e.key === 'Escape') setEditingFileSummaryId(null)
+                        }}
+                      />
+                    ) : (
+                      <div className="file-summary" title="Click to edit" onClick={e => startFileSummaryEdit(e, file)}>
+                        {file.summary}
+                      </div>
+                    )
                   )}
                 </div>
               ))
@@ -349,7 +543,21 @@ export default function ProjectView({ defaultModel }: Props) {
                     <div className="memory-category-label">{cat}</div>
                     {items.map(mem => (
                       <div key={mem.memId} className="memory-item">
-                        <span className="memory-text">{mem.text}</span>
+                        {editingMemoryId === mem.memId ? (
+                          <input
+                            autoFocus
+                            className="rename-input"
+                            value={editMemoryText}
+                            onChange={e => setEditMemoryText(e.target.value)}
+                            onBlur={() => commitMemoryEdit(mem.memId)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitMemoryEdit(mem.memId)
+                              if (e.key === 'Escape') setEditingMemoryId(null)
+                            }}
+                          />
+                        ) : (
+                          <span className="memory-text" title="Click to edit" onClick={e => startMemoryEdit(e, mem)}>{mem.text}</span>
+                        )}
                         <button className="memory-delete" title="Delete this memory" onClick={() => handleDeleteMemory(mem.memId)}>
                           <FontAwesomeIcon icon={faTrash} />
                         </button>
@@ -360,6 +568,44 @@ export default function ProjectView({ defaultModel }: Props) {
               })}
             </div>
           )}
+        </div>
+
+        {/* ── Settings ── */}
+        <div className="project-section">
+          <div className="project-section-header">Settings</div>
+          <div className="prefs-tab-content">
+            <div className="pref-section">
+              <div className="pref-label">Description</div>
+              <textarea
+                className="pref-textarea"
+                placeholder="What is this project about?"
+                value={descDraft}
+                onChange={e => setDescDraft(e.target.value)}
+                onBlur={handleDescriptionBlur}
+              />
+            </div>
+            <div className="pref-section">
+              <div className="pref-label">Instructions</div>
+              <textarea
+                className="pref-textarea"
+                placeholder="Custom instructions applied to every chat in this project…"
+                value={instrDraft}
+                onChange={e => setInstrDraft(e.target.value)}
+                onBlur={handleInstructionsBlur}
+              />
+            </div>
+            <div className="pref-section">
+              <div className="pref-row">
+                <span className="pref-row-label">Project memory</span>
+                <button
+                  className={`toggle-btn${project?.memoryEnabled !== false ? ' active' : ''}`}
+                  onClick={handleToggleMemoryEnabled}
+                >
+                  {project?.memoryEnabled !== false ? 'On' : 'Off'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
