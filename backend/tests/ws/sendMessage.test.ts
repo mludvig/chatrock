@@ -49,6 +49,7 @@ jest.mock('../../src/lib/memory', () => ({
 jest.mock('../../src/lib/enrichment', () => ({
   enrichUserFacts: jest.fn().mockResolvedValue({ memories: [] }),
   enrichProjectFacts: jest.fn().mockResolvedValue({ memories: [] }),
+  generateChatTitle: jest.fn().mockResolvedValue(undefined),
 }))
 
 const mockDynamo  = dynamo  as jest.Mocked<typeof dynamo>
@@ -73,6 +74,7 @@ beforeEach(() => {
   mockPost.mockResolvedValue(undefined)
   mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [] })
   mockEnrichment.enrichProjectFacts.mockResolvedValue({ memories: [] })
+  mockEnrichment.generateChatTitle.mockResolvedValue(undefined)
 })
 
 // ── Slice 3: per-turn persistence with format-C records ───────────────────────
@@ -306,8 +308,8 @@ test('sends titleUpdated event on first exchange', async () => {
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichUserFacts returns a title when needTitle=true (first normal send with title='New Chat')
-  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [], title: 'My Title' })
+  // generateChatTitle is called independently when needTitle=true (first normal send with title='New Chat')
+  mockEnrichment.generateChatTitle.mockResolvedValue('My Title')
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
@@ -330,6 +332,8 @@ test('does not re-title when chat already has a title', async () => {
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
 
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+  // generateChatTitle must not even be called when a title already exists
+  expect(mockEnrichment.generateChatTitle).not.toHaveBeenCalled()
   // enrichUserFacts is called (via mock), but NOT converseOnce directly
   expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
 })
@@ -611,8 +615,8 @@ test('inc3: re-run does NOT call auto-title even when title is "New Chat"', asyn
   mockBedrock.converseStream.mockReturnValue(fakeStream())
   await buildHandler(mockPost)(rerunEvent())
 
-  // enrichUserFacts is called with needTitle=false for re-runs
-  expect(mockEnrichment.enrichUserFacts).toHaveBeenCalledWith(expect.anything(), expect.anything(), false)
+  // generateChatTitle must not be called for re-runs
+  expect(mockEnrichment.generateChatTitle).not.toHaveBeenCalled()
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -744,8 +748,8 @@ test('inc5: edit does NOT call auto-title when title is "New Chat"', async () =>
   mockBedrock.converseStream.mockReturnValue(fakeStream())
   await buildHandler(mockPost)(editEvent())
 
-  // enrichUserFacts is called with needTitle=false for edits
-  expect(mockEnrichment.enrichUserFacts).toHaveBeenCalledWith(expect.anything(), expect.anything(), false)
+  // generateChatTitle must not be called for edits
+  expect(mockEnrichment.generateChatTitle).not.toHaveBeenCalled()
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -1666,8 +1670,8 @@ test('cont7: continue does NOT call auto-title even when title is "New Chat"', a
   mockBedrock.converseStream.mockReturnValue(fakeStream())
   await buildHandler(mockPost)(continueEvent())
 
-  // enrichUserFacts is called with needTitle=false for continues
-  expect(mockEnrichment.enrichUserFacts).toHaveBeenCalledWith(expect.anything(), expect.anything(), false)
+  // generateChatTitle must not be called for continues
+  expect(mockEnrichment.generateChatTitle).not.toHaveBeenCalled()
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
 })
 
@@ -1796,8 +1800,8 @@ test('D1b: llm_call enrich_turn log emitted after enrichTurn call', async () => 
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  // enrichUserFacts returns a title (first normal send with title='New Chat')
-  mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [], title: 'Generated Title' })
+  // generateChatTitle returns a title (first normal send with title='New Chat')
+  mockEnrichment.generateChatTitle.mockResolvedValue('Generated Title')
 
   const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))

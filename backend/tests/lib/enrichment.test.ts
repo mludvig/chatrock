@@ -1,4 +1,4 @@
-import { enrichUserFacts, enrichProjectFacts, enrichChatForProject } from '../../src/lib/enrichment'
+import { enrichUserFacts, enrichProjectFacts, enrichChatForProject, generateChatTitle } from '../../src/lib/enrichment'
 import * as bedrock from '../../src/lib/bedrock'
 import * as dynamo from '../../src/lib/dynamo'
 import * as treeLib from '../../src/lib/tree'
@@ -33,35 +33,32 @@ test('enrichUserFacts — returns updated memory list with new item', async () =
       { memId: null, category: 'identity', text: 'User is Alice from Wellington' },
     ],
   }))
-  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS)
   expect(result.memories).toHaveLength(2)
   expect(result.memories[1].text).toBe('User is Alice from Wellington')
   expect(result.memories[1].memId).toBeNull()
-  expect(result.title).toBeUndefined()
 })
 
-test('enrichUserFacts — returns title when needTitle is true', async () => {
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
-    memories: [],
-    title: 'Introduction chat',
-  }))
-  const result = await enrichUserFacts(TRANSCRIPT, [], true)
-  expect(result.title).toBe('Introduction chat')
-})
-
-test('enrichUserFacts — falls back to existing list on malformed output', async () => {
+test('enrichUserFacts — falls back to existing list on malformed output and logs the failure', async () => {
   mockBedrock.converseOnce.mockResolvedValue('not json')
-  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, 'chat-1')
+  const logged = errorSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
+  errorSpy.mockRestore()
   expect(result.memories).toHaveLength(1)
   expect(result.memories[0].memId).toBe('mem-1')
-  expect(result.title).toBeUndefined()
+  expect(logged.some(l => l.event === 'enrich_user_facts_parse_error' && l.chatId === 'chat-1')).toBe(true)
 })
 
-test('enrichUserFacts — falls back to existing list when Bedrock throws', async () => {
+test('enrichUserFacts — falls back to existing list when Bedrock throws and logs the failure', async () => {
   mockBedrock.converseOnce.mockRejectedValue(new Error('network'))
-  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, 'chat-1')
+  const logged = errorSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
+  errorSpy.mockRestore()
   expect(result.memories).toHaveLength(1)
   expect(result.memories[0].memId).toBe('mem-1')
+  expect(logged.some(l => l.event === 'enrich_user_facts_error' && l.chatId === 'chat-1' && (l.error as string).includes('network'))).toBe(true)
 })
 
 test('enrichUserFacts — filters out invalid category values', async () => {
@@ -71,14 +68,14 @@ test('enrichUserFacts — filters out invalid category values', async () => {
       { memId: null, category: 'invalid_cat', text: 'Should be filtered' },
     ],
   }))
-  const result = await enrichUserFacts(TRANSCRIPT, [], false)
+  const result = await enrichUserFacts(TRANSCRIPT, [])
   expect(result.memories).toHaveLength(1)
   expect(result.memories[0].text).toBe('Valid fact')
 })
 
 test('enrichUserFacts — passes existing memories in user message', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
-  await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS)
   const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content![0] as { text: string }).text
   expect(userMsg).toContain('CURRENT_MEMORIES')
   expect(userMsg).toContain('mem-1')
@@ -86,7 +83,7 @@ test('enrichUserFacts — passes existing memories in user message', async () =>
 
 test('enrichUserFacts — system prompt contains PII guardrails', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
-  await enrichUserFacts(TRANSCRIPT, [], false)
+  await enrichUserFacts(TRANSCRIPT, [])
   const systemPrompt = mockBedrock.converseOnce.mock.calls[0][1]
   expect(systemPrompt).toContain('NEVER capture')
   expect(systemPrompt).toContain('third parties')
@@ -94,17 +91,65 @@ test('enrichUserFacts — system prompt contains PII guardrails', async () => {
 
 test('enrichUserFacts — strips markdown code fences', async () => {
   mockBedrock.converseOnce.mockResolvedValue('```json\n{"memories":[{"memId":null,"category":"identity","text":"Alice"}]}\n```')
-  const result = await enrichUserFacts(TRANSCRIPT, [], false)
+  const result = await enrichUserFacts(TRANSCRIPT, [])
   expect(result.memories).toHaveLength(1)
   expect(result.memories[0].text).toBe('Alice')
 })
 
 test('enrichUserFacts — empty memories array falls back to existing', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
-  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS, false)
+  const result = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS)
   // Empty returned list → fall back (model said nothing new, don't wipe)
   expect(result.memories).toHaveLength(1)
   expect(result.memories[0].memId).toBe('mem-1')
+})
+
+// ── generateChatTitle ────────────────────────────────────────────────────────
+
+test('generateChatTitle — returns trimmed title text from the model', async () => {
+  mockBedrock.converseOnce.mockResolvedValue('  Introduction chat  ')
+  const title = await generateChatTitle(TRANSCRIPT)
+  expect(title).toBe('Introduction chat')
+})
+
+test('generateChatTitle — uses the dedicated cheap title model', async () => {
+  mockBedrock.converseOnce.mockResolvedValue('Some title')
+  await generateChatTitle(TRANSCRIPT)
+  const [modelId] = mockBedrock.converseOnce.mock.calls[0]
+  expect(modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
+})
+
+test('generateChatTitle — returns undefined and logs when the model throws', async () => {
+  mockBedrock.converseOnce.mockRejectedValue(new Error('throttled'))
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const title = await generateChatTitle(TRANSCRIPT, 'chat-1')
+  const logged = errorSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
+  errorSpy.mockRestore()
+  expect(title).toBeUndefined()
+  expect(logged.some(l => l.event === 'generate_title_error' && l.chatId === 'chat-1' && (l.error as string).includes('throttled'))).toBe(true)
+})
+
+test('generateChatTitle — returns undefined and logs when the model returns empty text', async () => {
+  mockBedrock.converseOnce.mockResolvedValue('   ')
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const title = await generateChatTitle(TRANSCRIPT, 'chat-1')
+  const logged = errorSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
+  errorSpy.mockRestore()
+  expect(title).toBeUndefined()
+  expect(logged.some(l => l.event === 'generate_title_empty_response' && l.chatId === 'chat-1')).toBe(true)
+})
+
+test('generateChatTitle — is independent of enrichUserFacts: a memory parse failure does not block titling', async () => {
+  // First call (enrichUserFacts) returns malformed JSON; second call (generateChatTitle) succeeds.
+  mockBedrock.converseOnce
+    .mockResolvedValueOnce('not json')
+    .mockResolvedValueOnce('Recovered title')
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const userResult = await enrichUserFacts(TRANSCRIPT, EXISTING_USER_MEMS)
+  const title = await generateChatTitle(TRANSCRIPT)
+  errorSpy.mockRestore()
+  expect(userResult.memories).toHaveLength(1) // fell back, but didn't throw
+  expect(title).toBe('Recovered title') // unaffected by the memory-extraction failure
 })
 
 // ── enrichProjectFacts ────────────────────────────────────────────────────────
@@ -122,12 +167,16 @@ test('enrichProjectFacts — returns updated memory list and summary', async () 
   expect(result.summary).toBe('Chat about the deployment pipeline.')
 })
 
-test('enrichProjectFacts — falls back to existing list on malformed output', async () => {
+test('enrichProjectFacts — falls back to existing list on malformed output and logs the failure', async () => {
   mockBedrock.converseOnce.mockResolvedValue('bad json')
-  const result = await enrichProjectFacts(TRANSCRIPT, EXISTING_PROJECT_MEMS)
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const result = await enrichProjectFacts(TRANSCRIPT, EXISTING_PROJECT_MEMS, 'chat-1')
+  const logged = errorSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
+  errorSpy.mockRestore()
   expect(result.memories).toHaveLength(1)
   expect(result.memories[0].memId).toBe('proj-1')
   expect(result.summary).toBeUndefined()
+  expect(logged.some(l => l.event === 'enrich_project_facts_parse_error' && l.chatId === 'chat-1')).toBe(true)
 })
 
 test('enrichProjectFacts — filters out invalid category values', async () => {

@@ -1,5 +1,5 @@
 import { converseOnce } from './bedrock'
-import { MEMORY_EXTRACTION_MODEL } from '../config/models'
+import { MEMORY_EXTRACTION_MODEL, TITLE_MODEL } from '../config/models'
 import { listMessages, updateChatSummary } from './dynamo'
 import { buildActivePath, type TurnRow } from './tree'
 
@@ -16,7 +16,6 @@ export interface MemItem {
 
 export interface EnrichUserResult {
   memories: MemItem[]
-  title?: string
 }
 
 export interface EnrichProjectResult {
@@ -51,7 +50,7 @@ NEVER capture:
 
 On parse failure or nothing notable: return the existing list unchanged (preserving existing memIds).`
 
-const TITLE_INSTRUCTION = `Also include "title": a very short chat title (max 6 words) capturing the main topic. No quotes, no punctuation at the end.`
+const TITLE_PROMPT = `Generate a very short chat title (max 6 words) that captures the main topic of the conversation below. Reply with ONLY the title, no quotes, no punctuation at the end.`
 
 const PROJECT_SYSTEM_PROMPT = `You manage a persistent memory list about a project. The list accumulates durable facts that are SPECIFIC TO THIS PROJECT and were established or confirmed BY THE USER — the context a new teammate would need to continue this project.
 
@@ -118,19 +117,18 @@ function safeParse(response: string | null | undefined): Record<string, unknown>
 // ── enrichUserFacts ───────────────────────────────────────────────────────────
 
 /**
- * Haiku call returning the updated user memory list (add/update/delete) and
- * optionally a title. Never throws — returns existing list unchanged on failure.
+ * Haiku call returning the updated user memory list (add/update/delete).
+ * Never throws — returns existing list unchanged on failure, logging why.
  */
 export async function enrichUserFacts(
   transcript: string,
   existing: Array<{ memId: string; category: string; text: string }>,
-  needTitle: boolean,
+  chatId?: string,
 ): Promise<EnrichUserResult> {
   const fallback: EnrichUserResult = {
     memories: existing.map(e => ({ memId: e.memId, category: e.category, text: e.text })),
   }
   try {
-    const systemPrompt = needTitle ? `${USER_SYSTEM_PROMPT}\n\n${TITLE_INSTRUCTION}` : USER_SYSTEM_PROMPT
     const userMsg = [
       `CURRENT_MEMORIES: ${JSON.stringify(existing)}`,
       ``,
@@ -140,25 +138,48 @@ export async function enrichUserFacts(
 
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
-      systemPrompt,
+      USER_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ text: userMsg }] }],
       { maxTokens: 1024 },
     )
 
     const obj = safeParse(response)
-    if (!obj) return fallback
+    if (!obj) {
+      console.error(JSON.stringify({ event: 'enrich_user_facts_parse_error', chatId, response: response?.slice(0, 500) }))
+      return fallback
+    }
 
     const validUserCategories = new Set(['identity', 'preference', 'style', 'other'])
     const memories = parseMemItems(obj.memories).filter(m => validUserCategories.has(m.category))
-    const result: EnrichUserResult = { memories: memories.length > 0 ? memories : fallback.memories }
-
-    if (needTitle && typeof obj.title === 'string' && obj.title.trim()) {
-      result.title = obj.title.trim()
-    }
-
-    return result
-  } catch {
+    return { memories: memories.length > 0 ? memories : fallback.memories }
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'enrich_user_facts_error', chatId, error: String(err) }))
     return fallback
+  }
+}
+
+/**
+ * Haiku call generating a short chat title from a conversation transcript.
+ * Independent of enrichUserFacts so a memory-extraction failure can never
+ * take the title down with it. Never throws — returns undefined on failure.
+ */
+export async function generateChatTitle(transcript: string, chatId?: string): Promise<string | undefined> {
+  try {
+    const response = await converseOnce(
+      TITLE_MODEL,
+      '',
+      [{ role: 'user', content: [{ text: `${TITLE_PROMPT}\n\n${transcript}` }] }],
+      { maxTokens: 32 },
+    )
+    const title = response.trim()
+    if (!title) {
+      console.error(JSON.stringify({ event: 'generate_title_empty_response', chatId }))
+      return undefined
+    }
+    return title
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'generate_title_error', chatId, error: String(err) }))
+    return undefined
   }
 }
 
@@ -171,6 +192,7 @@ export async function enrichUserFacts(
 export async function enrichProjectFacts(
   transcript: string,
   existing: Array<{ memId: string; category: string; text: string }>,
+  chatId?: string,
 ): Promise<EnrichProjectResult> {
   const fallback: EnrichProjectResult = {
     memories: existing.map(e => ({ memId: e.memId, category: e.category, text: e.text })),
@@ -191,7 +213,10 @@ export async function enrichProjectFacts(
     )
 
     const obj = safeParse(response)
-    if (!obj) return fallback
+    if (!obj) {
+      console.error(JSON.stringify({ event: 'enrich_project_facts_parse_error', chatId, response: response?.slice(0, 500) }))
+      return fallback
+    }
 
     const validProjectCategories = new Set(['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'])
     const memories = parseMemItems(obj.memories).filter(m => validProjectCategories.has(m.category))
@@ -202,7 +227,8 @@ export async function enrichProjectFacts(
     }
 
     return result
-  } catch {
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'enrich_project_facts_error', chatId, error: String(err) }))
     return fallback
   }
 }
@@ -233,7 +259,7 @@ export async function enrichChatForProject(sub: string, chatId: string): Promise
       })
       .join('\n')
 
-    const result = await enrichProjectFacts(transcript, [])
+    const result = await enrichProjectFacts(transcript, [], chatId)
     if (result.summary) {
       await updateChatSummary(sub, chatId, result.summary)
     }

@@ -11,7 +11,7 @@ import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/atta
 import { resolvePreferences, type UserPreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
 import { reconcileMemoryList } from '../lib/memory'
-import { enrichUserFacts, enrichProjectFacts } from '../lib/enrichment'
+import { enrichUserFacts, enrichProjectFacts, generateChatTitle } from '../lib/enrichment'
 import { fetchS3Text } from '../lib/projectFiles'
 
 function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: ContentBlock): ContentBlock[] {
@@ -661,7 +661,7 @@ export const buildHandler = (postFn: PostFn) => async (
         category: i.category as string,
         createdAt: i.createdAt as string,
       }))
-      const userResult = await enrichUserFacts(transcript, existingUserMems, needTitle)
+      const userResult = await enrichUserFacts(transcript, existingUserMems, chatId)
       const userOps = reconcileMemoryList(userResult.memories, existingUserMems)
       for (const op of userOps) {
         if (op.op === 'ADD') {
@@ -677,10 +677,14 @@ export const buildHandler = (postFn: PostFn) => async (
         }
       }
 
-      // Title
-      if (userResult.title) {
-        await updateChatTitle(sub, chatId, userResult.title)
-        await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title: userResult.title }) })
+      // Title — independent call (own model, own try/catch upstream) so a
+      // memory-extraction parse failure can never suppress titling, and vice versa.
+      if (needTitle) {
+        const title = await generateChatTitle(transcript, chatId)
+        if (title) {
+          await updateChatTitle(sub, chatId, title)
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title }) })
+        }
       }
 
       // ── Project facts + summary (reuse projectMemoriesRaw already loaded) ──
@@ -691,7 +695,7 @@ export const buildHandler = (postFn: PostFn) => async (
           category: i.category as string,
           createdAt: i.createdAt as string,
         }))
-        const projectResult = await enrichProjectFacts(transcript, existingProjectMems)
+        const projectResult = await enrichProjectFacts(transcript, existingProjectMems, chatId)
         const projectOps = reconcileMemoryList(projectResult.memories, existingProjectMems)
         for (const op of projectOps) {
           if (op.op === 'ADD') {
