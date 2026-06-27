@@ -69,7 +69,7 @@ export async function findContext(
   const kept = corpus.length > FIND_CORPUS_CAP ? corpus.slice(0, FIND_CORPUS_CAP) : corpus
   if (kept.length < corpus.length) {
     console.log(JSON.stringify({
-      event: 'find_truncated', total: corpus.length, kept: kept.length, scope: opts?.scope, chatId: opts?.chatId,
+      event: 'search_history_truncated', total: corpus.length, kept: kept.length, scope: opts?.scope, chatId: opts?.chatId,
     }))
   }
 

@@ -80,7 +80,7 @@ test('findContext — blank query short-circuits without calling Bedrock', async
   expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
 })
 
-test('findContext — caps an oversized corpus to FIND_CORPUS_CAP and logs find_truncated', async () => {
+test('findContext — caps an oversized corpus to FIND_CORPUS_CAP and logs search_history_truncated', async () => {
   const bigCorpus: FindCorpusItem[] = Array.from({ length: FIND_CORPUS_CAP + 25 }, (_, i) => ({
     kind: 'chat' as const,
     id: `chat-${i}`,
@@ -93,7 +93,7 @@ test('findContext — caps an oversized corpus to FIND_CORPUS_CAP and logs find_
   const logged = logSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
   logSpy.mockRestore()
   expect(logged.some(l =>
-    l.event === 'find_truncated' && l.total === bigCorpus.length && l.kept === FIND_CORPUS_CAP
+    l.event === 'search_history_truncated' && l.total === bigCorpus.length && l.kept === FIND_CORPUS_CAP
     && l.scope === 'global' && l.chatId === 'chat-x',
   )).toBe(true)
   // Only the kept slice should appear in the prompt sent to the model.

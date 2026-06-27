@@ -293,7 +293,7 @@ contract or the frontend surface.
 - **Corpus** (`buildFindCorpus(sub, scope, projectId?)`): chats (any with a non-empty `summary`)
   plus, for `'project'` scope, that project's ready files (`summary`/`microLabel`); for `'global'`
   scope, a capped sweep (`FIND_PROJECT_SWEEP_CAP`=20 projects) of all the user's projects' files.
-  Capped overall at `FIND_CORPUS_CAP`=200 items (logs `find_truncated`), mirroring the
+  Capped overall at `FIND_CORPUS_CAP`=200 items (logs `search_history_truncated`), mirroring the
   `manifest_truncated` pattern in `sendMessage.ts`.
 - **Ranking** (`findContext(corpus, query)`): one Haiku call returning
   `{"results":[{"id":"<kind>:<id>","reason":"..."}]}` — an **object wrapper, not a bare array**
@@ -392,7 +392,7 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout 
 | `web_search` | `tools.ts` per call | provider (jina/agentcore), result |
 | `browser_tool` | `tools.ts` per call | tool (take_screenshot/get_rendered_page/browse_web), result, stepCount?, screenshotCount, chatId |
 | `search_history` | `lib/find.ts` per call | scope (project/global), corpusSize, resultCount, chatId |
-| `find_truncated` | `lib/find.ts` corpus build | total, kept, scope, chatId |
+| `search_history_truncated` | `lib/find.ts` corpus build | total, kept, scope, chatId |
 | `stream_start` / `stream_error` / `stream_cancelled` | `sendMessage.ts` | — |
 | `enrich_turn_error` | `sendMessage.ts` post-turn | chatId, error |
 | `manifest_truncated` | `sendMessage.ts` manifest build | kind (files/chats), total, kept, projectId, chatId |
