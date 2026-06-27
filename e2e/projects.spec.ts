@@ -39,7 +39,11 @@ async function deleteProject(page: Page, name: string) {
   // Accept the confirm() dialog that handleDelete() triggers
   page.once('dialog', dialog => dialog.accept())
   await item.hover()
-  await item.locator('button[title="Delete"]').click()
+  // Title is "Delete project" (not "Delete") — ProjectsPanel.tsx's delete
+  // button. Using the wrong selector here silently failed cleanup on every
+  // run (swallowed by the try/catch at each call site), leaving orphaned
+  // "E2E ..." projects in the live account indefinitely.
+  await item.locator('button[title="Delete project"]').click()
 }
 
 // ---------------------------------------------------------------------------
@@ -136,11 +140,16 @@ test.describe('Projects — CRUD lifecycle', () => {
 
     const item = page.locator('.project-item').filter({ hasText: before })
     await item.hover()
-    // Click the Rename (pen) button
-    await item.locator('button[title="Rename"]').click()
+    // Click the Rename (pen) button — title is "Rename project" (not "Rename",
+    // which is the chat-item rename button's title in this same panel)
+    await item.locator('button[title="Rename project"]').click()
 
-    // Fill the rename input
-    await expect(item.locator('.rename-input')).toBeVisible()
+    // Fill the rename input — note: query it unscoped from `item`, not
+    // `item.locator(...)`. Entering edit mode replaces the row's text
+    // content with a bare input, so the `hasText: before` filter `item` was
+    // built from stops matching anything once editing starts. Only one
+    // project can be mid-edit at a time, so the global query is unambiguous.
+    await expect(page.locator('.rename-input')).toBeVisible()
     await page.fill('.rename-input', after)
     await page.keyboard.press('Enter')
 
@@ -364,6 +373,59 @@ test.describe('Projects — file upload UI', () => {
     // Upload button should be visible in the Files section
     const filesSection = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Files' }) })
     await expect(filesSection.locator('button.btn-action', { hasText: 'Upload' })).toBeVisible()
+
+    // Cleanup
+    try {
+      await page.click('[data-panel="projects"]')
+      await deleteProject(page, projectName)
+    } catch { /* cleanup failure is acceptable */ }
+  })
+})
+
+test.describe('Projects — Settings section', () => {
+  test.use({ storageState: '.auth/state.json' })
+
+  test('description, instructions, and memoryEnabled persist across reload', async ({ page }) => {
+    const projectName = 'E2E Settings Test'
+    await openProjectsPanel(page)
+    await createProject(page, projectName)
+
+    await page.waitForURL(/\/p\//, { timeout: 10000 })
+    await expect(page.locator('.project-view')).toBeVisible()
+
+    const settingsSection = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Settings' }) })
+    await expect(settingsSection).toBeVisible()
+
+    const isProjectPatch = (resp: import('@playwright/test').Response) =>
+      resp.request().method() === 'PATCH' && /\/api\/projects\/[^/]+$/.test(resp.url())
+
+    // Edit description — wait for the PATCH to actually land before moving on,
+    // since a reload would otherwise cancel an in-flight request
+    const descTextarea = settingsSection.locator('.pref-textarea').first()
+    await descTextarea.fill('A project for end-to-end testing.')
+    await Promise.all([page.waitForResponse(isProjectPatch), descTextarea.blur()])
+
+    // Edit instructions
+    const instrTextarea = settingsSection.locator('.pref-textarea').nth(1)
+    await instrTextarea.fill('Always answer in haiku.')
+    await Promise.all([page.waitForResponse(isProjectPatch), instrTextarea.blur()])
+
+    // Toggle memory off
+    const memoryToggle = settingsSection.locator('.toggle-btn')
+    await expect(memoryToggle).toHaveText('On')
+    await Promise.all([page.waitForResponse(isProjectPatch), memoryToggle.click()])
+    await expect(memoryToggle).toHaveText('Off', { timeout: 3000 })
+
+    // Reload and re-navigate to the same project — values must persist
+    const url = page.url()
+    await page.reload()
+    await page.waitForURL(url)
+    await expect(page.locator('.project-view')).toBeVisible()
+
+    const settingsAfterReload = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Settings' }) })
+    await expect(settingsAfterReload.locator('.pref-textarea').first()).toHaveValue('A project for end-to-end testing.', { timeout: 5000 })
+    await expect(settingsAfterReload.locator('.pref-textarea').nth(1)).toHaveValue('Always answer in haiku.')
+    await expect(settingsAfterReload.locator('.toggle-btn')).toHaveText('Off')
 
     // Cleanup
     try {
