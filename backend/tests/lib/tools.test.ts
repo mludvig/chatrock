@@ -1,7 +1,7 @@
 import { executeTool, MAX_BROWSER_STEPS, MAX_BROWSER_SCREENSHOTS } from '../../src/lib/tools'
 import * as memoryLib from '../../src/lib/memory'
 import * as projectContextLib from '../../src/lib/projectContext'
-import * as findLib from '../../src/lib/find'
+import * as searchLib from '../../src/lib/search'
 import * as gatewayLib from '../../src/lib/agentcore/gateway'
 import * as browserLib from '../../src/lib/agentcore/browser'
 
@@ -19,7 +19,7 @@ jest.mock('../../src/lib/projectContext', () => ({
 }))
 
 // Mock the search_history executor so dispatch tests don't hit real dynamo/Bedrock calls
-jest.mock('../../src/lib/find', () => ({
+jest.mock('../../src/lib/search', () => ({
   executeSearchHistoryTool: jest.fn(),
 }))
 
@@ -37,7 +37,7 @@ const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).execu
 const mockExecuteProjectMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeProjectMemoryTool
 const mockExecuteProjectReadFileTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadFileTool
 const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadChatTool
-const mockExecuteSearchHistoryTool = (findLib as jest.Mocked<typeof findLib>).executeSearchHistoryTool
+const mockExecuteSearchHistoryTool = (searchLib as jest.Mocked<typeof searchLib>).executeSearchHistoryTool
 const mockCallGatewayTool = (gatewayLib as jest.Mocked<typeof gatewayLib>).callGatewayTool
 const mockRunBrowserSteps = (browserLib as jest.Mocked<typeof browserLib>).runBrowserSteps
 
@@ -308,7 +308,7 @@ describe('search_history dispatch', () => {
     jest.clearAllMocks()
   })
 
-  it('dispatches to executeSearchHistoryTool with sub/projectId/chatId/findScope from ctx', async () => {
+  it('dispatches to executeSearchHistoryTool with sub/projectId/chatId/searchScope from ctx', async () => {
     mockExecuteSearchHistoryTool.mockResolvedValueOnce({
       toolUseId: '',
       content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
@@ -318,18 +318,18 @@ describe('search_history dispatch', () => {
     const result = await executeTool(
       'search_history',
       { query: 'athena tuning' },
-      { sub: 'user-1', projectId: 'proj-abc', chatId: 'chat-1', findScope: 'global' },
+      { sub: 'user-1', projectId: 'proj-abc', chatId: 'chat-1', searchScope: 'global' },
     )
 
     expect(mockExecuteSearchHistoryTool).toHaveBeenCalledTimes(1)
     expect(mockExecuteSearchHistoryTool).toHaveBeenCalledWith(
       { query: 'athena tuning' },
-      { sub: 'user-1', projectId: 'proj-abc', chatId: 'chat-1', findScope: 'global' },
+      { sub: 'user-1', projectId: 'proj-abc', chatId: 'chat-1', searchScope: 'global' },
     )
     expect(result.status).toBe('success')
   })
 
-  it('works without ctx.projectId/findScope (organic global call outside a project)', async () => {
+  it('works without ctx.projectId/searchScope (organic global call outside a project)', async () => {
     mockExecuteSearchHistoryTool.mockResolvedValueOnce({
       toolUseId: '',
       content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
@@ -340,7 +340,7 @@ describe('search_history dispatch', () => {
 
     expect(mockExecuteSearchHistoryTool).toHaveBeenCalledWith(
       { query: 'athena tuning' },
-      { sub: 'user-1', projectId: undefined, chatId: undefined, findScope: undefined },
+      { sub: 'user-1', projectId: undefined, chatId: undefined, searchScope: undefined },
     )
   })
 })

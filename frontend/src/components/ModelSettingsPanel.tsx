@@ -1,5 +1,5 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBrain, faGlobe, faTemperatureHalf, faSlidersH, faMemory } from '@fortawesome/free-solid-svg-icons'
+import { faBrain, faGlobe, faTemperatureHalf, faSlidersH, faMemory, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import type { ModelCapabilities, ModelSettings } from '../api/http'
 import { THINKING_EFFORTS } from '../api/http'
 
@@ -128,6 +128,19 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
           title="Toggle memory"
         >
           {settings.memoryEnabled !== false ? 'On' : 'Off'}
+        </button>
+      </div>
+      <div className="model-setting-row model-setting-row--inline">
+        <label className="setting-label" title="Toggle the search_history tool. When off, the model cannot organically search your past chats and project files mid-conversation — the explicit Search box (header) still works regardless.">
+          <FontAwesomeIcon icon={faMagnifyingGlass} />
+          <span>Search history</span>
+        </label>
+        <button
+          className={`toggle-btn${settings.searchEnabled !== false ? ' active' : ''}`}
+          onClick={() => set({ searchEnabled: settings.searchEnabled === false ? true : false })}
+          title="Toggle search history"
+        >
+          {settings.searchEnabled !== false ? 'On' : 'Off'}
         </button>
       </div>
     </div>

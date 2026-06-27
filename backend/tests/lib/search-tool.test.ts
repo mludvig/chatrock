@@ -1,4 +1,4 @@
-import { buildFindCorpus, executeSearchHistoryTool } from '../../src/lib/find'
+import { buildSearchHistoryCorpus, executeSearchHistoryTool } from '../../src/lib/search'
 import * as dynamo from '../../src/lib/dynamo'
 import * as bedrock from '../../src/lib/bedrock'
 
@@ -15,9 +15,9 @@ const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 
 beforeEach(() => jest.clearAllMocks())
 
-// ── buildFindCorpus ────────────────────────────────────────────────────────────
+// ── buildSearchHistoryCorpus ────────────────────────────────────────────────────────────
 
-describe('buildFindCorpus', () => {
+describe('buildSearchHistoryCorpus', () => {
   test('project scope — includes only chats in that project, skips chats with no summary, includes ready files newest-first', async () => {
     mockDynamo.listChats.mockResolvedValue([
       { SK: 'CHAT#chat-1', title: 'In project, summarized', summary: 'Discussed X', topics: ['X'], projectId: 'proj-1' },
@@ -30,7 +30,7 @@ describe('buildFindCorpus', () => {
       { fileId: 'file-pending', filename: 'pending.md', status: 'processing' },
     ])
 
-    const corpus = await buildFindCorpus('user-1', 'project', 'proj-1')
+    const corpus = await buildSearchHistoryCorpus('user-1', 'project', 'proj-1')
 
     expect(corpus).toEqual([
       { kind: 'chat', id: 'chat-1', title: 'In project, summarized', topics: ['X'], summary: 'Discussed X', projectId: 'proj-1' },
@@ -47,7 +47,7 @@ describe('buildFindCorpus', () => {
       { fileId: 'file-1', filename: 'notes.txt', status: 'ready', microLabel: 'Quick notes' },
     ])
 
-    const corpus = await buildFindCorpus('user-1', 'project', 'proj-1')
+    const corpus = await buildSearchHistoryCorpus('user-1', 'project', 'proj-1')
     expect(corpus).toEqual([
       { kind: 'file', id: 'file-1', title: 'notes.txt', summary: 'Quick notes', projectId: 'proj-1' },
     ])
@@ -65,7 +65,7 @@ describe('buildFindCorpus', () => {
       { fileId: 'file-1', filename: 'design.md', status: 'ready', summary: 'Design notes' },
     ])
 
-    const corpus = await buildFindCorpus('user-1', 'global')
+    const corpus = await buildSearchHistoryCorpus('user-1', 'global')
 
     expect(corpus).toEqual([
       { kind: 'chat', id: 'chat-1', title: 'No project', summary: 'About A' },
@@ -74,15 +74,15 @@ describe('buildFindCorpus', () => {
     ])
   })
 
-  test('global scope — caps the project file sweep to FIND_PROJECT_SWEEP_CAP projects', async () => {
+  test('global scope — caps the project file sweep to SEARCH_HISTORY_PROJECT_SWEEP_CAP projects', async () => {
     const manyProjects = Array.from({ length: 30 }, (_, i) => ({ SK: `PROJECT#proj-${i}` }))
     mockDynamo.listChats.mockResolvedValue([])
     mockDynamo.listProjects.mockResolvedValue(manyProjects)
     mockDynamo.listProjectFiles.mockResolvedValue([])
 
-    await buildFindCorpus('user-1', 'global')
+    await buildSearchHistoryCorpus('user-1', 'global')
 
-    // FIND_PROJECT_SWEEP_CAP = 20 per lib/find.ts
+    // SEARCH_HISTORY_PROJECT_SWEEP_CAP = 20 per lib/search.ts
     expect(mockDynamo.listProjectFiles).toHaveBeenCalledTimes(20)
   })
 
@@ -92,7 +92,7 @@ describe('buildFindCorpus', () => {
     ])
     mockDynamo.listProjects.mockResolvedValue([])
 
-    const corpus = await buildFindCorpus('user-1', 'project', undefined)
+    const corpus = await buildSearchHistoryCorpus('user-1', 'project', undefined)
     expect(corpus).toEqual([{ kind: 'chat', id: 'chat-1', title: 'Some chat', summary: 'About A' }])
     expect(mockDynamo.listProjects).toHaveBeenCalled() // fell through to the global branch
   })
@@ -100,10 +100,10 @@ describe('buildFindCorpus', () => {
 
 // ── executeSearchHistoryTool ───────────────────────────────────────────────────
 //
-// These exercise the real findContext (only Bedrock + dynamo are mocked) — jest.spyOn on a
+// These exercise the real searchHistory (only Bedrock + dynamo are mocked) — jest.spyOn on a
 // same-module export does NOT intercept internal calls (TS compiles them as direct references
 // to the local function declaration, not through the exports object), so a true integration
-// through findContext is both correct and the only option here.
+// through searchHistory is both correct and the only option here.
 
 describe('executeSearchHistoryTool', () => {
   test('returns an error without touching dynamo when query is missing', async () => {
@@ -118,18 +118,18 @@ describe('executeSearchHistoryTool', () => {
     expect(mockDynamo.listChats).not.toHaveBeenCalled()
   })
 
-  test('ctx.findScope overrides a model-supplied scope (forced Find turn uses global despite scope:"project")', async () => {
+  test('ctx.searchScope overrides a model-supplied scope (forced Search turn uses global despite scope:"project")', async () => {
     mockDynamo.listChats.mockResolvedValue([])
     mockDynamo.listProjects.mockResolvedValue([])
     mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ results: [] }))
 
-    await executeSearchHistoryTool({ query: 'athena', scope: 'project' }, { sub: 'user-1', projectId: 'proj-1', findScope: 'global' })
+    await executeSearchHistoryTool({ query: 'athena', scope: 'project' }, { sub: 'user-1', projectId: 'proj-1', searchScope: 'global' })
 
-    // Global scope sweeps listProjects(); project scope never calls it. Proves ctx.findScope won.
+    // Global scope sweeps listProjects(); project scope never calls it. Proves ctx.searchScope won.
     expect(mockDynamo.listProjects).toHaveBeenCalled()
   })
 
-  test('falls back to model-supplied scope when ctx.findScope is unset (organic call honours scope:"project")', async () => {
+  test('falls back to model-supplied scope when ctx.searchScope is unset (organic call honours scope:"project")', async () => {
     mockDynamo.listChats.mockResolvedValue([])
     mockDynamo.listProjectFiles.mockResolvedValue([])
     mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ results: [] }))

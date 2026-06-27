@@ -36,11 +36,12 @@ export function parseSearchResults(
   }
 }
 
-// Result card shape for the search_history tool (the "Find" feature) — see backend/src/lib/find.ts.
-// kind distinguishes a past chat from a project file; `id` is the chatId or fileId; `projectId`
-// is present for file results (and for chat results that belong to a project) and is the
-// navigation target since there's no standalone file route.
-export interface FindResult {
+// Result card shape for the search_history tool (the "Search" feature, i.e. search across past
+// chats and project files) — see backend/src/lib/search.ts. kind distinguishes a past chat from
+// a project file; `id` is the chatId or fileId; `projectId` is present for file results (and for
+// chat results that belong to a project) and is the navigation target since there's no
+// standalone file route.
+export interface SearchHistoryResult {
   kind: 'chat' | 'file'
   id: string
   title: string
@@ -49,19 +50,19 @@ export interface FindResult {
 }
 
 /**
- * Parse the JSON result of a search_history tool call into a FindResult array — same
+ * Parse the JSON result of a search_history tool call into a SearchHistoryResult array — same
  * {results,text} envelope shape web_search uses, kept provider-agnostic the same way.
  * Returns undefined when the tool isn't search_history, isError is true, result is missing,
  * or the JSON cannot be parsed.
  */
-export function parseFindResults(
+export function parseSearchHistoryResults(
   name: string,
   result: string | undefined,
   isError: boolean | undefined,
-): FindResult[] | undefined {
+): SearchHistoryResult[] | undefined {
   if (name !== 'search_history' || !result || isError) return undefined
   try {
-    const parsed = JSON.parse(result) as { results?: FindResult[] }
+    const parsed = JSON.parse(result) as { results?: SearchHistoryResult[] }
     return parsed.results
   } catch {
     return undefined

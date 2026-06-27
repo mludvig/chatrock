@@ -15,11 +15,11 @@ import './app.scss'
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingFind } = useChatStore()
+  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingSearch } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [findQuery, setFindQuery] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
   // Default on: searching from inside a project most often means "this project", not everywhere.
-  const [findProjectOnly, setFindProjectOnly] = useState(true)
+  const [searchProjectOnly, setSearchProjectOnly] = useState(true)
 
   const auth = useAuth()
   const accessToken = auth.user?.access_token ?? ''
@@ -51,19 +51,19 @@ function AuthedApp() {
 
   const defaultModel = lastModel || userPreferences.defaultModel || models[1]?.id || models[0]?.id || ''
 
-  // Find's "Project only" toggle only makes sense when the current view is project-scoped:
+  // Search's "Project only" toggle only makes sense when the current view is project-scoped:
   // either the project dashboard itself, or a chat that belongs to a project.
   const projectViewMatch = /^\/p\/([^/]+)/.exec(location.pathname)
   const chatViewMatch = /^\/c\/([^/]+)/.exec(location.pathname)
   const currentChatProjectId = chatViewMatch ? chats.find(c => c.chatId === chatViewMatch[1])?.projectId : undefined
   const contextProjectId = projectViewMatch?.[1] ?? currentChatProjectId
 
-  function submitFind() {
-    const query = findQuery.trim()
+  function submitSearch() {
+    const query = searchQuery.trim()
     if (!query) return
-    const scope: 'project' | 'global' = (contextProjectId && findProjectOnly) ? 'project' : 'global'
-    setPendingFind({ query, scope, ...(scope === 'project' ? { projectId: contextProjectId } : {}) })
-    setFindQuery('')
+    const scope: 'project' | 'global' = (contextProjectId && searchProjectOnly) ? 'project' : 'global'
+    setPendingSearch({ query, scope, ...(scope === 'project' ? { projectId: contextProjectId } : {}) })
+    setSearchQuery('')
     navigate('/c/new')
   }
 
@@ -99,22 +99,22 @@ function AuthedApp() {
           <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
           Chatrock
         </span>
-        <div className="find-box" onClick={e => e.stopPropagation()}>
-          <FontAwesomeIcon icon={faMagnifyingGlass} className="find-icon" />
+        <div className="search-box" onClick={e => e.stopPropagation()}>
+          <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
           <input
             type="text"
-            className="find-input"
-            placeholder="Find past chats & files…"
-            value={findQuery}
-            onChange={e => setFindQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') submitFind() }}
+            className="search-input"
+            placeholder="Search past chats & files…"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') submitSearch() }}
           />
           {contextProjectId && (
             <button
               type="button"
-              className={`find-scope-toggle${findProjectOnly ? ' active' : ''}`}
-              onClick={() => setFindProjectOnly(v => !v)}
-              title={findProjectOnly ? 'Searching this project only — click to search everywhere' : 'Searching everywhere — click to limit to this project'}
+              className={`search-scope-toggle${searchProjectOnly ? ' active' : ''}`}
+              onClick={() => setSearchProjectOnly(v => !v)}
+              title={searchProjectOnly ? 'Searching this project only — click to search everywhere' : 'Searching everywhere — click to limit to this project'}
             >
               Project only
             </button>

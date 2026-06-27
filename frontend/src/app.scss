@@ -169,8 +169,8 @@ $header-h: 45px;
   &:hover { background: $accent-h; }
 }
 
-// Find box — sits in the global header between the brand and the new-chat button.
-.find-box {
+// Search box — sits in the global header between the brand and the new-chat button.
+.search-box {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -184,13 +184,13 @@ $header-h: 45px;
   cursor: text;
 }
 
-.find-icon {
+.search-icon {
   color: $muted;
   font-size: 12px;
   flex-shrink: 0;
 }
 
-.find-input {
+.search-input {
   flex: 1;
   min-width: 0;
   border: none;
@@ -202,7 +202,7 @@ $header-h: 45px;
   &::placeholder { color: $muted; }
 }
 
-.find-scope-toggle {
+.search-scope-toggle {
   flex-shrink: 0;
   font-size: 11px;
   color: $muted;
@@ -1280,7 +1280,7 @@ $header-h: 45px;
     overflow: hidden;
   }
 
-  // find-result-card.disabled: a file result with no project to link to (shouldn't happen
+  // search-history-result-card.disabled: a file result with no project to link to (shouldn't happen
   // in practice) — render inert instead of a dead link.
   &.disabled {
     cursor: default;
