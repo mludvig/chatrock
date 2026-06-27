@@ -50,6 +50,7 @@ jest.mock('../../src/lib/enrichment', () => ({
   enrichUserFacts: jest.fn().mockResolvedValue({ memories: [] }),
   enrichProjectFacts: jest.fn().mockResolvedValue({ memories: [] }),
   generateChatTitle: jest.fn().mockResolvedValue(undefined),
+  summarizeChat: jest.fn().mockResolvedValue({ summary: '', topics: [] }),
 }))
 
 const mockDynamo  = dynamo  as jest.Mocked<typeof dynamo>
@@ -1931,8 +1932,8 @@ describe('project chat enrichment', () => {
     mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [{ memId: null, category: 'identity', text: 'Alice' }] })
     mockEnrichment.enrichProjectFacts.mockResolvedValue({
       memories: [{ memId: null, category: 'decision', text: 'Deploy via deploy.sh' }],
-      summary: 'Deployment chat',
     })
+    mockEnrichment.summarizeChat.mockResolvedValue({ summary: 'Deployment chat', topics: ['deployment'] })
   }
 
   function simpleStream() {
@@ -1969,14 +1970,29 @@ describe('project chat enrichment', () => {
     expect(arg.category).toBe('other')
   })
 
-  test('P3: project chat — updateChatSummary called with summary from enrichResult', async () => {
+  test('P3: project chat — updateChatSummary called with summary+topics from summarizeChat', async () => {
     projectBase()
     simpleStream()
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
     expect(mockDynamo.updateChatSummary).toHaveBeenCalledTimes(1)
-    expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'c1', 'Deployment chat')
+    expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'c1', { summary: 'Deployment chat', topics: ['deployment'] })
+  })
+
+  test('P3b: project chat — summarizeChat receives the chat\'s existing summary/topics to merge, not a blank slate', async () => {
+    projectBase()
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing',
+      projectId: 'proj-1', summary: 'Prior summary.', topics: ['prior topic'],
+    })
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockEnrichment.summarizeChat).toHaveBeenCalledWith(
+      expect.any(String), 'Prior summary.', ['prior topic'], 'c1',
+    )
   })
 
   test('P4: project chat — project instructions included in assembled system prompt', async () => {
@@ -1991,7 +2007,7 @@ describe('project chat enrichment', () => {
     expect(passedSystemPrompt as string).toContain('Always use TypeScript')
   })
 
-  test('P5: non-project chat — enrichTurn called with isProject:false, no putProjectMemory or updateChatSummary', async () => {
+  test('P5: non-project chat — no enrichProjectFacts/putProjectMemory; updateChatSummary not called when summarizeChat returns empty', async () => {
     // Chat with no projectId
     mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
     mockDynamo.getChat.mockResolvedValue({
@@ -2004,6 +2020,9 @@ describe('project chat enrichment', () => {
     mockDynamo.getUserPrefs.mockResolvedValue({})
     mockDynamo.listUserMemories.mockResolvedValue([])
     mockMemory.reconcileMemoryList.mockReturnValue([])
+    // earlier tests in this describe block override the shared summarizeChat
+    // mock via projectBase() — reset to the empty-result case explicitly
+    mockEnrichment.summarizeChat.mockResolvedValue({ summary: '', topics: [] })
     simpleStream()
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
@@ -2011,6 +2030,32 @@ describe('project chat enrichment', () => {
     expect(mockEnrichment.enrichProjectFacts).not.toHaveBeenCalled()
     expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
     expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
+  })
+
+  test('P5b: non-project chat — summarizeChat IS called and its result IS persisted (universal, not project-gated)', async () => {
+    // Chat with no projectId — summary/topics must not depend on project membership
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing',
+      // no projectId field
+    })
+    mockDynamo.listMessages.mockResolvedValue([])
+    mockDynamo.putMessage.mockResolvedValue(undefined)
+    mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+    mockDynamo.getUserPrefs.mockResolvedValue({})
+    mockDynamo.listUserMemories.mockResolvedValue([])
+    mockDynamo.updateChatSummary.mockResolvedValue(undefined)
+    mockMemory.reconcileMemoryList.mockReturnValue([])
+    mockEnrichment.summarizeChat.mockResolvedValue({ summary: 'A non-project chat about widgets.', topics: ['widgets'] })
+    simpleStream()
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockEnrichment.summarizeChat).toHaveBeenCalled()
+    expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'c1', {
+      summary: 'A non-project chat about widgets.',
+      topics: ['widgets'],
+    })
   })
 
   test('P6: project chat — manifest files included in system prompt', async () => {

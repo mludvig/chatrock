@@ -418,13 +418,22 @@ export async function updateChatProject(
   }
 }
 
-export async function updateChatSummary(sub: string, chatId: string, summary: string): Promise<void> {
+export async function updateChatSummary(
+  sub: string,
+  chatId: string,
+  fields: { summary?: string; topics?: string[] },
+): Promise<void> {
+  const sets: string[] = []
+  const values: Record<string, unknown> = {}
+  if (fields.summary !== undefined) { sets.push('summary = :s'); values[':s'] = fields.summary }
+  if (fields.topics !== undefined) { sets.push('topics = :t'); values[':t'] = fields.topics }
+  if (sets.length === 0) return
   // intentionally omits updatedAt to avoid reordering the chat list
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
     Key: buildChatKey(sub, chatId),
-    UpdateExpression: 'SET summary = :s',
-    ExpressionAttributeValues: { ':s': summary },
+    UpdateExpression: `SET ${sets.join(', ')}`,
+    ExpressionAttributeValues: values,
   }))
 }
 

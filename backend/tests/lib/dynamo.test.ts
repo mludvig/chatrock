@@ -4,7 +4,9 @@ import {
   buildChatKey, buildMsgKey, buildConnKey, buildTurnKey, ddb, listMessages,
   buildUserPrefKey, getUserPrefs, putUserPrefs,
   buildUserMemKey, listUserMemories, putUserMemory, deleteUserMemory,
+  updateChatSummary,
 } from '../../src/lib/dynamo'
+import { UpdateCommand } from '@aws-sdk/lib-dynamodb'
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -224,4 +226,32 @@ test('deleteUserMemory calls DeleteCommand with correct key', async () => {
   const call = mockSend.mock.calls[0][0]
   expect(call.input.TableName).toBeDefined()
   expect(call.input.Key).toEqual({ PK: 'USER#sub1', SK: 'MEM#USER#mem-abc' })
+})
+
+// ── updateChatSummary ────────────────────────────────────────────────────────
+
+test('updateChatSummary writes both summary and topics, omitting updatedAt', async () => {
+  mockSend.mockResolvedValueOnce({})
+  await updateChatSummary('sub1', 'chat1', { summary: 'A summary.', topics: ['a', 'b'] })
+
+  expect(mockSend).toHaveBeenCalledTimes(1)
+  const call = mockSend.mock.calls[0][0]
+  expect(call).toBeInstanceOf(UpdateCommand)
+  expect(call.input.Key).toEqual({ PK: 'USER#sub1', SK: 'CHAT#chat1' })
+  expect(call.input.UpdateExpression).toBe('SET summary = :s, topics = :t')
+  expect(call.input.ExpressionAttributeValues).toEqual({ ':s': 'A summary.', ':t': ['a', 'b'] })
+})
+
+test('updateChatSummary writes only the provided field when the other is omitted', async () => {
+  mockSend.mockResolvedValueOnce({})
+  await updateChatSummary('sub1', 'chat1', { topics: ['x'] })
+
+  const call = mockSend.mock.calls[0][0]
+  expect(call.input.UpdateExpression).toBe('SET topics = :t')
+  expect(call.input.ExpressionAttributeValues).toEqual({ ':t': ['x'] })
+})
+
+test('updateChatSummary is a no-op (no ddb call) when neither field is provided', async () => {
+  await updateChatSummary('sub1', 'chat1', {})
+  expect(mockSend).not.toHaveBeenCalled()
 })

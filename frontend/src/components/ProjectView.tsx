@@ -239,6 +239,13 @@ export default function ProjectView({ defaultModel }: Props) {
                 <div className="chat-item-content">
                   <span className="chat-title">{chat.title}</span>
                   {chat.summary && <span className="chat-summary">{chat.summary}</span>}
+                  {chat.topics && chat.topics.length > 0 && (
+                    <div className="topic-chips">
+                      {chat.topics.map(topic => (
+                        <span key={topic} className="topic-chip">{topic}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="chat-actions">
                   <button onClick={e => handleRemoveFromProject(e, chat.chatId)} title="Remove from project">

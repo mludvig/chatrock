@@ -12,7 +12,7 @@ import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/atta
 import { resolvePreferences, type UserPreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
 import { reconcileMemoryList } from '../lib/memory'
-import { enrichUserFacts, enrichProjectFacts, generateChatTitle } from '../lib/enrichment'
+import { enrichUserFacts, enrichProjectFacts, generateChatTitle, summarizeChat } from '../lib/enrichment'
 import { fetchS3Text } from '../lib/projectFiles'
 
 function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: ContentBlock): ContentBlock[] {
@@ -640,7 +640,7 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // ── Post-turn enrichment (two Haiku calls: user facts + project facts/summary) ──
+  // ── Post-turn enrichment (user facts + chat summary/topics + project facts) ──
   // Skipped when memoryEnabled is false.
   if (memoryEnabled) {
     try {
@@ -688,7 +688,19 @@ export const buildHandler = (postFn: PostFn) => async (
         }
       }
 
-      // ── Project facts + summary (reuse projectMemoriesRaw already loaded) ──
+      // ── Chat summary + topics — every chat, not just project ones; merges
+      // into whatever summary/topics this chat already has. ──
+      const summaryResult = await summarizeChat(
+        transcript,
+        (chat.summary as string | undefined) ?? '',
+        (chat.topics as string[] | undefined) ?? [],
+        chatId,
+      )
+      if (summaryResult.summary || summaryResult.topics.length > 0) {
+        await updateChatSummary(sub, chatId, { summary: summaryResult.summary, topics: summaryResult.topics })
+      }
+
+      // ── Project facts (reuse projectMemoriesRaw already loaded) ──
       if (isProject && projectId) {
         const existingProjectMems = (projectMemoriesRaw as Record<string, unknown>[]).map(i => ({
           memId: i.memId as string,
@@ -710,9 +722,6 @@ export const buildHandler = (postFn: PostFn) => async (
             await deleteProjectMemory(projectId, op.memId)
             totalChanged++
           }
-        }
-        if (projectResult.summary) {
-          await updateChatSummary(sub, chatId, projectResult.summary)
         }
       }
 

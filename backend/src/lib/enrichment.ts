@@ -20,7 +20,11 @@ export interface EnrichUserResult {
 
 export interface EnrichProjectResult {
   memories: MemItem[]
-  summary?: string
+}
+
+export interface ChatSummaryResult {
+  summary: string
+  topics: string[]
 }
 
 // ── Prompts ──────────────────────────────────────────────────────────────────
@@ -52,11 +56,23 @@ On parse failure or nothing notable: return the existing list unchanged (preserv
 
 const TITLE_PROMPT = `Generate a very short chat title (max 6 words) that captures the main topic of the conversation below. Reply with ONLY the title, no quotes, no punctuation at the end.`
 
+const SUMMARIZE_CHAT_SYSTEM_PROMPT = `You maintain a running summary and topic list for a chat conversation, updated incrementally after each turn.
+
+You receive the EXISTING summary/topics (empty if this is the first turn) and the LATEST exchange — not the full history.
+Return ONLY a valid JSON object — no markdown, no explanation:
+{ "summary": "<1-3 sentence summary of the conversation as a whole>", "topics": ["<short topic phrase>", ...] }
+
+Rules:
+- Merge the latest exchange into the existing summary/topics — don't discard prior context, but drop topics that are no longer relevant.
+- summary: 1-3 sentences describing what the conversation has covered overall, not just the latest exchange.
+- topics: 2-8 short noun phrases (2-5 words each), specific enough to be useful for search later (e.g. "S3 Athena query tuning", not "AWS").
+- If nothing substantive has been discussed yet (e.g. just a greeting), return { "summary": "", "topics": [] }.`
+
 const PROJECT_SYSTEM_PROMPT = `You manage a persistent memory list about a project. The list accumulates durable facts that are SPECIFIC TO THIS PROJECT and were established or confirmed BY THE USER — the context a new teammate would need to continue this project.
 
 You receive the current memory list as JSON and a conversation transcript with "User:" and "Assistant:" turns.
 Return ONLY a valid JSON object — no markdown, no explanation:
-{ "memories": [{"memId": "<existing-id or null for new>", "category": "decision|convention|fact|constraint|glossary|other", "text": "<one sentence>"}, ...], "summary": "<1-3 sentence chat summary>" }
+{ "memories": [{"memId": "<existing-id or null for new>", "category": "decision|convention|fact|constraint|glossary|other", "text": "<one sentence>"}, ...] }
 
 PROVENANCE IS DECISIVE. A memory must come from the USER — something they decided, chose, required, named, or told you about their own project, environment, customer, or data. Do NOT record knowledge the ASSISTANT produced while explaining, teaching, comparing, or summarising a topic, even when it is accurate. When the user asks "what is X" or "explain Y", the assistant's reply is general reference material, NOT a project fact.
 
@@ -186,7 +202,7 @@ export async function generateChatTitle(transcript: string, chatId?: string): Pr
 // ── enrichProjectFacts ────────────────────────────────────────────────────────
 
 /**
- * Haiku call returning the updated project memory list and a summary.
+ * Haiku call returning the updated project memory list.
  * Never throws — returns existing list unchanged on failure.
  */
 export async function enrichProjectFacts(
@@ -220,27 +236,68 @@ export async function enrichProjectFacts(
 
     const validProjectCategories = new Set(['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'])
     const memories = parseMemItems(obj.memories).filter(m => validProjectCategories.has(m.category))
-    const result: EnrichProjectResult = { memories: memories.length > 0 ? memories : fallback.memories }
-
-    if (typeof obj.summary === 'string' && obj.summary.trim()) {
-      result.summary = obj.summary.trim()
-    }
-
-    return result
+    return { memories: memories.length > 0 ? memories : fallback.memories }
   } catch (err) {
     console.error(JSON.stringify({ event: 'enrich_project_facts_error', chatId, error: String(err) }))
     return fallback
   }
 }
 
-// ── enrichChatForProject ──────────────────────────────────────────────────────
+// ── summarizeChat ────────────────────────────────────────────────────────────
 
 /**
- * Summary-only wrapper: loads a chat's messages, builds a transcript,
- * calls enrichProjectFacts with no existing memories to get a summary.
+ * Haiku call that merges the latest exchange into a running summary + topic
+ * list for a chat. Independent of project membership — every chat gets one.
+ * Never throws — returns { summary: '', topics: [] } on failure.
+ */
+export async function summarizeChat(
+  transcript: string,
+  existingSummary: string,
+  existingTopics: string[],
+  chatId?: string,
+): Promise<ChatSummaryResult> {
+  const fallback: ChatSummaryResult = { summary: '', topics: [] }
+  try {
+    const userMsg = [
+      `EXISTING_SUMMARY: ${existingSummary || '(none yet)'}`,
+      `EXISTING_TOPICS: ${JSON.stringify(existingTopics)}`,
+      ``,
+      `LATEST_EXCHANGE:`,
+      transcript,
+    ].join('\n')
+
+    const response = await converseOnce(
+      MEMORY_EXTRACTION_MODEL,
+      SUMMARIZE_CHAT_SYSTEM_PROMPT,
+      [{ role: 'user', content: [{ text: userMsg }] }],
+      { maxTokens: 512 },
+    )
+
+    const obj = safeParse(response)
+    if (!obj) {
+      console.error(JSON.stringify({ event: 'summarize_chat_parse_error', chatId, response: response?.slice(0, 500) }))
+      return fallback
+    }
+
+    const summary = typeof obj.summary === 'string' ? obj.summary.trim() : ''
+    const topics = Array.isArray(obj.topics)
+      ? obj.topics.filter((t): t is string => typeof t === 'string' && t.trim().length > 0).map(t => t.trim()).slice(0, 8)
+      : []
+    return { summary, topics }
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'summarize_chat_error', chatId, error: String(err) }))
+    return fallback
+  }
+}
+
+/**
+ * Loads a chat's messages, builds a transcript from the last 20 turns, and
+ * calls summarizeChat with no existing summary/topics (a fresh rebuild,
+ * not an incremental merge) — used to backfill a chat immediately (e.g. on
+ * moving it into a project) rather than waiting for its next turn.
  * Never throws.
  */
-export async function enrichChatForProject(sub: string, chatId: string): Promise<string | undefined> {
+export async function summarizeChatById(sub: string, chatId: string): Promise<ChatSummaryResult | undefined> {
   try {
     const rows = (await listMessages(chatId)) as unknown as TurnRow[]
     if (rows.length === 0) return undefined
@@ -259,11 +316,11 @@ export async function enrichChatForProject(sub: string, chatId: string): Promise
       })
       .join('\n')
 
-    const result = await enrichProjectFacts(transcript, [], chatId)
-    if (result.summary) {
-      await updateChatSummary(sub, chatId, result.summary)
+    const result = await summarizeChat(transcript, '', [], chatId)
+    if (result.summary || result.topics.length > 0) {
+      await updateChatSummary(sub, chatId, { summary: result.summary, topics: result.topics })
     }
-    return result.summary
+    return result
   } catch {
     return undefined
   }

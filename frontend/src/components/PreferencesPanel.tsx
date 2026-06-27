@@ -444,6 +444,20 @@ export default function PreferencesPanel() {
         <div className="prefs-tab-content">
           <p className="prefs-desc">Overrides the defaults for this chat only.</p>
 
+          {!isNew && (activeChat?.summary || (activeChat?.topics && activeChat.topics.length > 0)) && (
+            <div className="pref-section">
+              <div className="pref-label">Summary</div>
+              {activeChat?.summary && <p className="prefs-desc">{activeChat.summary}</p>}
+              {activeChat?.topics && activeChat.topics.length > 0 && (
+                <div className="topic-chips">
+                  {activeChat.topics.map(topic => (
+                    <span key={topic} className="topic-chip">{topic}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="pref-section">
             <div className="pref-label">Custom instructions</div>
             <textarea

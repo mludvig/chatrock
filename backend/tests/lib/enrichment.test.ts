@@ -1,4 +1,4 @@
-import { enrichUserFacts, enrichProjectFacts, enrichChatForProject, generateChatTitle } from '../../src/lib/enrichment'
+import { enrichUserFacts, enrichProjectFacts, summarizeChat, summarizeChatById, generateChatTitle } from '../../src/lib/enrichment'
 import * as bedrock from '../../src/lib/bedrock'
 import * as dynamo from '../../src/lib/dynamo'
 import * as treeLib from '../../src/lib/tree'
@@ -154,17 +154,15 @@ test('generateChatTitle — is independent of enrichUserFacts: a memory parse fa
 
 // ── enrichProjectFacts ────────────────────────────────────────────────────────
 
-test('enrichProjectFacts — returns updated memory list and summary', async () => {
+test('enrichProjectFacts — returns updated memory list', async () => {
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
     memories: [
       { memId: 'proj-1', category: 'decision', text: 'Deploy via ./deploy.sh' },
       { memId: null, category: 'fact', text: 'Project uses TypeScript' },
     ],
-    summary: 'Chat about the deployment pipeline.',
   }))
   const result = await enrichProjectFacts(TRANSCRIPT, EXISTING_PROJECT_MEMS)
   expect(result.memories).toHaveLength(2)
-  expect(result.summary).toBe('Chat about the deployment pipeline.')
 })
 
 test('enrichProjectFacts — falls back to existing list on malformed output and logs the failure', async () => {
@@ -175,7 +173,6 @@ test('enrichProjectFacts — falls back to existing list on malformed output and
   errorSpy.mockRestore()
   expect(result.memories).toHaveLength(1)
   expect(result.memories[0].memId).toBe('proj-1')
-  expect(result.summary).toBeUndefined()
   expect(logged.some(l => l.event === 'enrich_project_facts_parse_error' && l.chatId === 'chat-1')).toBe(true)
 })
 
@@ -185,7 +182,6 @@ test('enrichProjectFacts — filters out invalid category values', async () => {
       { memId: null, category: 'decision', text: 'Valid project fact' },
       { memId: null, category: 'identity', text: 'Wrong category for project' },
     ],
-    summary: 'Test.',
   }))
   const result = await enrichProjectFacts(TRANSCRIPT, [])
   expect(result.memories).toHaveLength(1)
@@ -193,7 +189,7 @@ test('enrichProjectFacts — filters out invalid category values', async () => {
 })
 
 test('enrichProjectFacts — passes existing memories in user message', async () => {
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [], summary: 'test' }))
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
   await enrichProjectFacts(TRANSCRIPT, EXISTING_PROJECT_MEMS)
   const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content![0] as { text: string }).text
   expect(userMsg).toContain('CURRENT_MEMORIES')
@@ -201,70 +197,124 @@ test('enrichProjectFacts — passes existing memories in user message', async ()
 })
 
 test('enrichProjectFacts — system prompt requires user provenance and excludes general knowledge', async () => {
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [], summary: '' }))
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
   await enrichProjectFacts(TRANSCRIPT, [])
   const systemPrompt = mockBedrock.converseOnce.mock.calls[0][1]
   expect(systemPrompt).toContain('PROVENANCE IS DECISIVE')
   expect(systemPrompt).toContain('Never capture')
 })
 
-// ── enrichChatForProject ──────────────────────────────────────────────────────
+// ── summarizeChat ─────────────────────────────────────────────────────────────
+
+test('summarizeChat — returns merged summary and topics', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    summary: 'User and assistant discussed deploying via ./deploy.sh.',
+    topics: ['deployment pipeline', 'terraform apply'],
+  }))
+  const result = await summarizeChat(TRANSCRIPT, '', [])
+  expect(result.summary).toBe('User and assistant discussed deploying via ./deploy.sh.')
+  expect(result.topics).toEqual(['deployment pipeline', 'terraform apply'])
+})
+
+test('summarizeChat — passes existing summary and topics in user message', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ summary: '', topics: [] }))
+  await summarizeChat(TRANSCRIPT, 'Prior summary.', ['topic a'])
+  const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content![0] as { text: string }).text
+  expect(userMsg).toContain('EXISTING_SUMMARY: Prior summary.')
+  expect(userMsg).toContain('EXISTING_TOPICS: ["topic a"]')
+})
+
+test('summarizeChat — falls back to empty summary/topics on malformed output and logs the failure', async () => {
+  mockBedrock.converseOnce.mockResolvedValue('not json')
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const result = await summarizeChat(TRANSCRIPT, '', [], 'chat-1')
+  const logged = errorSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
+  errorSpy.mockRestore()
+  expect(result).toEqual({ summary: '', topics: [] })
+  expect(logged.some(l => l.event === 'summarize_chat_parse_error' && l.chatId === 'chat-1')).toBe(true)
+})
+
+test('summarizeChat — falls back to empty summary/topics when Bedrock throws and logs the failure', async () => {
+  mockBedrock.converseOnce.mockRejectedValue(new Error('network'))
+  const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+  const result = await summarizeChat(TRANSCRIPT, '', [], 'chat-1')
+  const logged = errorSpy.mock.calls.map(c => JSON.parse(c[0] as string) as Record<string, unknown>)
+  errorSpy.mockRestore()
+  expect(result).toEqual({ summary: '', topics: [] })
+  expect(logged.some(l => l.event === 'summarize_chat_error' && l.chatId === 'chat-1')).toBe(true)
+})
+
+test('summarizeChat — filters non-string topics and caps at 8', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    summary: 'x',
+    topics: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 42, null, ''],
+  }))
+  const result = await summarizeChat(TRANSCRIPT, '', [])
+  expect(result.topics).toHaveLength(8)
+  expect(result.topics).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])
+})
+
+// ── summarizeChatById ─────────────────────────────────────────────────────────
 
 const FAKE_ROWS = [
   { msgId: 'm1', parentId: null, role: 'user', blocks: [{ text: 'Hello project' }] },
   { msgId: 'm2', parentId: 'm1', role: 'assistant', blocks: [{ text: 'Hi from the project' }] },
 ]
 
-test('enrichChatForProject — calls updateChatSummary when summary is returned', async () => {
+test('summarizeChatById — calls updateChatSummary when summary or topics are returned', async () => {
   mockDynamo.listMessages.mockResolvedValue(FAKE_ROWS as unknown as Record<string, unknown>[])
   mockTree.buildActivePath.mockReturnValue(FAKE_ROWS as any)
   mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
-    memories: [],
     summary: 'A project chat about greetings.',
+    topics: ['greetings'],
   }))
   mockDynamo.updateChatSummary.mockResolvedValue(undefined)
 
-  const result = await enrichChatForProject('user-1', 'chat-1')
+  const result = await summarizeChatById('user-1', 'chat-1')
 
-  expect(result).toBe('A project chat about greetings.')
-  expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'chat-1', 'A project chat about greetings.')
+  expect(result).toEqual({ summary: 'A project chat about greetings.', topics: ['greetings'] })
+  expect(mockDynamo.updateChatSummary).toHaveBeenCalledWith('user-1', 'chat-1', {
+    summary: 'A project chat about greetings.',
+    topics: ['greetings'],
+  })
 })
 
-test('enrichChatForProject — no updateChatSummary when no summary returned', async () => {
+test('summarizeChatById — no updateChatSummary when neither summary nor topics returned', async () => {
   mockDynamo.listMessages.mockResolvedValue(FAKE_ROWS as unknown as Record<string, unknown>[])
   mockTree.buildActivePath.mockReturnValue(FAKE_ROWS as any)
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [] }))
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ summary: '', topics: [] }))
 
-  const result = await enrichChatForProject('user-1', 'chat-1')
+  const result = await summarizeChatById('user-1', 'chat-1')
 
-  expect(result).toBeUndefined()
+  expect(result).toEqual({ summary: '', topics: [] })
   expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
 })
 
-test('enrichChatForProject — returns undefined when chat has no messages (never throws)', async () => {
+test('summarizeChatById — returns undefined when chat has no messages (never throws)', async () => {
   mockDynamo.listMessages.mockResolvedValue([])
 
-  const result = await enrichChatForProject('user-1', 'empty-chat')
+  const result = await summarizeChatById('user-1', 'empty-chat')
 
   expect(result).toBeUndefined()
   expect(mockDynamo.updateChatSummary).not.toHaveBeenCalled()
 })
 
-test('enrichChatForProject — returns undefined on error (never throws)', async () => {
+test('summarizeChatById — returns undefined on error (never throws)', async () => {
   mockDynamo.listMessages.mockRejectedValue(new Error('DB error'))
 
-  const result = await enrichChatForProject('user-1', 'chat-1')
+  const result = await summarizeChatById('user-1', 'chat-1')
 
   expect(result).toBeUndefined()
 })
 
-test('enrichChatForProject — passes empty existing memories (summary-only call)', async () => {
+test('summarizeChatById — passes empty existing summary/topics (fresh rebuild, not a merge)', async () => {
   mockDynamo.listMessages.mockResolvedValue(FAKE_ROWS as unknown as Record<string, unknown>[])
   mockTree.buildActivePath.mockReturnValue(FAKE_ROWS as any)
-  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ memories: [], summary: 'test' }))
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ summary: 'test', topics: [] }))
 
-  await enrichChatForProject('user-1', 'chat-1')
+  await summarizeChatById('user-1', 'chat-1')
 
   const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content![0] as { text: string }).text
-  expect(userMsg).toContain('CURRENT_MEMORIES: []')
+  expect(userMsg).toContain('EXISTING_SUMMARY: (none yet)')
+  expect(userMsg).toContain('EXISTING_TOPICS: []')
 })

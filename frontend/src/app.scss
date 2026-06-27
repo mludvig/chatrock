@@ -253,6 +253,26 @@ $header-h: 45px;
   opacity: 0.55;
 }
 
+// Topic chips — read-only labels surfacing a chat's extracted topics
+// (ProjectsPanel/ProjectView chat lists, PreferencesPanel "This chat" tab)
+.topic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.topic-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: $muted;
+  background: $bg;
+  border: 1px solid $border;
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
 .chat-actions {
   display: flex;
   gap: 2px;
