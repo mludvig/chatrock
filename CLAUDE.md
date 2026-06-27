@@ -295,7 +295,7 @@ Two writers, two stores (user and project):
 ### Attachments
 
 `lib/attachments.ts` handles the full attachment lifecycle:
-- **Validate**: `validateAttachment(contentType, sizeBytes)` — allowlist: images (png/jpeg/gif/webp ≤5 MB), pdf (≤25 MB), text/csv/md/octet-stream (≤1 MB).
+- **Validate**: `validateAttachment(contentType, sizeBytes, filename)` — images (png/jpeg/gif/webp ≤5 MB) and pdf (≤25 MB) are matched by exact contentType; everything else is classified primarily by **file extension** (`TEXT_EXTENSIONS` — csv/tsv, md/markdown, and ~60 common code/config extensions, all ≤1 MB) since browsers report wildly inconsistent or empty contentType for text/code files depending on OS file associations (e.g. `.csv` as `application/vnd.ms-excel` on Windows). Falls back to any `text/*` contentType or `application/octet-stream` for extensions not in the list. Bedrock's document block only accepts `pdf/csv/doc/docx/html/md/txt/xls/xlsx` as `format`, so everything not csv/md/pdf is sent as `txt`. The frontend (`ChatView.tsx`) mirrors this extension set and prompts the user (`confirm()`) to attach-as-plain-text when a file matches neither a known extension nor a `text/*` contentType.
 - **Upload**: `POST /api/attachments` (in `http/chats.ts`) returns `{s3Key, uploadUrl}` (S3 presigned PUT, 15-min expiry). Client uploads directly to S3.
 - **Display**: `signCloudFrontUrl(s3Key)` issues a signed CloudFront URL (1-hour expiry) using an RSA private key loaded from SSM. Called by `GET /messages` to hydrate `attachmentUrl` on each block before returning to the client.
 - **Inference**: `hydrateBlocks(blocks)` fetches bytes from S3 for image/document blocks before the Bedrock call (blocks carry `s3://bucket/key` at rest).

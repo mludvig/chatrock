@@ -12,21 +12,61 @@ interface AllowedType {
   maxBytes: number
 }
 
+const DOCUMENT_MAX_BYTES = 1 * 1024 * 1024
+
 const ALLOWED: Record<string, AllowedType> = {
   'image/png':                { kind: 'image',    format: 'png',  maxBytes: 5 * 1024 * 1024 },
   'image/jpeg':               { kind: 'image',    format: 'jpeg', maxBytes: 5 * 1024 * 1024 },
   'image/gif':                { kind: 'image',    format: 'gif',  maxBytes: 5 * 1024 * 1024 },
   'image/webp':               { kind: 'image',    format: 'webp', maxBytes: 5 * 1024 * 1024 },
   'application/pdf':          { kind: 'document', format: 'pdf',  maxBytes: 25 * 1024 * 1024 },
-  'text/plain':               { kind: 'document', format: 'txt',  maxBytes: 1 * 1024 * 1024 },
-  'text/markdown':            { kind: 'document', format: 'md',   maxBytes: 1 * 1024 * 1024 },
-  'text/x-markdown':          { kind: 'document', format: 'md',   maxBytes: 1 * 1024 * 1024 },
-  'text/csv':                 { kind: 'document', format: 'csv',  maxBytes: 1 * 1024 * 1024 },
-  'application/octet-stream': { kind: 'document', format: 'txt',  maxBytes: 1 * 1024 * 1024 },
+  'text/plain':               { kind: 'document', format: 'txt',  maxBytes: DOCUMENT_MAX_BYTES },
+  'text/markdown':            { kind: 'document', format: 'md',   maxBytes: DOCUMENT_MAX_BYTES },
+  'text/x-markdown':          { kind: 'document', format: 'md',   maxBytes: DOCUMENT_MAX_BYTES },
+  'text/csv':                 { kind: 'document', format: 'csv',  maxBytes: DOCUMENT_MAX_BYTES },
+  'application/octet-stream': { kind: 'document', format: 'txt',  maxBytes: DOCUMENT_MAX_BYTES },
 }
 
-export function validateAttachment(contentType: string, sizeBytes: number): AllowedType {
-  const spec = ALLOWED[contentType]
+// Bedrock's Converse API document block only accepts a handful of `format` values
+// (pdf/csv/doc/docx/html/md/txt/xls/xlsx) -- anything else just goes in as 'txt'.
+// Extension is the reliable signal for text/code files: browsers report wildly
+// inconsistent (or empty) contentType for them depending on OS file associations
+// (e.g. .csv as application/vnd.ms-excel on Windows, .json/.yaml/.py often with no
+// contentType at all) -- so these are classified by extension instead of trusting it.
+const TEXT_EXTENSIONS: Record<string, 'csv' | 'md' | 'txt'> = {
+  csv: 'csv', tsv: 'csv',
+  md: 'md', markdown: 'md',
+  txt: 'txt', log: 'txt', json: 'txt', jsonl: 'txt', ndjson: 'txt',
+  yaml: 'txt', yml: 'txt', xml: 'txt', html: 'txt', htm: 'txt',
+  css: 'txt', scss: 'txt', less: 'txt',
+  ini: 'txt', cfg: 'txt', conf: 'txt', toml: 'txt', env: 'txt', properties: 'txt',
+  sh: 'txt', bash: 'txt', zsh: 'txt', bat: 'txt', ps1: 'txt',
+  sql: 'txt', py: 'txt', rb: 'txt', php: 'txt', go: 'txt', rs: 'txt',
+  js: 'txt', jsx: 'txt', mjs: 'txt', cjs: 'txt', ts: 'txt', tsx: 'txt',
+  java: 'txt', kt: 'txt', kts: 'txt', c: 'txt', h: 'txt', cpp: 'txt', cc: 'txt',
+  hpp: 'txt', cs: 'txt', swift: 'txt', lua: 'txt', pl: 'txt', r: 'txt',
+  scala: 'txt', dart: 'txt', vue: 'txt', svelte: 'txt',
+  graphql: 'txt', gql: 'txt', proto: 'txt', diff: 'txt', patch: 'txt',
+  gitignore: 'txt', dockerfile: 'txt', makefile: 'txt', rst: 'txt', tex: 'txt',
+}
+
+function extOf(filename: string): string {
+  const m = /\.([a-zA-Z0-9]+)$/.exec(filename)
+  return m ? m[1].toLowerCase() : ''
+}
+
+function resolveAttachmentType(contentType: string, filename: string): AllowedType | null {
+  const textFormat = TEXT_EXTENSIONS[extOf(filename)]
+  if (textFormat) return { kind: 'document', format: textFormat, maxBytes: DOCUMENT_MAX_BYTES }
+  if (ALLOWED[contentType]) return ALLOWED[contentType]
+  if (contentType.startsWith('text/') || contentType === 'application/octet-stream') {
+    return { kind: 'document', format: 'txt', maxBytes: DOCUMENT_MAX_BYTES }
+  }
+  return null
+}
+
+export function validateAttachment(contentType: string, sizeBytes: number, filename: string): AllowedType {
+  const spec = resolveAttachmentType(contentType, filename)
   if (!spec) throw new Error(`Content type ${contentType} not allowed`)
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) throw new Error('File is empty or invalid size')
   if (sizeBytes > spec.maxBytes) {
@@ -133,7 +173,7 @@ export interface AttachmentMeta {
 }
 
 export function attachmentBlock(meta: AttachmentMeta): ContentBlock {
-  const spec = ALLOWED[meta.contentType] ?? { kind: 'document', format: 'txt' }
+  const spec = resolveAttachmentType(meta.contentType, meta.filename) ?? { kind: 'document', format: 'txt', maxBytes: DOCUMENT_MAX_BYTES }
   const uri = `s3://${BUCKET}/${meta.s3Key}`
 
   if (spec.kind === 'image') {

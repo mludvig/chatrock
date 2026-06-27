@@ -41,23 +41,49 @@ import { S3Client } from '@aws-sdk/client-s3'
 // ── validateAttachment ────────────────────────────────────────────────────────
 
 test('validateAttachment accepts image/png within size limit', () => {
-  expect(() => validateAttachment('image/png', 1024 * 1024)).not.toThrow()
+  expect(() => validateAttachment('image/png', 1024 * 1024, 'photo.png')).not.toThrow()
 })
 
 test('validateAttachment rejects image/bmp (not in allowlist)', () => {
-  expect(() => validateAttachment('image/bmp', 100)).toThrow(/not allowed/)
+  expect(() => validateAttachment('image/bmp', 100, 'photo.bmp')).toThrow(/not allowed/)
 })
 
 test('validateAttachment rejects image/png over 5 MB', () => {
-  expect(() => validateAttachment('image/png', 6 * 1024 * 1024)).toThrow(/too large/)
+  expect(() => validateAttachment('image/png', 6 * 1024 * 1024, 'photo.png')).toThrow(/too large/)
 })
 
 test('validateAttachment rejects pdf over 25 MB', () => {
-  expect(() => validateAttachment('application/pdf', 26 * 1024 * 1024)).toThrow(/too large/)
+  expect(() => validateAttachment('application/pdf', 26 * 1024 * 1024, 'report.pdf')).toThrow(/too large/)
 })
 
 test('validateAttachment accepts text/plain within 1 MB', () => {
-  expect(() => validateAttachment('text/plain', 500 * 1024)).not.toThrow()
+  expect(() => validateAttachment('text/plain', 500 * 1024, 'notes.txt')).not.toThrow()
+})
+
+// ── validateAttachment: extension-based text classification ───────────────────
+
+test('validateAttachment accepts .csv reported with a vendor MIME type (Windows Excel association)', () => {
+  expect(() => validateAttachment('application/vnd.ms-excel', 1024, 'data.csv')).not.toThrow()
+})
+
+test('validateAttachment accepts .json with no browser-supplied contentType', () => {
+  expect(() => validateAttachment('application/octet-stream', 1024, 'config.json')).not.toThrow()
+})
+
+test('validateAttachment accepts .py reported as application/json (extension wins over contentType)', () => {
+  expect(() => validateAttachment('application/json', 1024, 'script.py')).not.toThrow()
+})
+
+test('validateAttachment accepts an arbitrary text/* subtype not in the explicit allowlist', () => {
+  expect(() => validateAttachment('text/x-python', 1024, 'script')).not.toThrow()
+})
+
+test('validateAttachment rejects an unrecognized extension with an unrecognized contentType', () => {
+  expect(() => validateAttachment('application/x-msdownload', 1024, 'app.exe')).toThrow(/not allowed/)
+})
+
+test('validateAttachment caps extension-classified text files at 1 MB', () => {
+  expect(() => validateAttachment('application/octet-stream', 2 * 1024 * 1024, 'big.log')).toThrow(/too large/)
 })
 
 // ── sanitizeDocName ───────────────────────────────────────────────────────────
@@ -105,6 +131,26 @@ test('attachmentBlock builds document block with citations disabled for standard
   })
   const doc = (block as { document: { citations: { enabled: boolean } } }).document
   expect(doc.citations.enabled).toBe(false)
+})
+
+test('attachmentBlock resolves document format from extension when contentType is a vendor MIME', () => {
+  const block = attachmentBlock({
+    s3Key: 'attachments/sub/chat/fid/data.csv',
+    contentType: 'application/vnd.ms-excel',
+    filename: 'data.csv',
+  })
+  const doc = (block as { document: { format: string } }).document
+  expect(doc.format).toBe('csv')
+})
+
+test('attachmentBlock falls back to txt format for unrecognized code extensions', () => {
+  const block = attachmentBlock({
+    s3Key: 'attachments/sub/chat/fid/script.py',
+    contentType: 'application/octet-stream',
+    filename: 'script.py',
+  })
+  const doc = (block as { document: { format: string } }).document
+  expect(doc.format).toBe('txt')
 })
 
 test('attachmentBlock enables citations for rich mode', () => {
