@@ -1,6 +1,7 @@
 import type { Tool, ToolResultBlock, ToolResultContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
+import { executeSearchHistoryTool } from './find'
 import { callGatewayTool } from './agentcore/gateway'
 import type { BrowserStep } from './agentcore/browser'
 
@@ -11,6 +12,9 @@ export interface ToolContext {
   projectId?: string
   chatId?: string
   webSearchProvider?: 'jina' | 'agentcore'
+  // Set only for a forced/explicit Find turn (ws/sendMessage.ts) — see SearchHistoryContext
+  // in lib/find.ts for why this overrides any model-supplied scope on that turn.
+  findScope?: 'project' | 'global'
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -294,6 +298,33 @@ export const READ_PROJECT_CHAT_TOOL: Tool = {
   },
 }
 
+// ── Find tool spec ─────────────────────────────────────────────────────────────
+//
+// Model-facing name is deliberately descriptive (not the terse "find") — a vague name gives the
+// model little to anchor invocation decisions on. User-facing feature/UI is still called "Find";
+// only this tool name differs. Executor (executeSearchHistoryTool) + corpus assembly live in
+// lib/find.ts, co-located with the ranking call — see the "retrieval seam" framing there.
+export const SEARCH_HISTORY_TOOL: Tool = {
+  toolSpec: {
+    name: 'search_history',
+    description: "Search the user's own past chats and project files by topic, to find relevant prior context (e.g. \"did we discuss X before?\"). Returns ranked matches — chats and project files — each with a short reason. Use scope:'project' to search only the current project, or scope:'global' to search across all of the user's chats.",
+    inputSchema: {
+      json: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What to search for, in the user\'s own words.' },
+          scope: {
+            type: 'string',
+            enum: ['project', 'global'],
+            description: "'project' = only this project's chats/files (only valid when currently in a project). 'global' = all of the user's chats. Defaults to 'project' when in a project, else 'global'.",
+          },
+        },
+        required: ['query'],
+      },
+    },
+  },
+}
+
 // ── Tool executors ────────────────────────────────────────────────────────────
 
 const JINA_KEY = process.env.JINA_API_KEY ?? ''
@@ -314,6 +345,9 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     if (name === 'read_project_chat') {
       if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
       return await executeProjectReadChatTool(input as Record<string, string>, ctx)
+    }
+    if (name === 'search_history') {
+      return await executeSearchHistoryTool(input, { sub: ctx.sub, projectId: ctx.projectId, chatId: ctx.chatId, findScope: ctx.findScope })
     }
     if (name === 'web_search') {
       const provider = ctx.webSearchProvider === 'agentcore' ? 'agentcore' : 'jina'

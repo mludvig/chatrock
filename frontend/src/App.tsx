@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faComments, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { faComments, faPlus, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import { api, setAccessToken } from './api/http'
 import { useChatStore } from './store/chatStore'
 import ActivityBar from './components/ActivityBar'
@@ -15,8 +15,11 @@ import './app.scss'
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects } = useChatStore()
+  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingFind } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  // Default on: searching from inside a project most often means "this project", not everywhere.
+  const [findProjectOnly, setFindProjectOnly] = useState(true)
 
   const auth = useAuth()
   const accessToken = auth.user?.access_token ?? ''
@@ -47,6 +50,22 @@ function AuthedApp() {
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
 
   const defaultModel = lastModel || userPreferences.defaultModel || models[1]?.id || models[0]?.id || ''
+
+  // Find's "Project only" toggle only makes sense when the current view is project-scoped:
+  // either the project dashboard itself, or a chat that belongs to a project.
+  const projectViewMatch = /^\/p\/([^/]+)/.exec(location.pathname)
+  const chatViewMatch = /^\/c\/([^/]+)/.exec(location.pathname)
+  const currentChatProjectId = chatViewMatch ? chats.find(c => c.chatId === chatViewMatch[1])?.projectId : undefined
+  const contextProjectId = projectViewMatch?.[1] ?? currentChatProjectId
+
+  function submitFind() {
+    const query = findQuery.trim()
+    if (!query) return
+    const scope: 'project' | 'global' = (contextProjectId && findProjectOnly) ? 'project' : 'global'
+    setPendingFind({ query, scope, ...(scope === 'project' ? { projectId: contextProjectId } : {}) })
+    setFindQuery('')
+    navigate('/c/new')
+  }
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -80,6 +99,27 @@ function AuthedApp() {
           <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
           Chatrock
         </span>
+        <div className="find-box" onClick={e => e.stopPropagation()}>
+          <FontAwesomeIcon icon={faMagnifyingGlass} className="find-icon" />
+          <input
+            type="text"
+            className="find-input"
+            placeholder="Find past chats & files…"
+            value={findQuery}
+            onChange={e => setFindQuery(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') submitFind() }}
+          />
+          {contextProjectId && (
+            <button
+              type="button"
+              className={`find-scope-toggle${findProjectOnly ? ' active' : ''}`}
+              onClick={() => setFindProjectOnly(v => !v)}
+              title={findProjectOnly ? 'Searching this project only — click to search everywhere' : 'Searching everywhere — click to limit to this project'}
+            >
+              Project only
+            </button>
+          )}
+        </div>
         <button
           className="btn-new"
           onClick={e => { e.stopPropagation(); navigate('/c/new') }}

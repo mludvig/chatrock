@@ -1,6 +1,7 @@
 import { executeTool, MAX_BROWSER_STEPS, MAX_BROWSER_SCREENSHOTS } from '../../src/lib/tools'
 import * as memoryLib from '../../src/lib/memory'
 import * as projectContextLib from '../../src/lib/projectContext'
+import * as findLib from '../../src/lib/find'
 import * as gatewayLib from '../../src/lib/agentcore/gateway'
 import * as browserLib from '../../src/lib/agentcore/browser'
 
@@ -17,6 +18,11 @@ jest.mock('../../src/lib/projectContext', () => ({
   executeProjectReadChatTool: jest.fn(),
 }))
 
+// Mock the search_history executor so dispatch tests don't hit real dynamo/Bedrock calls
+jest.mock('../../src/lib/find', () => ({
+  executeSearchHistoryTool: jest.fn(),
+}))
+
 // Mock the AgentCore MCP gateway client so web_search:agentcore tests don't open a real session
 jest.mock('../../src/lib/agentcore/gateway', () => ({
   callGatewayTool: jest.fn(),
@@ -31,6 +37,7 @@ const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).execu
 const mockExecuteProjectMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeProjectMemoryTool
 const mockExecuteProjectReadFileTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadFileTool
 const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadChatTool
+const mockExecuteSearchHistoryTool = (findLib as jest.Mocked<typeof findLib>).executeSearchHistoryTool
 const mockCallGatewayTool = (gatewayLib as jest.Mocked<typeof gatewayLib>).callGatewayTool
 const mockRunBrowserSteps = (browserLib as jest.Mocked<typeof browserLib>).runBrowserSteps
 
@@ -291,6 +298,50 @@ describe('read_project_chat dispatch', () => {
     expect(result.status).toBe('error')
     expect((result.content?.[0] as { text: string }).text).toBe('No project context')
     expect(mockExecuteProjectReadChatTool).not.toHaveBeenCalled()
+  })
+})
+
+// ── search_history dispatch ───────────────────────────────────────────────────
+
+describe('search_history dispatch', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('dispatches to executeSearchHistoryTool with sub/projectId/chatId/findScope from ctx', async () => {
+    mockExecuteSearchHistoryTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
+      status: 'success',
+    })
+
+    const result = await executeTool(
+      'search_history',
+      { query: 'athena tuning' },
+      { sub: 'user-1', projectId: 'proj-abc', chatId: 'chat-1', findScope: 'global' },
+    )
+
+    expect(mockExecuteSearchHistoryTool).toHaveBeenCalledTimes(1)
+    expect(mockExecuteSearchHistoryTool).toHaveBeenCalledWith(
+      { query: 'athena tuning' },
+      { sub: 'user-1', projectId: 'proj-abc', chatId: 'chat-1', findScope: 'global' },
+    )
+    expect(result.status).toBe('success')
+  })
+
+  it('works without ctx.projectId/findScope (organic global call outside a project)', async () => {
+    mockExecuteSearchHistoryTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
+      status: 'success',
+    })
+
+    await executeTool('search_history', { query: 'athena tuning' }, { sub: 'user-1' })
+
+    expect(mockExecuteSearchHistoryTool).toHaveBeenCalledWith(
+      { query: 'athena tuning' },
+      { sub: 'user-1', projectId: undefined, chatId: undefined, findScope: undefined },
+    )
   })
 })
 
