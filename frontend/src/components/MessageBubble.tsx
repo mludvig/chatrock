@@ -41,16 +41,18 @@ SyntaxHighlighter.registerLanguage('go', go)
 SyntaxHighlighter.registerLanguage('rust', rust)
 SyntaxHighlighter.registerLanguage('terraform', terraform)
 SyntaxHighlighter.registerLanguage('hcl', terraform)
+import { Link } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare,
   faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile, faPlay,
+  faComments, faMagnifyingGlass,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import type { StreamingMsg } from '../store/chatStore'
-import type { SearchResult } from '../lib/toolResults'
+import type { SearchResult, FindResult } from '../lib/toolResults'
 
 // ── URL sanitizer — blocks javascript: and data: URIs ────────────────────────
 
@@ -129,6 +131,34 @@ function SearchResultCard({ r, index }: { r: SearchResult; index: number }) {
   )
 }
 
+// Find result card — internal navigation (chat → /c/:id, file → its project at /p/:projectId,
+// since there's no standalone file route). A file result with no projectId (shouldn't happen
+// in practice — every file belongs to a project) renders inert rather than a dead link.
+function FindResultCard({ r }: { r: FindResult }) {
+  const to = r.kind === 'chat' ? `/c/${r.id}` : (r.projectId ? `/p/${r.projectId}` : undefined)
+  const body = (
+    <span className="src-body">
+      <span className="src-title">{r.title}</span>
+      <span className="src-desc">{r.reason}</span>
+    </span>
+  )
+  const icon = r.kind === 'chat' ? faComments : faFile
+  if (!to) {
+    return (
+      <span className="search-result-card find-result-card disabled">
+        <FontAwesomeIcon icon={icon} className="src-index" />
+        {body}
+      </span>
+    )
+  }
+  return (
+    <Link className="search-result-card find-result-card" to={to}>
+      <FontAwesomeIcon icon={icon} className="src-index" />
+      {body}
+    </Link>
+  )
+}
+
 // ── Tool call display ─────────────────────────────────────────────────────────
 
 function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streaming?: boolean }) {
@@ -136,9 +166,12 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
   const { projectFilesById, chats } = useChatStore()
   const pending = step.result === undefined
   const hasResults = !!step.searchResults?.length
+  const hasFindResults = !!step.findResults?.length
   const hasScreenshots = !!step.screenshotUrls?.length
   const icon = pending ? faSpinner : step.isError ? faCircleXmark : faCircleCheck
-  const label = step.name === 'web_search'
+  const label = step.name === 'search_history'
+    ? `Find: ${safeInput(step.input, 'query')}`
+    : step.name === 'web_search'
     ? `Search: ${safeInput(step.input, 'query')}`
     : step.name === 'web_fetch'
     ? `Fetch: ${safeInput(step.input, 'url')}`
@@ -167,7 +200,7 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
   return (
     <div className={`tool-pill${step.isError ? ' error' : pending ? ' pending' : ''}`}>
       <button className="tool-pill-header" onClick={() => !pending && setExpanded(e => !e)}>
-        <FontAwesomeIcon icon={faGlobe} className="tool-icon" />
+        <FontAwesomeIcon icon={step.name === 'search_history' ? faMagnifyingGlass : faGlobe} className="tool-icon" />
         <span className="tool-label">{label}</span>
         <FontAwesomeIcon icon={icon} className="tool-status" spin={pending} />
         {!pending && (
@@ -187,7 +220,13 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
               ))}
             </div>
           )}
-          {hasResults ? (
+          {hasFindResults ? (
+            <div className="search-results">
+              {step.findResults!.map((r: FindResult) => (
+                <FindResultCard key={`${r.kind}:${r.id}`} r={r} />
+              ))}
+            </div>
+          ) : hasResults ? (
             <div className="search-results">
               {step.searchResults!.map((r: SearchResult, i: number) => (
                 <SearchResultCard key={r.url} r={r} index={i} />

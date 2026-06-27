@@ -119,7 +119,9 @@ function parseMemItems(raw: unknown): MemItem[] {
   return result
 }
 
-function safeParse(response: string | null | undefined): Record<string, unknown> | null {
+// Exported for reuse by other defensive-JSON-parsing callers (e.g. lib/find.ts) — single
+// implementation of "strip code fences, parse, require a plain object" rather than duplicating it.
+export function safeParse(response: string | null | undefined): Record<string, unknown> | null {
   try {
     const cleaned = (response ?? '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
     const parsed = JSON.parse(cleaned)

@@ -47,8 +47,12 @@ export const buildHandler = (postFn: PostFn) => async (
     parentId?: string | null
     attachments?: AttachmentMeta[]
     continue?: boolean
+    // Explicit Find entry (header search box) — see lib/find.ts. Forces the search_history
+    // tool on this turn's first round; scope is server-trusted, never re-derived from the model.
+    // 'project' falls back to global behaviour if this chat has no projectId.
+    find?: { scope: 'project' | 'global' }
   }
-  const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId, attachments = [] } = body
+  const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId, attachments = [], find } = body
   // Detect edit/re-run/continue by key presence (not value) so parentId: null (root edit) is handled.
   const hasParentId = 'parentId' in body
   // Continue: parentId key present, no content, and continue:true flag — resume from leaf
@@ -259,6 +263,7 @@ export const buildHandler = (postFn: PostFn) => async (
     chatId,
     ...(projectId ? { projectId } : {}),
     ...(effectiveModelSettings.webSearchProvider ? { webSearchProvider: effectiveModelSettings.webSearchProvider } : {}),
+    ...(find ? { findScope: find.scope } : {}),
   }
 
   // Timestamp block: prepended to new user turns when injectCurrentDate is enabled.
@@ -468,7 +473,7 @@ export const buildHandler = (postFn: PostFn) => async (
   let errorMessage = ''
 
   try {
-    for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, toolCtx, abortController.signal)) {
+    for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, toolCtx, abortController.signal, find ? 'search_history' : undefined)) {
       switch (chunk.type) {
         case 'thinking_delta':
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })

@@ -88,6 +88,9 @@ export function sendMessage(payload: {
     filename: string
     mode?: 'standard' | 'rich'
   }>
+  // Explicit Find entry (header search box) — forces the search_history tool on this turn.
+  // See backend/src/ws/sendMessage.ts's WS payload contract.
+  find?: { scope: 'project' | 'global' }
 }) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     throw new Error('WebSocket not connected')

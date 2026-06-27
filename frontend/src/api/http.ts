@@ -61,7 +61,7 @@ export interface TokenUsage {
 export type Step =
   | { kind: 'thinking'; text: string }
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }>; screenshotUrls?: string[] }
+  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }>; findResults?: Array<{ kind: 'chat' | 'file'; id: string; title: string; reason: string; projectId?: string }>; screenshotUrls?: string[] }
   | { kind: 'attachment'; attachmentKind: 'image' | 'document'; filename: string; contentType: string; url: string; s3Key: string; mode?: 'standard' | 'rich' }
 
 export interface Message {
@@ -105,6 +105,7 @@ export interface ModelSettings {
   browserCoreEnabled?: boolean
   browserExtendedEnabled?: boolean
   memoryEnabled?: boolean
+  findEnabled?: boolean
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
 }
@@ -189,6 +190,7 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     browserCoreEnabled: prev.browserCoreEnabled ?? true,
     browserExtendedEnabled: prev.browserExtendedEnabled ?? legacyBrowserToolEnabled ?? false,
     memoryEnabled: prev.memoryEnabled ?? true,
+    findEnabled: prev.findEnabled ?? true,
   }
 }
 

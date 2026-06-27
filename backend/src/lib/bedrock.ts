@@ -9,7 +9,7 @@ import {
   type ToolResultBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
-import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, type ToolContext } from './tools'
+import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, SEARCH_HISTORY_TOOL, type ToolContext } from './tools'
 import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from './attachments'
@@ -101,6 +101,10 @@ function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[]
   if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
   if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
   if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
+  // ctx.findScope is set only for a forced/explicit Find turn (ws/sendMessage.ts) — force the
+  // tool into the list even if findEnabled:false, since Bedrock's toolChoice requires the named
+  // tool to be present in `tools`.
+  if (settings.findEnabled !== false || ctx?.findScope) list.push(SEARCH_HISTORY_TOOL)
   if (list.length === 0) return []
   return [...list, CACHE_POINT_TOOL]
 }
@@ -236,6 +240,7 @@ async function* streamOneTurn(
   tools: Tool[],
   settings: ModelSettings,
   abortSignal?: AbortSignal,
+  forceToolName?: string,
 ): AsyncGenerator<StreamChunk, TurnResult> {
   // Only attach toolConfig when there is at least one real toolSpec — a list
   // containing only CACHE_POINT_TOOL (no toolSpec) is treated as empty.
@@ -245,7 +250,9 @@ async function* streamOneTurn(
     system: buildSystemWithCache(systemPrompt),
     messages,
     ...buildInferenceParams(modelId, settings),
-    ...(hasRealTools ? { toolConfig: { tools } } : {}),
+    ...(hasRealTools
+      ? { toolConfig: { tools, ...(forceToolName ? { toolChoice: { tool: { name: forceToolName } } } : {}) } }
+      : {}),
   })
 
   const res = await bedrockClient.send(cmd, ...(abortSignal ? [{ abortSignal }] : []))
@@ -404,6 +411,11 @@ export async function* converseStream(
   settings: ModelSettings = {},
   ctx?: ToolContext,
   abortSignal?: AbortSignal,
+  // Set only for a forced/explicit Find turn (ws/sendMessage.ts) — forces Bedrock toolChoice to
+  // this tool name on the FIRST round only (subsequent rounds, if any, are auto-choice as
+  // normal). The named tool must already be in `tools` (ctx.findScope makes buildToolsWithCache
+  // include SEARCH_HISTORY_TOOL even when findEnabled:false) or Bedrock rejects the request.
+  forceToolName?: string,
 ): AsyncGenerator<StreamChunk> {
   let tools = buildToolsWithCache(settings, ctx)
   // If tools are disabled (both webSearchEnabled and memory off) but the replayed history
@@ -426,7 +438,13 @@ export async function* converseStream(
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     if (abortSignal?.aborted) return
     const builtMessages = buildMessagesWithCache(baseMessages, newMessages)
-    const gen = streamOneTurn(modelId, systemPrompt, builtMessages, tools, settings, abortSignal)
+    // Forced toolChoice applies to round 0 only — by round 1 the tool has already run and the
+    // model is narrating/using its result, which must remain free choice.
+    const isForcedRound = round === 0 && !!forceToolName
+    // Bedrock rejects toolChoice together with adaptive thinking — the forced round always runs
+    // with thinking off (a tool-choice round needs none anyway).
+    const roundSettings = isForcedRound ? { ...settings, thinkingEffort: 'off' as const } : settings
+    const gen = streamOneTurn(modelId, systemPrompt, builtMessages, tools, roundSettings, abortSignal, isForcedRound ? forceToolName : undefined)
     let result: TurnResult | undefined
 
     // Drain the generator, forwarding UI chunks to caller

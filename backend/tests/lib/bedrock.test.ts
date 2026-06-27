@@ -397,7 +397,7 @@ test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false }, undefined, undefined)) {
+  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false, findEnabled: false }, undefined, undefined)) {
     chunks.push(chunk)
   }
 
@@ -449,6 +449,69 @@ test('tools: webSearchEnabled:false, memoryEnabled:true → manage_memory tool p
   expect(toolNames).toContain('manage_memory')
   expect(toolNames).not.toContain('web_search')
   expect(toolNames).not.toContain('web_fetch')
+})
+
+test('tools: findEnabled default (unset) → search_history present', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {}, undefined, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('search_history')
+})
+
+test('tools: findEnabled:false → search_history absent', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], { findEnabled: false }, undefined, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).not.toContain('search_history')
+})
+
+test('tools: findEnabled:false but ctx.findScope set (forced Find turn) → search_history forced back in', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], { findEnabled: false }, { sub: 'user-1', findScope: 'global' }, undefined)) {
+    // drain
+  }
+
+  const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+  const toolNames = ((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools ?? [])
+    .map(t => t.toolSpec?.name)
+    .filter(Boolean)
+  expect(toolNames).toContain('search_history')
 })
 
 test('tools: browser settings default → Core tools (take_screenshot, get_rendered_page) present, browse_web absent', async () => {
@@ -757,7 +820,7 @@ test('part1c: clean history with webSearchEnabled+memory disabled still sends no
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _chunk of converseStream(
-    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false },
+    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false, findEnabled: false },
   )) { /* drain */ }
 
   // No tool blocks in history → no toolConfig needed (same as before)
@@ -943,6 +1006,64 @@ test('read tools: cachePoint is always last when read tools present', async () =
   const lastTool = toolList[toolList.length - 1]
   expect(lastTool.toolSpec).toBeUndefined()
   expect(lastTool.cachePoint).toBeDefined()
+})
+
+// ── forced Find turn: forceToolName param ──────────────────────────────────────
+
+describe('converseStream forceToolName (forced Find turn)', () => {
+  test('round 0 sends Bedrock toolChoice forcing the named tool, with thinking disabled even if thinkingEffort was requested', async () => {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-1', name: 'search_history' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"athena"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({
+      toolUseId: 'tu-1',
+      content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
+      status: 'success',
+    })
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'I found nothing.' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+      { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+    ]))
+
+    const chunks: unknown[] = []
+    for await (const chunk of converseStream(
+      'global.anthropic.claude-sonnet-4-6', '', [], { thinkingEffort: 'low' }, { sub: 'user-1', findScope: 'global' }, undefined, 'search_history',
+    )) {
+      chunks.push(chunk)
+    }
+
+    // Round 0: toolChoice forces search_history; thinking must be off (Bedrock rejects the two together)
+    const round0Input = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+    expect((round0Input.toolConfig as { toolChoice?: unknown }).toolChoice).toEqual({ tool: { name: 'search_history' } })
+    expect(round0Input.additionalModelRequestFields).toBeUndefined()
+
+    // Round 1 (after the tool result): free choice again — no forced toolChoice
+    const round1Input = getMockSend().mock.calls[1][0].input as Record<string, unknown>
+    expect((round1Input.toolConfig as { toolChoice?: unknown } | undefined)?.toolChoice).toBeUndefined()
+  })
+
+  test('without forceToolName, toolConfig never includes toolChoice', async () => {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+    ]))
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of converseStream('test-model', '', [], {})) { /* drain */ }
+
+    const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+    expect((cmdInput.toolConfig as { toolChoice?: unknown } | undefined)?.toolChoice).toBeUndefined()
+  })
 })
 
 // ── coalesceMessages: role-alternation guard ──────────────────────────────────

@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
-import { parseSearchResults } from '../lib/toolResults'
+import { parseSearchResults, parseFindResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
@@ -204,6 +204,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             return {
               ...step,
               searchResults: parseSearchResults(step.name, step.result, step.isError),
+              findResults: parseFindResults(step.name, step.result, step.isError),
             }
           }),
         }
@@ -217,6 +218,20 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     if (isNew && defaultModel && !newModel) setNewModel(defaultModel)
   }, [defaultModel, isNew, newModel])
+
+  // A Find submitted from the global header (App.tsx) lands here as a single-use pendingFind —
+  // fire the same new-chat-send flow handleSend() uses for a normal first message, but with the
+  // typed query as content and find:{scope} threaded through so the backend forces the
+  // search_history tool. Cleared synchronously (before the async send) so a StrictMode
+  // double-invoke of this effect can't fire it twice.
+  useEffect(() => {
+    if (!isNew) return
+    const pf = useChatStore.getState().pendingFind
+    if (!pf) return
+    useChatStore.getState().setPendingFind(null)
+    void handleSend(pf.query, { scope: pf.scope }, pf.projectId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew])
 
   // Project files are normally loaded by ProjectView/ProjectsPanel into the shared
   // projectFilesById map. Opening a project chat directly (deep link, reload) never
@@ -407,6 +422,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             return {
               ...step,
               searchResults: parseSearchResults(step.name, step.result, step.isError),
+              findResults: parseFindResults(step.name, step.result, step.isError),
             }
           }),
         }
@@ -705,8 +721,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     cancelMessage()
   }
 
-  async function handleSend() {
-    const content = input.trim()
+  // overrideContent/find/projectIdOverride are set only by the pendingFind mount effect below —
+  // a normal send from the composer passes none of them and reads from `input` as before.
+  async function handleSend(overrideContent?: string, find?: { scope: 'project' | 'global' }, projectIdOverride?: string) {
+    const content = (overrideContent ?? input).trim()
     const readyAttachments = attachments.filter(a => a.status === 'ready')
     if ((!content && readyAttachments.length === 0) || sending || creatingChat) return
     if (attachments.some(a => a.status === 'uploading')) {
@@ -766,7 +784,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
       try {
         const newChatId = pendingNewChatIdRef.current ?? newId()
-        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings)
+        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride)
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
         useChatStore.getState().addChat({
@@ -775,11 +793,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           model,
           systemPrompt,
           ...(Object.keys(draftModelSettings).length > 0 ? { modelSettings: draftModelSettings } : {}),
+          ...(projectIdOverride ? { projectId: projectIdOverride } : {}),
           createdAt: now,
           updatedAt: now,
         })
         await ensureConnected(accessToken)
-        sendMessage({ chatId: res.chatId, content, model, systemPrompt, modelSettings: draftModelSettings, attachments: attachmentsPayload })
+        sendMessage({
+          chatId: res.chatId, content, model, systemPrompt, modelSettings: draftModelSettings, attachments: attachmentsPayload,
+          ...(find ? { find } : {}),
+        })
         armAckWatchdog()
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
@@ -1087,7 +1109,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           ) : (
             <button
               className="btn-send"
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={creatingChat || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
             >
               <FontAwesomeIcon icon={faPaperPlane} />
