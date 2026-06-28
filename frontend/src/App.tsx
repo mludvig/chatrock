@@ -4,6 +4,7 @@ import { useAuth } from 'react-oidc-context'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faComments, faPlus, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import { api, setAccessToken } from './api/http'
+import { ENV } from './env'
 import { useChatStore } from './store/chatStore'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
@@ -131,7 +132,7 @@ function AuthedApp() {
       </div>
       <ActivityBar
         userName={userName}
-        onSignOut={() => auth.signoutRedirect()}
+        onSignOut={() => auth.signoutRedirect({ extraQueryParams: { client_id: ENV.cognitoClientId } })}
       />
       <Sidebar />
       <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />
