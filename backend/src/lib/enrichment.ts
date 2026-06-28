@@ -42,6 +42,7 @@ Memory list rules (max 20 items, one sentence each):
 - Omit items contradicted by new info or no longer relevant
 - Add new items (memId: null) for genuinely new durable facts
 - Merge near-duplicates into one item
+- Some facts may already have been saved this turn (they appear in the list above with a memId, possibly worded differently). Keep and merge with the existing item — reuse its memId; do NOT add a second item (memId: null) restating a fact already present in any form.
 
 ONLY capture: the user's own name, location, profession, stated personal preferences, communication/work style.
 
@@ -97,6 +98,7 @@ Memory list rules (max 20 items, one sentence each):
 - Omit items that are not project-specific, are superseded, or are general knowledge
 - Add new items (memId: null) only for genuinely new, user-established project facts
 - Merge near-duplicates into one item
+- Some project facts may already have been saved this turn (they appear in the list above with a memId, possibly worded differently). Keep and merge with the existing item — reuse its memId; do NOT add a second item (memId: null) restating a fact already present in any form.
 
 When the turn contains nothing project-specific from the user: return the existing list unchanged (preserving existing memIds).`
 

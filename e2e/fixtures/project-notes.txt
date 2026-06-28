@@ -1,0 +1,4 @@
+Project notes: this service stores customer orders in a PostgreSQL 16 database
+hosted in the ap-southeast-2 region. Order IDs are ULIDs, not UUIDs, so they sort
+chronologically. Retry failed webhook deliveries up to 5 times with exponential
+backoff before moving them to the dead-letter queue.
