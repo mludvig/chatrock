@@ -93,6 +93,8 @@ interface ChatState {
   setUserPreferences: (p: UserPreferences) => void
   memoryRefreshTick: number
   triggerMemoryRefresh: () => void
+  newChatTick: number
+  bumpNewChatTick: () => void
 
   currentChatId: string | null
   draftModelSettings: ModelSettings
@@ -170,6 +172,7 @@ export const useChatStore = create<ChatState>()(
       userPreferences: {},
       toasts: [],
       memoryRefreshTick: 0,
+      newChatTick: 0,
 
       currentChatId: null,
       draftModelSettings: {},
@@ -352,6 +355,7 @@ export const useChatStore = create<ChatState>()(
       setActivePanel: (activePanel) => set({ activePanel }),
       setUserPreferences: (userPreferences) => set({ userPreferences }),
       triggerMemoryRefresh: () => set((s) => ({ memoryRefreshTick: s.memoryRefreshTick + 1 })),
+      bumpNewChatTick: () => set((s) => ({ newChatTick: s.newChatTick + 1 })),
 
       setCurrentChatId: (id) => set({ currentChatId: id }),
       setDraftModelSettings: (s) => set({ draftModelSettings: s }),

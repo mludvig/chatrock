@@ -33,6 +33,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     draftModelSettings, draftSystemPrompt,
     setCurrentChatId, setDraftModelSettings, setDraftSystemPrompt,
     projects, mergeProjectFiles,
+    newChatTick,
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
@@ -471,6 +472,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     clearIdleTimer()
     clearAckTimer()
   }, [chatId])
+
+  // Focus the input whenever a new-chat is requested (covers both navigation
+  // from an existing chat and clicking "+" while already on /c/new)
+  useEffect(() => {
+    if (newChatTick > 0) requestAnimationFrame(() => inputRef.current?.focus())
+  }, [newChatTick])
 
   function handleMessagesScroll() {
     const el = messagesRef.current
