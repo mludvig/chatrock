@@ -405,7 +405,8 @@ test.describe('Projects — inline edits (live verification)', () => {
       'decision: "We use PostgreSQL 16 as the database for this project." Then reply with one word: Done.'
     )
     await page.locator('.btn-send').click()
-    const memPill = page.locator('.tool-pill', { hasText: 'manage_project_memory' }).first()
+    // Pill label is the descriptive "Remember (project): …" (not the raw tool name).
+    const memPill = page.locator('.tool-pill', { hasText: 'Remember (project):' }).first()
     await expect(memPill).toBeVisible({ timeout: 60000 })
     await expect(memPill).not.toHaveClass(/pending/, { timeout: 60000 })
     await expect(memPill).not.toHaveClass(/error/)
@@ -502,7 +503,9 @@ test.describe('Projects — memory dedup (dual-writer regression)', () => {
   // and merge it — NOT re-derive a paraphrase as a second memory. Before the fix
   // this turn reliably produced two near-duplicate "PostgreSQL" memories.
   test('a single tool-saved project fact does not get duplicated by passive enrichment', async ({ page }) => {
-    const projectName = 'E2E Memory Dedup Test'
+    // Unique per-run name so leftover projects from prior best-effort cleanups
+    // can't collide with the create/delete name filters (strict-mode violations).
+    const projectName = `E2E Memory Dedup ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, projectName)
     await page.waitForURL(/\/p\//, { timeout: 10000 })
@@ -520,12 +523,24 @@ test.describe('Projects — memory dedup (dual-writer regression)', () => {
     )
     await page.locator('.btn-send').click()
 
-    const memPill = page.locator('.tool-pill', { hasText: 'manage_project_memory' }).first()
+    // Pill label is the descriptive "Remember (project): …" (not the raw tool name).
+    const memPill = page.locator('.tool-pill', { hasText: 'Remember (project):' }).first()
     await expect(memPill).toBeVisible({ timeout: 60000 })
     await expect(memPill).not.toHaveClass(/pending/, { timeout: 60000 })
     await expect(memPill).not.toHaveClass(/error/)
     await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
     await expect(page.locator('.message-input')).toBeEnabled({ timeout: 15000 })
+
+    // The memory pill shows WHAT was saved: descriptive label + expanded body
+    // with the remembered text (not a bare "manage_project_memory" / "Saved.").
+    await expect(memPill.locator('.tool-label')).toContainText('Remember (project):')
+    await expect(memPill.locator('.tool-label')).toContainText('PostgreSQL')
+    await memPill.locator('.tool-pill-header').click()
+    const memCard = memPill.locator('.memory-update-card')
+    await expect(memCard).toBeVisible({ timeout: 5000 })
+    await expect(memCard.locator('.memory-update-op')).toContainText('Remembered project memory')
+    await expect(memCard.locator('.memory-update-text')).toContainText('PostgreSQL 16')
+    await page.screenshot({ path: `.screenshots/${new Date().toISOString().slice(0, 10)}-memory-card.jpg` })
 
     // Passive enrichment (Sonnet) runs server-side AFTER the WS 'done' frame; a
     // clean merge emits no WS frame, so wait for it to settle before counting.
