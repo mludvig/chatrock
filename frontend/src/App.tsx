@@ -132,7 +132,7 @@ function AuthedApp() {
       </div>
       <ActivityBar
         userName={userName}
-        onSignOut={() => auth.signoutRedirect({ extraQueryParams: { client_id: ENV.cognitoClientId } })}
+        onSignOut={() => auth.signoutRedirect({ extraQueryParams: { client_id: ENV.cognitoClientId, logout_uri: `${ENV.appUrl}/` } })}
       />
       <Sidebar />
       <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />
