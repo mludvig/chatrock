@@ -662,8 +662,20 @@ export const buildHandler = (postFn: PostFn) => async (
       const memNow = new Date().toISOString()
       let totalChanged = 0
 
-      // ── User facts (reuse userMemoriesRaw already loaded for the system prompt) ──
-      const existingUserMems = userMemoriesRaw.map(i => ({
+      // Re-read memories AFTER the agentic loop, not the pre-loop snapshots
+      // (userMemoriesRaw / projectMemoriesRaw loaded for the system prompt). The
+      // model may have written via manage_memory / manage_project_memory during
+      // the loop; passive enrichment must see those writes (with their memIds) so
+      // it retains/merges them instead of re-deriving a paraphrase as a NEW item
+      // (the dual-writer duplicate). One cheap read each — same partition the
+      // tool just wrote to.
+      const [freshUserMemsRaw, freshProjectMemsRaw] = await Promise.all([
+        listUserMemories(sub),
+        projectId ? listProjectMemories(projectId) : Promise.resolve([]),
+      ])
+
+      // ── User facts (from the post-loop re-read, so tool writes are included) ──
+      const existingUserMems = freshUserMemsRaw.map(i => ({
         memId: i.memId as string,
         text: i.text as string,
         category: i.category as string,
@@ -707,9 +719,9 @@ export const buildHandler = (postFn: PostFn) => async (
         await updateChatSummary(sub, chatId, { summary: summaryResult.summary, topics: summaryResult.topics })
       }
 
-      // ── Project facts (reuse projectMemoriesRaw already loaded) ──
+      // ── Project facts (from the post-loop re-read, so tool writes are included) ──
       if (isProject && projectId) {
-        const existingProjectMems = (projectMemoriesRaw as Record<string, unknown>[]).map(i => ({
+        const existingProjectMems = (freshProjectMemsRaw as Record<string, unknown>[]).map(i => ({
           memId: i.memId as string,
           text: i.text as string,
           category: i.category as string,

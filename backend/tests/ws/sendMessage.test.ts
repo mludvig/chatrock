@@ -1291,6 +1291,34 @@ test('mem3: user memories are injected into assembled prompt', async () => {
   expect(passedSystemPrompt as string).toContain('User is a software engineer')
 })
 
+test('mem3b: passive enrichment uses memories re-read AFTER the agentic loop (not the pre-loop snapshot)', async () => {
+  memoryBase()
+  // Simulate the manage_memory tool saving a memory mid-loop: the pre-loop
+  // snapshot (used for the system prompt) is empty, but a re-read AFTER the
+  // loop returns the tool's write. enrichUserFacts must see the fresh list so
+  // it retains/merges that memId instead of re-adding a paraphrase (duplicate).
+  const toolWritten = {
+    PK: 'USER#user-1', SK: 'MEM#USER#mem-tool', memId: 'mem-tool',
+    text: 'User prefers dark mode', category: 'preference',
+    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+  mockDynamo.listUserMemories
+    .mockResolvedValueOnce([])             // pre-loop snapshot (system prompt)
+    .mockResolvedValueOnce([toolWritten])  // post-loop re-read (enrichment)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  expect(mockEnrichment.enrichUserFacts).toHaveBeenCalledTimes(1)
+  const existingArg = mockEnrichment.enrichUserFacts.mock.calls[0][1] as Array<{ memId: string }>
+  expect(existingArg.map(m => m.memId)).toContain('mem-tool')
+})
+
 // ── memoryEnabled toggle ──────────────────────────────────────────────────────
 
 test('mem4: memoryEnabled:false — listUserMemories NOT called and memory text absent from system prompt', async () => {
@@ -1968,6 +1996,28 @@ describe('project chat enrichment', () => {
     const arg = mockDynamo.putProjectMemory.mock.calls[0][0] as Record<string, unknown>
     expect(arg.text).toBe('Deploy via deploy.sh')
     expect(arg.category).toBe('other')
+  })
+
+  test('P2b: enrichProjectFacts uses project memories re-read AFTER the agentic loop (not the pre-loop snapshot)', async () => {
+    projectBase()
+    simpleStream()
+    // Simulate manage_project_memory writing a fact mid-loop: pre-loop snapshot
+    // empty, post-loop re-read returns the tool's write. enrichProjectFacts must
+    // receive the fresh list so it merges that memId instead of re-adding a paraphrase.
+    const toolWritten = {
+      PK: 'PROJECT#proj-1', SK: 'MEM#mem-tool', memId: 'mem-tool',
+      text: 'We use PostgreSQL 16', category: 'decision',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    mockDynamo.listProjectMemories
+      .mockResolvedValueOnce([])             // pre-loop snapshot (system prompt)
+      .mockResolvedValueOnce([toolWritten])  // post-loop re-read (enrichment)
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+    expect(mockEnrichment.enrichProjectFacts).toHaveBeenCalledTimes(1)
+    const existingArg = mockEnrichment.enrichProjectFacts.mock.calls[0][1] as Array<{ memId: string }>
+    expect(existingArg.map(m => m.memId)).toContain('mem-tool')
   })
 
   test('P3: project chat — updateChatSummary called with summary+topics from summarizeChat', async () => {

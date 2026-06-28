@@ -1,4 +1,7 @@
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Page, type Response } from '@playwright/test'
+import * as path from 'path'
+
+const NOTES_FIXTURE = path.join(__dirname, 'fixtures', 'project-notes.txt')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -373,6 +376,174 @@ test.describe('Projects — file upload UI', () => {
     // Upload button should be visible in the Files section
     const filesSection = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Files' }) })
     await expect(filesSection.locator('button.btn-action', { hasText: 'Upload' })).toBeVisible()
+
+    // Cleanup
+    try {
+      await page.click('[data-panel="projects"]')
+      await deleteProject(page, projectName)
+    } catch { /* cleanup failure is acceptable */ }
+  })
+})
+
+test.describe('Projects — inline edits (live verification)', () => {
+  test.use({ storageState: '.auth/state.json' })
+
+  test('project memory, file microLabel/summary, and chat summary edits persist across reload', async ({ page }) => {
+    const projectName = 'E2E Inline Edits Test'
+    await openProjectsPanel(page)
+    await createProject(page, projectName)
+    await page.waitForURL(/\/p\//, { timeout: 10000 })
+    await expect(page.locator('.project-view')).toBeVisible()
+    const projectUrl = page.url()
+
+    // --- Seed a real project memory via the manage_project_memory tool ---
+    await page.locator('.project-view-header .btn-action').click()
+    await page.waitForURL(/\/c\/(?!new)/, { timeout: 10000 })
+    await expect(page.locator('.chat-view')).toBeVisible()
+    await page.locator('.message-input').fill(
+      'Use the manage_project_memory tool right now (operation "remember") to save this project ' +
+      'decision: "We use PostgreSQL 16 as the database for this project." Then reply with one word: Done.'
+    )
+    await page.locator('.btn-send').click()
+    const memPill = page.locator('.tool-pill', { hasText: 'manage_project_memory' }).first()
+    await expect(memPill).toBeVisible({ timeout: 60000 })
+    await expect(memPill).not.toHaveClass(/pending/, { timeout: 60000 })
+    await expect(memPill).not.toHaveClass(/error/)
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
+
+    // --- Back to the project view ---
+    await page.goto(projectUrl)
+    await expect(page.locator('.project-view')).toBeVisible()
+
+    const isProjectMemoryPatch = (resp: Response) =>
+      resp.request().method() === 'PATCH' && /\/api\/projects\/[^/]+\/memory\/[^/]+$/.test(resp.url())
+    const isProjectFilePatch = (resp: Response) =>
+      resp.request().method() === 'PATCH' && /\/api\/projects\/[^/]+\/files\/[^/]+$/.test(resp.url())
+    const isChatPatch = (resp: Response) =>
+      resp.request().method() === 'PATCH' && /\/api\/chats\/[^/]+$/.test(resp.url())
+
+    // --- Project memory: edit text inline ---
+    const memorySection = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Memory' }) })
+    const memoryText = memorySection.locator('.memory-text').first()
+    await expect(memoryText).toBeVisible({ timeout: 15000 })
+    await memoryText.click()
+    await memorySection.locator('.rename-input').fill('Edited: Postgres 16 is the database of record.')
+    await Promise.all([page.waitForResponse(isProjectMemoryPatch), page.keyboard.press('Enter')])
+    await expect(memorySection.locator('.memory-text').first())
+      .toHaveText('Edited: Postgres 16 is the database of record.', { timeout: 5000 })
+
+    // --- Upload a file and wait for it to finish processing ---
+    await page.locator('.project-view input[type="file"]').setInputFiles(NOTES_FIXTURE)
+    const fileItem = page.locator('.project-file-item').first()
+    await expect(fileItem.locator('.file-status')).toHaveCount(0, { timeout: 60000 })
+    await expect(fileItem.locator('.file-micro-label')).toBeVisible({ timeout: 5000 })
+
+    // File microLabel: edit inline
+    await fileItem.locator('.file-micro-label').click()
+    await fileItem.locator('.rename-input').fill('Edited label')
+    await Promise.all([page.waitForResponse(isProjectFilePatch), page.keyboard.press('Enter')])
+    await expect(fileItem.locator('.file-micro-label')).toHaveText('Edited label', { timeout: 5000 })
+
+    // File summary: expand, then edit inline
+    await fileItem.locator('.project-file-main').click()
+    const fileSummary = fileItem.locator('.file-summary')
+    await expect(fileSummary).toBeVisible({ timeout: 3000 })
+    await fileSummary.click()
+    const fileSummaryTextarea = fileItem.locator('.inline-edit-textarea')
+    await fileSummaryTextarea.fill('Edited file summary text.')
+    await Promise.all([page.waitForResponse(isProjectFilePatch), fileSummaryTextarea.blur()])
+    await expect(fileItem.locator('.file-summary')).toHaveText('Edited file summary text.', { timeout: 5000 })
+
+    // --- Chat summary: add/edit inline in the project's chat list ---
+    const chatsSection = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Chats' }) })
+    const chatItem = chatsSection.locator('.chat-item').first()
+    await expect(chatItem).toBeVisible({ timeout: 5000 })
+    await chatItem.locator('.chat-summary').click()
+    const chatSummaryTextarea = chatItem.locator('.inline-edit-textarea')
+    await chatSummaryTextarea.fill('Edited: discusses Postgres + ULID decisions for this project.')
+    await Promise.all([page.waitForResponse(isChatPatch), chatSummaryTextarea.blur()])
+    await expect(chatItem.locator('.chat-summary'))
+      .toHaveText('Edited: discusses Postgres + ULID decisions for this project.', { timeout: 5000 })
+
+    // --- Reload and confirm every edit persisted ---
+    await page.reload()
+    await page.waitForURL(projectUrl)
+    await expect(page.locator('.project-view')).toBeVisible()
+
+    await expect(page.locator('.memory-text').first())
+      .toHaveText('Edited: Postgres 16 is the database of record.', { timeout: 10000 })
+
+    const fileItemAfter = page.locator('.project-file-item').first()
+    await expect(fileItemAfter.locator('.file-micro-label')).toHaveText('Edited label', { timeout: 10000 })
+    await fileItemAfter.locator('.project-file-main').click()
+    await expect(fileItemAfter.locator('.file-summary')).toHaveText('Edited file summary text.', { timeout: 5000 })
+
+    const chatItemAfter = page.locator('.project-section')
+      .filter({ has: page.locator('.project-section-header', { hasText: 'Chats' }) })
+      .locator('.chat-item').first()
+    await expect(chatItemAfter.locator('.chat-summary'))
+      .toHaveText('Edited: discusses Postgres + ULID decisions for this project.', { timeout: 10000 })
+
+    await page.screenshot({ path: `.screenshots/${new Date().toISOString().slice(0, 10)}-project-inline-edits.jpg` })
+
+    // Cleanup
+    try {
+      await page.click('[data-panel="projects"]')
+      await deleteProject(page, projectName)
+    } catch { /* cleanup failure is acceptable */ }
+  })
+})
+
+test.describe('Projects — memory dedup (dual-writer regression)', () => {
+  test.use({ storageState: '.auth/state.json' })
+
+  // Regression: when the model saves a fact via manage_project_memory mid-loop,
+  // the post-turn passive enrichment must see that write (re-read after the loop)
+  // and merge it — NOT re-derive a paraphrase as a second memory. Before the fix
+  // this turn reliably produced two near-duplicate "PostgreSQL" memories.
+  test('a single tool-saved project fact does not get duplicated by passive enrichment', async ({ page }) => {
+    const projectName = 'E2E Memory Dedup Test'
+    await openProjectsPanel(page)
+    await createProject(page, projectName)
+    await page.waitForURL(/\/p\//, { timeout: 10000 })
+    await expect(page.locator('.project-view')).toBeVisible()
+    const projectUrl = page.url()
+
+    // New chat in the project, instruct it to save exactly one decision via the tool
+    await page.locator('.project-view-header .btn-action').click()
+    await page.waitForURL(/\/c\/(?!new)/, { timeout: 10000 })
+    await expect(page.locator('.chat-view')).toBeVisible()
+    await page.locator('.message-input').fill(
+      'Use the manage_project_memory tool right now (operation "remember", category "decision") ' +
+      'to save exactly this project decision: "We use PostgreSQL 16 as the database for this project." ' +
+      'Then reply with one word: Done.'
+    )
+    await page.locator('.btn-send').click()
+
+    const memPill = page.locator('.tool-pill', { hasText: 'manage_project_memory' }).first()
+    await expect(memPill).toBeVisible({ timeout: 60000 })
+    await expect(memPill).not.toHaveClass(/pending/, { timeout: 60000 })
+    await expect(memPill).not.toHaveClass(/error/)
+    await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
+    await expect(page.locator('.message-input')).toBeEnabled({ timeout: 15000 })
+
+    // Passive enrichment (Sonnet) runs server-side AFTER the WS 'done' frame; a
+    // clean merge emits no WS frame, so wait for it to settle before counting.
+    const countPostgresMemories = async () => {
+      await page.goto(projectUrl)
+      await expect(page.locator('.project-view')).toBeVisible()
+      const memSection = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Memory' }) })
+      await expect(memSection.locator('.memory-item, .panel-empty')).not.toHaveCount(0, { timeout: 10000 })
+      return memSection.locator('.memory-item', { hasText: /postgres/i }).count()
+    }
+
+    // Poll until the tool's memory shows up, then settle and confirm it stays a single item.
+    await expect.poll(countPostgresMemories, { timeout: 30000, intervals: [3000, 3000, 5000, 5000] }).toBeGreaterThanOrEqual(1)
+    await page.waitForTimeout(12000) // let any late/duplicate enrichment write land
+    const finalCount = await countPostgresMemories()
+    expect(finalCount, 'exactly one PostgreSQL memory should exist (tool write merged, not duplicated)').toBe(1)
+
+    await page.screenshot({ path: `.screenshots/${new Date().toISOString().slice(0, 10)}-project-memory-dedup.jpg` })
 
     // Cleanup
     try {
