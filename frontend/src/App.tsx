@@ -97,7 +97,7 @@ function AuthedApp() {
       <div className="sidebar-global-header" onClick={() => navigate('/c/new')} title="New chat">
         <span className="sidebar-brand">
           <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
-          Chatrock
+          <span className="sidebar-brand-text">Chatrock</span>
         </span>
         <div className="search-box" onClick={e => e.stopPropagation()}>
           <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
@@ -114,9 +114,9 @@ function AuthedApp() {
               type="button"
               className={`search-scope-toggle${searchProjectOnly ? ' active' : ''}`}
               onClick={() => setSearchProjectOnly(v => !v)}
-              title={searchProjectOnly ? 'Searching this project only — click to search everywhere' : 'Searching everywhere — click to limit to this project'}
+              title={searchProjectOnly ? 'Searching this project only — click to search everywhere' : 'Searching everywhere — click to limit to project'}
             >
-              Project only
+              Project
             </button>
           )}
         </div>

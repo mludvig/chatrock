@@ -53,8 +53,17 @@ $header-h: 45px;
   cursor: pointer;
   transition: background 0.15s;
   z-index: 10;
+  // Container queries let child rules react to the header's own width rather
+  // than the viewport — needed because this header's width tracks the sidebar.
+  container-type: inline-size;
 
   &:hover { background: $surface2; }
+}
+
+// Hide the brand text (keep the icon) when the header is too narrow to fit
+// the search input comfortably alongside the "Project" toggle chip.
+@container (max-width: 340px) {
+  .sidebar-brand-text { display: none; }
 }
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────

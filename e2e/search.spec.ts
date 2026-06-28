@@ -39,18 +39,6 @@ test('header Search (project scope) forces search_history, renders internal-link
   const projectName = `E2E Search Seed ${Date.now()}`
   const SUMMARY = 'Detailed field notes on quokka habitat conservation on Rottnest Island.'
 
-  // Widen the persisted sidebar so the (narrow, two-column) global header has room
-  // for the search input alongside the "Project only" chip — at the default 260px
-  // sidebar the input collapses to ~0 width in project context.
-  await page.addInitScript(() => {
-    try {
-      const KEY = 'chatrock-store'
-      const parsed = JSON.parse(localStorage.getItem(KEY) ?? '{"state":{},"version":0}')
-      parsed.state = { ...parsed.state, sidebarWidth: 480 }
-      localStorage.setItem(KEY, JSON.stringify(parsed))
-    } catch { /* ignore */ }
-  })
-
   await createProject(page, projectName)
   const projectUrl = page.url()
 
