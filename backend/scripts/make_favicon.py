@@ -89,3 +89,11 @@ with open(ico_path, "wb") as f:
     for _, data in images:
         f.write(data)
 print("wrote favicon.ico")
+
+# ── PWA icons (180 apple-touch, 192/512 manifest) → frontend/public/ ──────────
+PUBLIC_DIR = os.path.normpath(os.path.join(OUT_DIR, "..", "..", "frontend", "public"))
+for size in (180, 192, 512):
+    png = cairosvg.svg2png(bytestring=SVG_TEMPLATE.encode(), output_width=size, output_height=size)
+    with open(os.path.join(PUBLIC_DIR, f"icon-{size}.png"), "wb") as f:
+        f.write(png)
+    print(f"wrote icon-{size}.png")
