@@ -47,7 +47,7 @@ import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare,
   faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile, faPlay,
-  faComments, faMagnifyingGlass,
+  faComments, faMagnifyingGlass, faMemory,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import { useChatStore } from '../store/chatStore'
@@ -169,8 +169,12 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
   const hasResults = !!step.searchResults?.length
   const hasSearchHistoryResults = !!step.searchHistoryResults?.length
   const hasScreenshots = !!step.screenshotUrls?.length
+  const isMemoryTool = MEMORY_TOOLS.has(step.name)
+  const mem = isMemoryTool ? memoryInput(step.input) : null
   const icon = pending ? faSpinner : step.isError ? faCircleXmark : faCircleCheck
-  const label = step.name === 'search_history'
+  const label = isMemoryTool
+    ? memoryLabel(step.name, step.input)
+    : step.name === 'search_history'
     ? `Search history: ${safeInput(step.input, 'query')}`
     : step.name === 'web_search'
     ? `Search: ${safeInput(step.input, 'query')}`
@@ -201,7 +205,7 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
   return (
     <div className={`tool-pill${step.isError ? ' error' : pending ? ' pending' : ''}`}>
       <button className="tool-pill-header" onClick={() => !pending && setExpanded(e => !e)}>
-        <FontAwesomeIcon icon={step.name === 'search_history' ? faMagnifyingGlass : faGlobe} className="tool-icon" />
+        <FontAwesomeIcon icon={isMemoryTool ? faMemory : step.name === 'search_history' ? faMagnifyingGlass : faGlobe} className="tool-icon" />
         <span className="tool-label">{label}</span>
         <FontAwesomeIcon icon={icon} className="tool-status" spin={pending} />
         {!pending && (
@@ -221,7 +225,19 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
               ))}
             </div>
           )}
-          {hasSearchHistoryResults ? (
+          {isMemoryTool && mem ? (
+            <div className="memory-update-card">
+              <div className="memory-update-head">
+                <span className="memory-update-op">
+                  {mem.operation === 'forget' ? 'Forgot' : mem.operation === 'update' ? 'Updated' : 'Remembered'}
+                  {step.name === 'manage_project_memory' ? ' project memory' : ' memory'}
+                </span>
+                {mem.category && <span className="memory-update-cat">{mem.category}</span>}
+              </div>
+              {mem.text && <div className="memory-update-text">{mem.text}</div>}
+              {step.result && <div className="memory-update-result">{step.result}</div>}
+            </div>
+          ) : hasSearchHistoryResults ? (
             <div className="search-results">
               {step.searchHistoryResults!.map((r: SearchHistoryResult) => (
                 <SearchHistoryResultCard key={`${r.kind}:${r.id}`} r={r} />
@@ -240,6 +256,31 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
       )}
     </div>
   )
+}
+
+const MEMORY_TOOLS = new Set(['manage_memory', 'manage_project_memory'])
+
+/** Parsed view of a manage_memory / manage_project_memory tool input. */
+function memoryInput(inputJson: string): { operation: string; text: string; category: string; memId: string } {
+  try {
+    const o = JSON.parse(inputJson) as Record<string, string>
+    return { operation: o.operation ?? '', text: o.text ?? '', category: o.category ?? '', memId: o.memId ?? '' }
+  } catch {
+    return { operation: '', text: '', category: '', memId: '' }
+  }
+}
+
+/** Collapsed-pill label for a memory tool, e.g. "Remember: …" / "Update project memory: …". */
+function memoryLabel(name: string, inputJson: string): string {
+  const { operation, text } = memoryInput(inputJson)
+  const proj = name === 'manage_project_memory'
+  const shortText = text.length > 60 ? text.slice(0, 60) + '…' : text
+  if (operation === 'forget') return proj ? 'Forget project memory' : 'Forget memory'
+  const noun = proj ? 'project memory' : 'memory'
+  if (operation === 'update') return shortText ? `Update ${noun}: ${shortText}` : `Update ${noun}`
+  // remember (default)
+  const lead = proj ? 'Remember (project)' : 'Remember'
+  return shortText ? `${lead}: ${shortText}` : lead
 }
 
 function safeInput(inputJson: string, key: string): string {

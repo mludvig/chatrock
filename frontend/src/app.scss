@@ -1341,6 +1341,49 @@ $header-h: 45px;
   }
 }
 
+.memory-update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  .memory-update-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .memory-update-op {
+    font-size: 12px;
+    font-weight: 600;
+    color: $text;
+  }
+
+  .memory-update-cat {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: $accent;
+    background: $accent-light;
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
+  .memory-update-text {
+    font-size: 13px;
+    line-height: 1.5;
+    color: $text;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .memory-update-result {
+    font-size: 11px;
+    color: $muted;
+  }
+}
+
 // ── Markdown rendering ────────────────────────────────────────────────────────
 .md {
   line-height: 1.65;
