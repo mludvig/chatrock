@@ -16,7 +16,7 @@ import './app.scss'
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingSearch } = useChatStore()
+  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingSearch, setActivePanel, bumpNewChatTick } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   // Default on: searching from inside a project most often means "this project", not everywhere.
@@ -95,7 +95,7 @@ function AuthedApp() {
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}
-      <div className="sidebar-global-header" onClick={() => navigate('/c/new')} title="New chat">
+      <div className="sidebar-global-header" onClick={() => { setActivePanel('chats'); bumpNewChatTick(); navigate('/c/new') }} title="New chat">
         <span className="sidebar-brand">
           <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
           <span className="sidebar-brand-text">Chatrock</span>
@@ -123,7 +123,7 @@ function AuthedApp() {
         </div>
         <button
           className="btn-new"
-          onClick={e => { e.stopPropagation(); navigate('/c/new') }}
+          onClick={e => { e.stopPropagation(); setActivePanel('chats'); bumpNewChatTick(); navigate('/c/new') }}
           title="New chat"
           tabIndex={-1}
         >
