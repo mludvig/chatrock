@@ -47,8 +47,8 @@ export const MODELS: Model[] = [
     capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
   },
   {
-    id: 'global.anthropic.claude-sonnet-4-6',
-    name: 'Claude Sonnet 4.6',
+    id: 'global.anthropic.claude-sonnet-5',
+    name: 'Claude Sonnet 5',
     capabilities: { temperature: true, topP: true, topK: false, thinking: 'adaptive', attachments: true },
   },
   {
@@ -58,7 +58,7 @@ export const MODELS: Model[] = [
   },
 ]
 
-export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-4-6'
+export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-5'
 
 // Cheaper model used for auto-title generation only
 export const TITLE_MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
