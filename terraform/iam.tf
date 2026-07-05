@@ -70,6 +70,14 @@ data "aws_iam_policy_document" "lambda_policy" {
     resources = ["arn:aws:execute-api:${var.aws_region}:*:${aws_apigatewayv2_api.ws.id}/*"]
   }
 
+  # Bedrock auto-subscribes the account to a foundation model on first invocation; these
+  # marketplace actions aren't resource-scoped (no ARN to constrain to).
+  statement {
+    sid       = "MarketplaceModelSubscribe"
+    actions   = ["aws-marketplace:ViewSubscriptions", "aws-marketplace:Subscribe"]
+    resources = ["*"]
+  }
+
   statement {
     actions = [
       "s3:PutObject",
