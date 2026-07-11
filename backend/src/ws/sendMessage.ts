@@ -648,8 +648,10 @@ export const buildHandler = (postFn: PostFn) => async (
   }
 
   // ── Post-turn enrichment (user facts + chat summary/topics + project facts) ──
-  // Skipped when memoryEnabled is false.
-  if (memoryEnabled) {
+  // Skipped when memoryEnabled is false, and always skipped for private chats — extracting
+  // facts or a searchable summary from a private chat would leak it right back out through
+  // memory or search_history. See "Chat deletion & temporary/private chats" in backend/CLAUDE.md.
+  if (memoryEnabled && !chat.isPrivate) {
     try {
       const needTitle = !isRerun && !isEdit && !isContinue && chat.title === 'New Chat'
       const isProject = !!projectId

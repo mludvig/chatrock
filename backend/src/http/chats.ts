@@ -16,11 +16,32 @@ const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   body: JSON.stringify(body),
 })
 
+const PRIVATE_CHAT_TTL_SECONDS = Number(process.env.PRIVATE_CHAT_TTL_SECONDS ?? 604800)
+
 const err = (status: number, message: string): APIGatewayProxyResultV2 => ({
   statusCode: status,
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ message }),
 })
+
+// Chat item -> client DTO. Shared by the list and single-chat GET routes so both expose the
+// same shape; the list route additionally filters out isPrivate chats before mapping.
+function chatDto(i: Record<string, unknown>) {
+  return {
+    chatId: (i.SK as string).replace('CHAT#', ''),
+    title: i.title,
+    model: i.model,
+    systemPrompt: i.systemPrompt,
+    createdAt: i.createdAt,
+    updatedAt: i.updatedAt,
+    ...(i.activeLeafId !== undefined ? { activeLeafId: i.activeLeafId } : {}),
+    ...(i.modelSettings !== undefined ? { modelSettings: i.modelSettings } : {}),
+    ...(i.projectId !== undefined ? { projectId: i.projectId } : {}),
+    ...(i.summary !== undefined ? { summary: i.summary } : {}),
+    ...(i.topics !== undefined ? { topics: i.topics } : {}),
+    ...(i.isPrivate === true ? { isPrivate: true, expiresAt: new Date((i.ttl as number) * 1000).toISOString() } : {}),
+  }
+}
 
 export const handler = async (
   event: APIGatewayProxyEventV2WithJWTAuthorizer,
@@ -30,19 +51,8 @@ export const handler = async (
 
   if (route === 'GET /api/chats') {
     const items = await listChats(sub)
-    const chats = items.map(i => ({
-      chatId: (i.SK as string).replace('CHAT#', ''),
-      title: i.title,
-      model: i.model,
-      systemPrompt: i.systemPrompt,
-      createdAt: i.createdAt,
-      updatedAt: i.updatedAt,
-      ...(i.activeLeafId !== undefined ? { activeLeafId: i.activeLeafId } : {}),
-      ...(i.modelSettings !== undefined ? { modelSettings: i.modelSettings } : {}),
-      ...(i.projectId !== undefined ? { projectId: i.projectId } : {}),
-      ...(i.summary !== undefined ? { summary: i.summary } : {}),
-      ...(i.topics !== undefined ? { topics: i.topics } : {}),
-    }))
+    // Private chats never appear in the list — only reachable by knowing the chatId (URL).
+    const chats = items.filter(i => i.isPrivate !== true).map(chatDto)
     return ok({ chats })
   }
 
@@ -73,6 +83,15 @@ export const handler = async (
     if (body.projectId !== undefined && body.projectId !== null && typeof body.projectId !== 'string') {
       return err(400, 'projectId must be a string')
     }
+    if (body.isPrivate !== undefined && typeof body.isPrivate !== 'boolean') {
+      return err(400, 'isPrivate must be a boolean')
+    }
+    const isPrivate = body.isPrivate === true
+    // Private chats can't belong to a project — project instructions/memory are shared
+    // context, and mixing them with a chat meant to leave no trace defeats the point.
+    if (isPrivate && body.projectId !== undefined && body.projectId !== null) {
+      return err(400, 'A private chat cannot be assigned to a project')
+    }
     await putChat({
       ...buildChatKey(sub, chatId),
       title: 'New Chat',
@@ -82,10 +101,15 @@ export const handler = async (
         ? { modelSettings: body.modelSettings }
         : {}),
       ...(body.projectId !== undefined && body.projectId !== null ? { projectId: body.projectId as string } : {}),
+      // TTL is fixed at creation time, not sliding — see "Chat deletion & temporary/private
+      // chats" in backend/CLAUDE.md. Cascade cleanup (messages + S3) runs off the Chat item's
+      // own DynamoDB Stream REMOVE event (terraform/stream_chat_cleanup.tf), not this ttl
+      // field directly, so there's nothing else to wire up here.
+      ...(isPrivate ? { isPrivate: true, ttl: Math.floor(Date.now() / 1000) + PRIVATE_CHAT_TTL_SECONDS } : {}),
       createdAt: now,
       updatedAt: now,
     })
-    console.log(JSON.stringify({ event: 'chat_created', sub, chatId, model }))
+    console.log(JSON.stringify({ event: 'chat_created', sub, chatId, model, isPrivate }))
     return ok({ chatId }, 201)
   }
 
@@ -120,6 +144,12 @@ export const handler = async (
 
   const chatId = event.pathParameters?.chatId
   if (!chatId) return err(400, 'Missing chatId')
+
+  if (route === 'GET /api/chats/{chatId}') {
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+    return ok(chatDto(chat))
+  }
 
   if (route === 'PATCH /api/chats/{chatId}') {
     let body: Record<string, unknown> = {}
@@ -165,6 +195,9 @@ export const handler = async (
       updatedFields.push('modelSettings')
     }
     if (body.projectId !== undefined) {
+      if (chat.isPrivate === true && body.projectId !== null) {
+        return err(400, 'A private chat cannot be assigned to a project')
+      }
       const prevProjectId = chat.projectId as string | undefined
       if (body.projectId === null) {
         await updateChatProject(sub, chatId, null)
@@ -299,6 +332,9 @@ export const handler = async (
       systemPrompt: (chat.systemPrompt as string | undefined) ?? '',
       ...(chat.modelSettings !== undefined ? { modelSettings: chat.modelSettings } : {}),
       ...(chat.projectId !== undefined ? { projectId: chat.projectId } : {}),
+      // A fork of a private chat stays private, with a fresh TTL (fork is itself a creation
+      // event) — a fork must never silently un-hide something private.
+      ...(chat.isPrivate === true ? { isPrivate: true, ttl: Math.floor(Date.now() / 1000) + PRIVATE_CHAT_TTL_SECONDS } : {}),
       createdAt: now,
       updatedAt: now,
       ...(cloned.length ? { activeLeafId: cloned[cloned.length - 1].msgId } : {}),
