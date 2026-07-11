@@ -113,6 +113,14 @@ resource "aws_apigatewayv2_route" "chats_create" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
+resource "aws_apigatewayv2_route" "chats_get" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/chats/{chatId}"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
 resource "aws_apigatewayv2_route" "chats_update" {
   api_id             = aws_apigatewayv2_api.http.id
   route_key          = "PATCH /api/chats/{chatId}"
