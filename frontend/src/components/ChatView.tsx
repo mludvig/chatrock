@@ -550,17 +550,24 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     try {
       const res = await api.forkChat(chatId, fromMsgId)
       const now = new Date().toISOString()
-      useChatStore.getState().addChat({
-        chatId: res.chatId,
-        title: `${activeChat.title} (fork)`,
-        model: activeChat.model,
-        systemPrompt: activeChat.systemPrompt,
-        ...(activeChat.modelSettings ? { modelSettings: activeChat.modelSettings } : {}),
-        ...(activeChat.projectId ? { projectId: activeChat.projectId } : {}),
-        createdAt: now,
-        updatedAt: now,
-      })
-      pushToast({ kind: 'success', text: 'Forked into a new chat' })
+      if (activeChat.isPrivate) {
+        // Backend already makes a fork of a private chat private too — never addChat() it,
+        // that would surface it in the LHS list. Fetch the authoritative DTO (expiresAt is a
+        // fresh TTL, not the source's) rather than hand-building one.
+        await api.getChat(res.chatId).then(useChatStore.getState().setPrivateChat)
+      } else {
+        useChatStore.getState().addChat({
+          chatId: res.chatId,
+          title: `${activeChat.title} (fork)`,
+          model: activeChat.model,
+          systemPrompt: activeChat.systemPrompt,
+          ...(activeChat.modelSettings ? { modelSettings: activeChat.modelSettings } : {}),
+          ...(activeChat.projectId ? { projectId: activeChat.projectId } : {}),
+          createdAt: now,
+          updatedAt: now,
+        })
+      }
+      pushToast({ kind: 'success', text: activeChat.isPrivate ? 'Forked into a new private chat' : 'Forked into a new chat' })
       if (role === 'user') pendingDraftRef.current = text
       navigate(`/c/${res.chatId}`)
     } catch (err) {
