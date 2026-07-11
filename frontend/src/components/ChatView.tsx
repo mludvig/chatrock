@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faUserSecret } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faUserSecret, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
@@ -25,7 +25,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const isNew = !chatId || chatId === 'new'
 
   const {
-    chats, privateChats, setPrivateChat, loading: chatsLoading, messages, streamingMsg,
+    chats, privateChats, setPrivateChat, clearModelMigrationNotice, loading: chatsLoading, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream,
     renameChat, removeChat, sending, setSending, pushToast,
@@ -969,6 +969,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </select>
         </div>
       </div>
+
+      {!isNew && activeChat?.modelMigratedFrom && (
+        <div className="error-banner warning">
+          <span>
+            <FontAwesomeIcon icon={faTriangleExclamation} /> This chat's model ({activeChat.modelMigratedFrom}) is no
+            longer available — it's been switched to {models.find(m => m.id === activeChat.model)?.name ?? activeChat.model}.
+            Please double check the model selection above.
+          </span>
+          <button onClick={() => clearModelMigrationNotice(activeChat.chatId)} title="Dismiss">
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        </div>
+      )}
 
       <div className="messages-wrap">
         <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>

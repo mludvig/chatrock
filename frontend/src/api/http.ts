@@ -39,6 +39,10 @@ export interface Chat {
   // deadline (fixed at creation), shown so the user knows when it disappears.
   isPrivate?: boolean
   expiresAt?: string
+  // Present exactly once, the first time this chat is read after its stored model was
+  // retired from config/models.ts — the backend already swapped `model` to the current
+  // default and persisted it; this is only here so the UI can show a one-time notice.
+  modelMigratedFrom?: string
 }
 
 export interface Project {

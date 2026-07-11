@@ -62,6 +62,8 @@ interface ChatState {
   setChats: (chats: Chat[]) => void
   addChat: (chat: Chat) => void
   setPrivateChat: (chat: Chat) => void
+  /** Dismiss the one-time "this chat's model was migrated" notice for a chat. */
+  clearModelMigrationNotice: (chatId: string) => void
   removeChat: (chatId: string) => void
   renameChat: (chatId: string, title: string) => void
   updateChatSystemPrompt: (chatId: string, systemPrompt: string) => void
@@ -192,6 +194,12 @@ export const useChatStore = create<ChatState>()(
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
       setPrivateChat: (chat) => set((s) => ({ privateChats: { ...s.privateChats, [chat.chatId]: chat } })),
+      clearModelMigrationNotice: (chatId) => set((s) => ({
+        chats: s.chats.map(c => c.chatId === chatId ? { ...c, modelMigratedFrom: undefined } : c),
+        privateChats: s.privateChats[chatId]
+          ? { ...s.privateChats, [chatId]: { ...s.privateChats[chatId], modelMigratedFrom: undefined } }
+          : s.privateChats,
+      })),
       removeChat: (chatId) => set((s) => ({
         chats: s.chats.filter(c => c.chatId !== chatId),
         activeChatId: s.activeChatId === chatId ? null : s.activeChatId,

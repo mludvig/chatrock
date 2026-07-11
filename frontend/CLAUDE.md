@@ -41,6 +41,10 @@ Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `s
 
 Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in DynamoDB and surfaced in the bubble metadata line.
 
+## Stale model migration notice
+
+If a chat's stored model was retired from the backend's `MODELS` registry, the backend already swapped it to the current default and reports it once via `Chat.modelMigratedFrom` (see `backend/CLAUDE.md`). `ChatView.tsx` shows this as a dismissible `.error-banner.warning` banner (the existing `.error-banner` shape with an amber modifier instead of a whole new banner style) right below the header; dismissing calls `clearModelMigrationNotice(chatId)`, which just clears the field locally — the backend never re-sends it once the chat's `model` is valid, so there's nothing to persist.
+
 ## Private chats
 
 Created via a "Private" toggle in `ChatView.tsx`'s header, shown only for `/c/new`; passes `isPrivate: true` to `api.createChat`. Backend excludes them from `GET /api/chats`, so they're deliberately never pushed into the store's `chats` array (`ChatsPanel` renders exactly that array — pushing to it would surface a "private" chat in the list). Instead they live in `chatStore.ts`'s `privateChats: Record<chatId, Chat>` slot (not part of `persist`'s `partialize`, so it doesn't survive a reload — a reload re-fetches via `GET /api/chats/{chatId}` on demand). `ChatView.tsx` resolves `activeChat = chats.find(...) ?? privateChats[chatId]`, which is why every other piece of chat logic (already written against `activeChat`) needed no changes to support private chats. See "Chat deletion & temporary/private chats" in `backend/CLAUDE.md` for the full backend design (TTL, cascade delete, memory/search exclusion).

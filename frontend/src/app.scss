@@ -822,6 +822,16 @@ $header-h: 45px;
     opacity: 0.7;
     &:hover { opacity: 1; }
   }
+
+  // Non-error notices (e.g. "this chat's model was migrated") reuse the same shape/markup
+  // with an amber palette instead of red, so they read as a notice rather than a failure.
+  &.warning {
+    background: #fffbeb;
+    border-top-color: #fde68a;
+    color: #92640a;
+    span { flex: 1; }
+    button { color: #92640a; }
+  }
 }
 
 // ── Input area (stats bar + input bar) ───────────────────────────────────────
