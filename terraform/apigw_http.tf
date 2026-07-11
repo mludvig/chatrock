@@ -137,6 +137,14 @@ resource "aws_apigatewayv2_route" "chats_retitle" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
+resource "aws_apigatewayv2_route" "chats_resummarize" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/chats/{chatId}/resummarize"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
 resource "aws_apigatewayv2_route" "chats_fork" {
   api_id             = aws_apigatewayv2_api.http.id
   route_key          = "POST /api/chats/{chatId}/fork"
