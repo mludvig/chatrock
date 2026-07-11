@@ -102,14 +102,33 @@ Two writers, two stores (user and project):
 - **Inference**: `hydrateBlocks(blocks)` fetches bytes from S3 for image/document blocks before the Bedrock call (blocks carry `s3://bucket/key` at rest).
 - **Fork**: `copyChatObjects` copies S3 objects; `rewriteBlockUri` patches copied blocks to point at new keys.
 
+## Chat deletion & temporary/private chats
+
+**Cascade delete**: `DELETE /api/chats/{chatId}` (`http/chats.ts`) only deletes the Chat item (`dynamo.ts`'s `deleteChatItem`). The resulting DynamoDB Stream `REMOVE` event (table has `stream_view_type = KEYS_ONLY`, `terraform/dynamodb.tf`) triggers `stream_chat_cleanup` (`streams/chatTtlCleanup.ts`, bundled as `stream-chatCleanup`), which cascades the delete to that chat's Message items (`dynamo.ts`'s `deleteChatMessages`) and S3 attachments (`attachments.ts`'s `deleteChatObjects`). The event source mapping's `filter_criteria` (`terraform/stream_chat_cleanup.tf`) restricts invocation to `REMOVE` events where `PK` begins with `USER#` and `SK` begins with `CHAT#` — a Chat-item delete specifically, so a Message-item removal (`PK = CHAT#<chatId>`) can never self-trigger it. Same path drives both manual delete and TTL expiry (DynamoDB's own background TTL sweep issues the identical `REMOVE` event), so there's one cascade implementation instead of two. On-failure destination is `chat_cleanup_dlq` (SQS) — a transient S3/DynamoDB error during cascade lands there instead of silently orphaning data.
+
+Accepted tradeoffs: a few-second window after a manual delete where messages are still fetchable by direct URL/API (the stream fires within seconds of the `DeleteItem`, not instantly); DynamoDB's TTL background sweep has AWS's documented ~48h fuzziness before it actually deletes an expired item (only affects private-chat expiry, not manual delete).
+
+**Private/temporary chats**: `POST /api/chats` accepts `isPrivate?: boolean`; when set, stamps a fixed (not sliding) `ttl = now + PRIVATE_CHAT_TTL_SECONDS` and `isPrivate: true` on the Chat item. `PRIVATE_CHAT_TTL_SECONDS` comes from the `private_chat_ttl_seconds` tfvar (gitignored `terraform/terraform.tfvars`; set low e.g. `86400` while testing the expiry path, raise once verified — default in `variables.tf` is 7 days).
+
+- `GET /api/chats` (list) filters out `isPrivate` chats — the LHS never shows them.
+- `GET /api/chats/{chatId}` (new route, `http/chats.ts`) does **not** filter on `isPrivate` — this is how the frontend loads a private chat's title/expiry when its URL is visited directly, since it's never in the list response. Returns `chatDto()`, which includes `isPrivate`/`expiresAt` only when the chat is private.
+- `enrichUserFacts`/`enrichProjectFacts`/`summarizeChat` (`ws/sendMessage.ts`'s post-turn enrichment block) are skipped entirely when `chat.isPrivate` — gated by the same `if` as `memoryEnabled`. This is the part most likely to leak private content if missed.
+- `buildSearchHistoryCorpus` (`lib/search.ts`) excludes `isPrivate` chats from `chatCorpusItems` — otherwise a private chat becomes discoverable through `search_history` from an unrelated chat.
+- Private chats cannot be assigned a `projectId`, enforced on both create and `PATCH` — project instructions/memory are shared context, and mixing them defeats the point of a chat meant to leave no trace.
+- Forking a private chat (`POST /.../fork`) stays private with a fresh `ttl` (a fork is itself a creation event) — a fork can never silently un-hide something private.
+- Table's `ttl` attribute (`terraform/dynamodb.tf`) was already enabled for `CONN#` WebSocket-connection rows (`ws/connect.ts`) — private chats are the second user of it.
+
+**Frontend**: `ChatView.tsx` header has a "Private" toggle, visible only for `/c/new`, threaded into `api.createChat(..., isPrivate)`. Private chats are deliberately never pushed into the Zustand store's `chats` array (that's the array `ChatsPanel` renders — pushing to it would defeat "never in the list"). They live in a separate `privateChats: Record<chatId, Chat>` store slot instead (`store/chatStore.ts`, excluded from `persist`'s `partialize`), populated either right after creation or by a fallback `api.getChat(chatId)` fetch when a private chat's URL is opened directly and it isn't in `chats`. `activeChat` resolves as `chats.find(...) ?? privateChats[chatId]`, so the rest of `ChatView`'s send/rerun/fork logic — already keyed entirely off `activeChat` — works unchanged for a private chat. Visuals: `.chat-view--private` violet tint (header/messages/input area), a header chip, and a footer line showing `expiresAt`.
+
 ## HTTP API routes
 
 | Route | Handler |
 |-------|---------|
-| `GET /api/chats` | list chats |
-| `POST /api/chats` | create chat (optional `projectId`) |
+| `GET /api/chats` | list chats (excludes private chats) |
+| `POST /api/chats` | create chat (optional `projectId`, `isPrivate`) |
+| `GET /api/chats/{chatId}` | get one chat's metadata (includes private chats — how the frontend loads one by direct URL) |
 | `PATCH /api/chats/{chatId}` | update title / systemPrompt / model / activeLeafId / modelSettings / projectId / summary / topics |
-| `DELETE /api/chats/{chatId}` | delete chat + S3 objects |
+| `DELETE /api/chats/{chatId}` | delete the Chat item; cascade to messages/S3 runs via the stream_chat_cleanup Lambda (see below) |
 | `POST /api/chats/{chatId}/retitle` | AI-generated title |
 | `POST /api/chats/{chatId}/fork` | clone active-path into new chat |
 | `DELETE /api/chats/{chatId}/messages/{msgId}` | delete message subtree |
