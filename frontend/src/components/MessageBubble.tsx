@@ -45,7 +45,7 @@ import { Link } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
-  faCircleCheck, faCircleXmark, faBrain, faRotateRight, faPenToSquare,
+  faCircleCheck, faCircleXmark, faBrain, faLightbulb, faRotateRight, faPenToSquare,
   faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile, faPlay,
   faComments, faMagnifyingGlass, faMemory,
 } from '@fortawesome/free-solid-svg-icons'
@@ -549,7 +549,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
             </span>
             {msg.thinkingEffort && msg.thinkingEffort !== 'off' && (
               <span className="msg-meta-item">
-                <FontAwesomeIcon icon={faBrain} />
+                <FontAwesomeIcon icon={faLightbulb} />
                 {msg.thinkingEffort}
               </span>
             )}
