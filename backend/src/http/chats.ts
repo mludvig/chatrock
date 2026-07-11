@@ -228,6 +228,14 @@ export const handler = async (
     return ok({ title })
   }
 
+  if (route === 'POST /api/chats/{chatId}/resummarize') {
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+    const result = await summarizeChatById(sub, chatId)
+    if (!result) return err(500, 'Summary generation failed')
+    return ok({ summary: result.summary, topics: result.topics })
+  }
+
   if (route === 'POST /api/chats/{chatId}/fork') {
     let body: Record<string, unknown> = {}
     try {

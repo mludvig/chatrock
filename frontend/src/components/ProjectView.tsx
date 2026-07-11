@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faArrowRightFromBracket, faSpinner, faTrash,
-  faUpload, faFile, faExclamationTriangle,
+  faUpload, faFile, faExclamationTriangle, faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
 import { api, uploadToS3 } from '../api/http'
 import type { Chat, ProjectMemory, ProjectFile } from '../api/http'
@@ -36,6 +36,7 @@ export default function ProjectView({ defaultModel }: Props) {
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([])
   const [filesLoading, setFilesLoading] = useState(true)
   const [expandedSummaries, setExpandedSummaries] = useState<Set<string>>(new Set())
+  const [resummarizingId, setResummarizingId] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -298,6 +299,19 @@ export default function ProjectView({ defaultModel }: Props) {
     }
   }
 
+  async function handleResummarize(e: React.MouseEvent, chatId: string) {
+    e.stopPropagation()
+    setResummarizingId(chatId)
+    try {
+      const res = await api.resummarizeChat(chatId)
+      setProjectChats(p => p.map(c => c.chatId === chatId ? { ...c, summary: res.summary, topics: res.topics } : c))
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setResummarizingId(null)
+    }
+  }
+
   async function handleDescriptionBlur() {
     if (!projectId) return
     const description = descDraft
@@ -410,6 +424,13 @@ export default function ProjectView({ defaultModel }: Props) {
                   )}
                 </div>
                 <div className="chat-actions">
+                  <button
+                    onClick={e => handleResummarize(e, chat.chatId)}
+                    title="Re-generate summary"
+                    disabled={resummarizingId === chat.chatId}
+                  >
+                    <FontAwesomeIcon icon={faWandMagicSparkles} spin={resummarizingId === chat.chatId} />
+                  </button>
                   <button onClick={e => handleRemoveFromProject(e, chat.chatId)} title="Remove from project">
                     <FontAwesomeIcon icon={faArrowRightFromBracket} />
                   </button>
