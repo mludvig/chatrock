@@ -35,6 +35,10 @@ export interface Chat {
   projectId?: string
   summary?: string
   topics?: string[]
+  // Private/temporary chat — never returned by listChats; expiresAt is the DynamoDB TTL
+  // deadline (fixed at creation), shown so the user knows when it disappears.
+  isPrivate?: boolean
+  expiresAt?: string
 }
 
 export interface Project {
@@ -196,12 +200,14 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
 
 export const api = {
   listChats: ()                        => req<{ chats: Chat[] }>('GET', '/api/chats'),
-  createChat: (model: string, systemPrompt: string, chatId?: string, modelSettings?: ModelSettings, projectId?: string) =>
+  getChat: (chatId: string)            => req<Chat>('GET', `/api/chats/${chatId}`),
+  createChat: (model: string, systemPrompt: string, chatId?: string, modelSettings?: ModelSettings, projectId?: string, isPrivate?: boolean) =>
     req<{ chatId: string }>('POST', '/api/chats', {
       model, systemPrompt,
       ...(chatId ? { chatId } : {}),
       ...(modelSettings ? { modelSettings } : {}),
       ...(projectId ? { projectId } : {}),
+      ...(isPrivate ? { isPrivate } : {}),
     }),
   renameChat: (chatId: string, title: string) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { title }),
