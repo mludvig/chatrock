@@ -113,8 +113,11 @@ export async function updateChatModelSettings(sub: string, chatId: string, model
   }))
 }
 
-export async function deleteChat(sub: string, chatId: string) {
-  // Delete all messages for this chat first (cascade)
+// Deletes all Message items under CHAT#<chatId>. Split out from deleteChat so the
+// stream-triggered cascade cleanup Lambda (streams/chatTtlCleanup.ts) can reuse exactly this
+// — it fires *after* the Chat item is already gone (that REMOVE event is what triggers it),
+// so it must never re-attempt deleting the Chat item itself.
+export async function deleteChatMessages(chatId: string) {
   const msgs = await ddb.send(new QueryCommand({
     TableName: TABLE,
     KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
@@ -130,6 +133,13 @@ export async function deleteChat(sub: string, chatId: string) {
       },
     }))
   }
+}
+
+// Deletes only the Chat item. Message + S3 cleanup is NOT done here — it's handled by the
+// stream-triggered cascade cleanup Lambda (streams/chatTtlCleanup.ts), which fires off this
+// item's DynamoDB Stream REMOVE event. Used both for manual delete (DELETE /api/chats/{chatId})
+// and implicitly for TTL expiry (DynamoDB's own background TTL sweep issues the same REMOVE).
+export async function deleteChatItem(sub: string, chatId: string) {
   await ddb.send(new DeleteCommand({
     TableName: TABLE,
     Key: buildChatKey(sub, chatId),

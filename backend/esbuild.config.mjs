@@ -18,6 +18,7 @@ const handlers = [
   { name: 'ws-disconnect',    entry: 'src/ws/disconnect.ts' },
   { name: 'ws-sendMessage',      entry: 'src/ws/sendMessage.ts' },
   { name: 'ws-cancelMessage',    entry: 'src/ws/cancelMessage.ts' },
+  { name: 'stream-chatCleanup',  entry: 'src/streams/chatTtlCleanup.ts' },
 ]
 
 const distDir = path.join(__dirname, '..', 'terraform', 'dist')

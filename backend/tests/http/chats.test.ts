@@ -97,7 +97,7 @@ test('PATCH /api/chats/{chatId} renames a chat', async () => {
 
 test('DELETE /api/chats/{chatId} deletes chat', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
-  mockDynamo.deleteChat.mockResolvedValue(undefined)
+  mockDynamo.deleteChatItem.mockResolvedValue(undefined)
   const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}', undefined, { chatId: 'c1' }) as any))
   expect(res.statusCode).toBe(204)
 })
@@ -580,17 +580,17 @@ describe('POST /api/attachments', () => {
   })
 })
 
-// ── Delete calls deleteChatObjects ────────────────────────────────────────────
+// ── Delete only deletes the Chat item; messages/S3 cascade via the stream cleanup Lambda ─────
 
-test('DELETE /api/chats/{chatId} calls deleteChatObjects after DDB delete', async () => {
+test('DELETE /api/chats/{chatId} deletes only the Chat item, not messages/S3 directly', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
-  mockDynamo.deleteChat.mockResolvedValue(undefined)
-  mockAttachments.deleteChatObjects.mockResolvedValue(undefined)
+  mockDynamo.deleteChatItem.mockResolvedValue(undefined)
 
   const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}', undefined, { chatId: 'c1' }) as any))
 
   expect(res.statusCode).toBe(204)
-  expect(mockAttachments.deleteChatObjects).toHaveBeenCalledWith('user-1', 'c1')
+  expect(mockDynamo.deleteChatItem).toHaveBeenCalledWith('user-1', 'c1')
+  expect(mockAttachments.deleteChatObjects).not.toHaveBeenCalled()
 })
 
 // ── Fork copies S3 objects ────────────────────────────────────────────────────

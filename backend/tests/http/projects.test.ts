@@ -275,7 +275,7 @@ test('DELETE /api/projects/{projectId} cascade does NOT delete chats themselves'
   await handler(makeEvent('DELETE', '/api/projects/{projectId}', undefined, { projectId: 'proj-1' }) as any)
 
   // Chats themselves must not be deleted
-  expect(mockDynamo.deleteChat).not.toHaveBeenCalled()
+  expect(mockDynamo.deleteChatItem).not.toHaveBeenCalled()
   // Chat is only unassigned, not deleted
   expect(mockDynamo.updateChatProject).toHaveBeenCalledWith('user-1', 'c1', null)
 })
