@@ -24,7 +24,7 @@ frontend/src/
     ProjectView.tsx        — project detail (/p/:projectId): chats list (with summary), file upload/inclusion/delete, project memory, rename; 'New chat' creates chat in project
     MemoryPanel.tsx        — user memories grouped by category; delete; refreshes on memoryRefreshTick
     PreferencesPanel.tsx   — two tabs: Defaults (UserPreferences, 800ms debounce) and This chat (per-chat system prompt + ModelSettings)
-    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project
+    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; private-chat toggle/tint/footer (see below)
     ModelSettingsPanel.tsx — dynamic settings panel (temperature, topP, thinking effort, web search toggle, memory toggle)
     MessageBubble.tsx      — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
     Toaster.tsx            — stacked toast notifications (bottom-center), auto-dismiss 3s
@@ -40,6 +40,10 @@ Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `s
 `ModelSettings.webSearchEnabled` defaults to `true`; when `false`, `bedrock.ts` omits web tools from the tool list. `ModelSettings.webSearchProvider` (`'jina' | 'agentcore'`, default `jina`) selects which backend powers the `web_search` tool. `ModelSettings.browserCoreEnabled` (default `true`) gates `take_screenshot`/`get_rendered_page`; `ModelSettings.browserExtendedEnabled` (default `false`) gates the scripted `browse_web` tool. `ModelSettings.memoryEnabled` defaults to `true`; when `false`, the `manage_memory` tool is also omitted. `ModelSettings.searchEnabled` defaults to `true`; when `false`, the `search_history` tool is omitted from organic tool choice — but the explicit Search entry point still forces it in.
 
 Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in DynamoDB and surfaced in the bubble metadata line.
+
+## Private chats
+
+Created via a "Private" toggle in `ChatView.tsx`'s header, shown only for `/c/new`; passes `isPrivate: true` to `api.createChat`. Backend excludes them from `GET /api/chats`, so they're deliberately never pushed into the store's `chats` array (`ChatsPanel` renders exactly that array — pushing to it would surface a "private" chat in the list). Instead they live in `chatStore.ts`'s `privateChats: Record<chatId, Chat>` slot (not part of `persist`'s `partialize`, so it doesn't survive a reload — a reload re-fetches via `GET /api/chats/{chatId}` on demand). `ChatView.tsx` resolves `activeChat = chats.find(...) ?? privateChats[chatId]`, which is why every other piece of chat logic (already written against `activeChat`) needed no changes to support private chats. See "Chat deletion & temporary/private chats" in `backend/CLAUDE.md` for the full backend design (TTL, cascade delete, memory/search exclusion).
 
 ## Env vars
 
