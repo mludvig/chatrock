@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
-import { TITLE_MODEL, isValidModelId } from '../config/models'
+import { TITLE_MODEL, DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
@@ -24,13 +24,29 @@ const err = (status: number, message: string): APIGatewayProxyResultV2 => ({
   body: JSON.stringify({ message }),
 })
 
+// A chat's stored `model` can go stale when that model id is later retired from
+// config/models.ts (e.g. a renamed inference profile with no back-compat alias). Rather than a
+// bulk migration, this self-heals lazily the next time the chat is read: swap in
+// DEFAULT_CHAT_MODEL and report what changed so the client can show a one-time notice. Only
+// affects the NEXT message — Message rows keep their own historical `model` field untouched, so
+// past turns still show what actually generated them.
+async function resolveChatModel(sub: string, chatId: string, chat: Record<string, unknown>): Promise<{ model: string; modelMigratedFrom?: string }> {
+  const model = chat.model as string
+  if (isValidModelId(model)) return { model }
+  await updateChatModel(sub, chatId, DEFAULT_CHAT_MODEL)
+  console.log(JSON.stringify({ event: 'chat_model_migrated', sub, chatId, from: model, to: DEFAULT_CHAT_MODEL }))
+  return { model: DEFAULT_CHAT_MODEL, modelMigratedFrom: model }
+}
+
 // Chat item -> client DTO. Shared by the list and single-chat GET routes so both expose the
 // same shape; the list route additionally filters out isPrivate chats before mapping.
-function chatDto(i: Record<string, unknown>) {
+async function chatDto(sub: string, i: Record<string, unknown>) {
+  const chatId = (i.SK as string).replace('CHAT#', '')
+  const { model, modelMigratedFrom } = await resolveChatModel(sub, chatId, i)
   return {
-    chatId: (i.SK as string).replace('CHAT#', ''),
+    chatId,
     title: i.title,
-    model: i.model,
+    model,
     systemPrompt: i.systemPrompt,
     createdAt: i.createdAt,
     updatedAt: i.updatedAt,
@@ -40,6 +56,7 @@ function chatDto(i: Record<string, unknown>) {
     ...(i.summary !== undefined ? { summary: i.summary } : {}),
     ...(i.topics !== undefined ? { topics: i.topics } : {}),
     ...(i.isPrivate === true ? { isPrivate: true, expiresAt: new Date((i.ttl as number) * 1000).toISOString() } : {}),
+    ...(modelMigratedFrom ? { modelMigratedFrom } : {}),
   }
 }
 
@@ -52,7 +69,7 @@ export const handler = async (
   if (route === 'GET /api/chats') {
     const items = await listChats(sub)
     // Private chats never appear in the list — only reachable by knowing the chatId (URL).
-    const chats = items.filter(i => i.isPrivate !== true).map(chatDto)
+    const chats = await Promise.all(items.filter(i => i.isPrivate !== true).map(i => chatDto(sub, i)))
     return ok({ chats })
   }
 
@@ -148,7 +165,7 @@ export const handler = async (
   if (route === 'GET /api/chats/{chatId}') {
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
-    return ok(chatDto(chat))
+    return ok(await chatDto(sub, chat))
   }
 
   if (route === 'PATCH /api/chats/{chatId}') {
@@ -287,6 +304,9 @@ export const handler = async (
 
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
+    // A fork must never propagate a stale model id forward — resolve (and self-heal the
+    // source chat too, as a side effect) before copying it onto the new chat below.
+    const { model: sourceModel } = await resolveChatModel(sub, chatId, chat)
 
     const rows = (await listMessages(chatId)) as unknown as TurnRow[]
     const fromRow = rows.find(r => r.msgId === fromMsgId)
@@ -328,7 +348,7 @@ export const handler = async (
     await putChat({
       ...buildChatKey(sub, newChatId),
       title: `${chat.title} (fork)`,
-      model: chat.model,
+      model: sourceModel,
       systemPrompt: (chat.systemPrompt as string | undefined) ?? '',
       ...(chat.modelSettings !== undefined ? { modelSettings: chat.modelSettings } : {}),
       ...(chat.projectId !== undefined ? { projectId: chat.projectId } : {}),
