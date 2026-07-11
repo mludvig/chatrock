@@ -36,11 +36,11 @@ export interface Model {
 // Global cross-region inference profiles — available in ap-southeast-2
 // Verified via: aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED
 export const MODELS: Model[] = [
-// {
-//   id: 'global.anthropic.claude-fable-5',
-//   name: 'Claude Fable 5',
-//   capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
-// },
+  {
+    id: 'global.anthropic.claude-fable-5',
+    name: 'Claude Fable 5',
+    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
+  },
   {
     id: 'global.anthropic.claude-opus-4-8',
     name: 'Claude Opus 4.8',
