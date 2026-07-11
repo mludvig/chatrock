@@ -1,12 +1,12 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
-import { listChats, getChat, putChat, deleteChat, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
-import { validateAttachment, presignPut, deleteChatObjects, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
+import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { summarizeChatById } from '../lib/enrichment'
 
@@ -200,8 +200,11 @@ export const handler = async (
   if (route === 'DELETE /api/chats/{chatId}') {
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
-    await deleteChat(sub, chatId)
-    await deleteChatObjects(sub, chatId)
+    // Only the Chat item is deleted here — the DynamoDB Stream REMOVE event it produces
+    // triggers stream_chat_cleanup (streams/chatTtlCleanup.ts), which cascades the delete
+    // to this chat's messages + S3 attachments. Same cascade path TTL expiry uses, so there's
+    // one cleanup implementation instead of two. See backend/CLAUDE.md for the full rationale.
+    await deleteChatItem(sub, chatId)
     console.log(JSON.stringify({ event: 'chat_deleted', sub, chatId }))
     return { statusCode: 204, body: '' }
   }

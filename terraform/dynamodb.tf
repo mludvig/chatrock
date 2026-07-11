@@ -23,5 +23,11 @@ resource "aws_dynamodb_table" "chatrock" {
     enabled = true
   }
 
+  # KEYS_ONLY is enough: the cascade-cleanup Lambda (stream_chat_cleanup, lambda.tf) only
+  # needs PK/SK to re-query messages and derive the S3 prefix — see the "Chat deletion &
+  # temporary/private chats" note in backend/CLAUDE.md for the full design.
+  stream_enabled   = true
+  stream_view_type = "KEYS_ONLY"
+
   tags = { Env = var.env }
 }

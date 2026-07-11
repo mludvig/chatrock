@@ -92,6 +92,22 @@ data "aws_iam_policy_document" "lambda_policy" {
     resources = [aws_s3_bucket.attachments.arn]
   }
 
+  # DynamoDB Streams read access for the cascade-delete cleanup Lambda (stream_chat_cleanup,
+  # lambda.tf) — triggered on Chat-item REMOVE events (manual delete or TTL expiry) to fan
+  # out the cascade delete of that chat's messages + S3 attachments.
+  statement {
+    sid       = "DynamoStreamRead"
+    actions   = ["dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:DescribeStream", "dynamodb:ListStreams"]
+    resources = ["${aws_dynamodb_table.chatrock.arn}/stream/*"]
+  }
+
+  # Event source mapping on-failure destination for stream_chat_cleanup.
+  statement {
+    sid       = "StreamCleanupDlq"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.chat_cleanup_dlq.arn]
+  }
+
   statement {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.cloudfront_attachments_private_key.arn]
