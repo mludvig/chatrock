@@ -878,6 +878,33 @@ test('retitle: returns 400 when chat has no messages', async () => {
   expect(res.statusCode).toBe(400)
 })
 
+test('retitle: returns 400 for a private chat and never calls the title model', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'New Chat', model: 'x',
+    systemPrompt: '', createdAt: '', updatedAt: '', isPrivate: true, ttl: 123,
+  })
+
+  const res = result(await handler(
+    makeEvent('POST', '/api/chats/{chatId}/retitle', undefined, { chatId: 'c1' }) as any
+  ))
+  expect(res.statusCode).toBe(400)
+  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
+  expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+})
+
+test('resummarize: returns 400 for a private chat and never generates a summary', async () => {
+  mockDynamo.getChat.mockResolvedValue({
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'New Chat', model: 'x',
+    systemPrompt: '', createdAt: '', updatedAt: '', isPrivate: true, ttl: 123,
+  })
+
+  const res = result(await handler(
+    makeEvent('POST', '/api/chats/{chatId}/resummarize', undefined, { chatId: 'c1' }) as any
+  ))
+  expect(res.statusCode).toBe(400)
+  expect(mockEnrichment.summarizeChatById).not.toHaveBeenCalled()
+})
+
 // ── Project membership (PATCH projectId) ──────────────────────────────────────
 
 test('proj: GET /api/chats includes projectId when set', async () => {

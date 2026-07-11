@@ -262,6 +262,9 @@ export const handler = async (
   if (route === 'POST /api/chats/{chatId}/retitle') {
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
+    // Never send a private chat's content through the title model — it would defeat the
+    // point of "private" even though nothing renders this button for a private chat today.
+    if (chat.isPrivate === true) return err(400, 'Cannot generate a title for a private chat')
     const messages = await listMessages(chatId)
     if (messages.length === 0) return err(400, 'No messages to generate title from')
     const transcript = messages
@@ -284,6 +287,9 @@ export const handler = async (
   if (route === 'POST /api/chats/{chatId}/resummarize') {
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
+    // Same reasoning as retitle above — summary is also what search_history indexes, so a
+    // private chat's content must never flow through this even on manual trigger.
+    if (chat.isPrivate === true) return err(400, 'Cannot generate a summary for a private chat')
     const result = await summarizeChatById(sub, chatId)
     if (!result) return err(500, 'Summary generation failed')
     return ok({ summary: result.summary, topics: result.topics })
