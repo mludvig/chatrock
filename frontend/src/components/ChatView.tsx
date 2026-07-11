@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faUserSecret } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
@@ -25,7 +25,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const isNew = !chatId || chatId === 'new'
 
   const {
-    chats, messages, streamingMsg,
+    chats, privateChats, setPrivateChat, loading: chatsLoading, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream,
     renameChat, removeChat, sending, setSending, pushToast,
@@ -38,6 +38,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   // For /c/new: local model state (not yet persisted)
   const [newModel, setNewModel] = useState(defaultModel)
+  // For /c/new: whether the chat-about-to-be-created is private. Irrelevant once a chat
+  // exists — private-ness is fixed at creation (see backend/CLAUDE.md).
+  const [isPrivateDraft, setIsPrivateDraft] = useState(false)
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -90,8 +93,21 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
 
-  const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
+  const activeChat = isNew ? null : (chats.find(c => c.chatId === chatId) ?? (chatId ? privateChats[chatId] : undefined))
   const chatProject = activeChat?.projectId ? projects.find(p => p.projectId === activeChat.projectId) : null
+
+  // A private chat is deliberately absent from `chats` (never listed) — when its URL is
+  // visited directly, fetch its metadata once and cache it in the store's private-chat slot
+  // so the rest of this component (send/rerun/fork, all keyed off `activeChat`) works
+  // unchanged. Only fires when the id truly isn't a private chat we already know about;
+  // if the chat doesn't exist at all, GET 404s and this silently no-ops (activeChat stays
+  // undefined, same as any other not-found chat).
+  useEffect(() => {
+    if (isNew || !chatId || chatsLoading || chats.some(c => c.chatId === chatId) || privateChats[chatId]) return
+    let cancelled = false
+    api.getChat(chatId).then(c => { if (!cancelled && c.isPrivate) setPrivateChat(c) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [isNew, chatId, chatsLoading, chats, privateChats, setPrivateChat])
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
@@ -479,6 +495,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (newChatTick > 0) requestAnimationFrame(() => inputRef.current?.focus())
   }, [newChatTick])
 
+  // Private must default off for every fresh /c/new — it should never silently carry over
+  // from a previous chat the user made private.
+  useEffect(() => { setIsPrivateDraft(false) }, [newChatTick])
+
   function handleMessagesScroll() {
     const el = messagesRef.current
     if (!el) return
@@ -791,19 +811,27 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
       try {
         const newChatId = pendingNewChatIdRef.current ?? newId()
-        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride)
+        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride, isPrivateDraft)
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
-        useChatStore.getState().addChat({
-          chatId: res.chatId,
-          title: 'New Chat',
-          model,
-          systemPrompt,
-          ...(Object.keys(draftModelSettings).length > 0 ? { modelSettings: draftModelSettings } : {}),
-          ...(projectIdOverride ? { projectId: projectIdOverride } : {}),
-          createdAt: now,
-          updatedAt: now,
-        })
+        if (isPrivateDraft) {
+          // Never addChat() a private chat — that would surface it in the LHS list, which is
+          // exactly what "private" means it must not do. Fetch the authoritative DTO (with
+          // expiresAt) rather than hand-building one, so the footer's expiry date is accurate
+          // from the start instead of waiting on the fallback-fetch effect above.
+          api.getChat(res.chatId).then(setPrivateChat).catch(() => {})
+        } else {
+          useChatStore.getState().addChat({
+            chatId: res.chatId,
+            title: 'New Chat',
+            model,
+            systemPrompt,
+            ...(Object.keys(draftModelSettings).length > 0 ? { modelSettings: draftModelSettings } : {}),
+            ...(projectIdOverride ? { projectId: projectIdOverride } : {}),
+            createdAt: now,
+            updatedAt: now,
+          })
+        }
         await ensureConnected(accessToken)
         sendMessage({
           chatId: res.chatId, content, model, systemPrompt, modelSettings: draftModelSettings, attachments: attachmentsPayload,
@@ -896,7 +924,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
 
   return (
-    <div className="chat-view">
+    <div className={`chat-view${(isNew ? isPrivateDraft : activeChat?.isPrivate) ? ' chat-view--private' : ''}`}>
       <div className="chat-header">
         <button className="btn-icon btn-hamburger" onClick={onOpenSidebar} title="Open sidebar">
           <FontAwesomeIcon icon={faBars} />
@@ -911,7 +939,24 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <FontAwesomeIcon icon={faFolderOpen} /> {chatProject.name}
           </span>
         )}
+        {!isNew && activeChat?.isPrivate && (
+          <span className="private-chip" title="Private chat — hidden from the chat list, not used for memory or search">
+            <FontAwesomeIcon icon={faUserSecret} /> Private
+          </span>
+        )}
         <div className="header-controls">
+          {isNew && (
+            <button
+              type="button"
+              className={`btn-private-toggle${isPrivateDraft ? ' active' : ''}`}
+              onClick={() => setIsPrivateDraft(v => !v)}
+              title={isPrivateDraft
+                ? 'Private chat: hidden from the chat list, excluded from memory & search, auto-deleted after the TTL. Click to make it a normal chat.'
+                : 'Make this a private chat: hidden from the chat list, excluded from memory & search, auto-deleted after the TTL.'}
+            >
+              <FontAwesomeIcon icon={faUserSecret} /> Private
+            </button>
+          )}
           <select
             className="model-select"
             value={currentModelId}
@@ -993,6 +1038,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           addFiles(Array.from(e.dataTransfer.files))
         }}
       >
+        {(isNew ? isPrivateDraft : activeChat?.isPrivate) && (
+          <div className="private-footer">
+            <FontAwesomeIcon icon={faUserSecret} />
+            {isNew || !activeChat?.expiresAt
+              ? 'Private chat — hidden from the chat list, not used for memory or search.'
+              : `Private chat — expires ${new Date(activeChat.expiresAt).toLocaleString()} unless you delete it sooner.`}
+          </div>
+        )}
+
         {/* Token stats line — shown when there are any usage stats */}
         {(lastTurnUsage || conversationUsage) && (
           <div className="stats-bar">

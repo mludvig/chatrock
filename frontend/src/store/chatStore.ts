@@ -41,6 +41,12 @@ export interface PendingSearch {
 
 interface ChatState {
   chats: Chat[]
+  // Private chats are deliberately excluded from `chats` (GET /api/chats filters them out
+  // server-side too — see backend/CLAUDE.md), so a direct-URL visit to one populates it here
+  // instead, keyed by chatId. Never rendered by ChatsPanel; ChatView reads chats.find(...) ??
+  // privateChats[chatId] so the rest of its logic (send/rerun/fork, all keyed off that lookup)
+  // works unchanged for a private chat.
+  privateChats: Record<string, Chat>
   activeChatId: string | null
   messages: Message[]
   streamingMsg: StreamingMsg | null
@@ -55,6 +61,7 @@ interface ChatState {
 
   setChats: (chats: Chat[]) => void
   addChat: (chat: Chat) => void
+  setPrivateChat: (chat: Chat) => void
   removeChat: (chatId: string) => void
   renameChat: (chatId: string, title: string) => void
   updateChatSystemPrompt: (chatId: string, systemPrompt: string) => void
@@ -160,6 +167,7 @@ export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
       chats: [],
+      privateChats: {},
       activeChatId: null,
       messages: [],
       streamingMsg: null,
@@ -183,6 +191,7 @@ export const useChatStore = create<ChatState>()(
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
+      setPrivateChat: (chat) => set((s) => ({ privateChats: { ...s.privateChats, [chat.chatId]: chat } })),
       removeChat: (chatId) => set((s) => ({
         chats: s.chats.filter(c => c.chatId !== chatId),
         activeChatId: s.activeChatId === chatId ? null : s.activeChatId,

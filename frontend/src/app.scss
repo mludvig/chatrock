@@ -517,6 +517,18 @@ $header-h: 45px;
   height: 100%;
 }
 
+// Private chats get a subtle persistent tint (not a full dark theme — the app has no dark
+// mode, and existing text colors assume a light background) so it's visually distinct from a
+// normal chat at a glance, without needing to override every component's palette.
+.chat-view--private {
+  $private-bg: #f3eefc;
+  $private-tint: #ece2fa;
+  background: $private-bg;
+
+  .messages { background: $private-bg; }
+  .chat-header, .input-area { background: $private-tint; }
+}
+
 .chat-header {
   display: flex;
   align-items: center;
@@ -2285,6 +2297,56 @@ $mobile: 720px;
     outline: none;
     &:focus { border-color: $accent; }
   }
+}
+
+// Private chat chip / toggle / footer notice — deliberately a distinct violet, never reused
+// for anything else, so "private" reads unambiguously at a glance.
+$private-color: #7c3aed;
+$private-light: #ece2fa;
+
+.private-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: $private-color;
+  background: $private-light;
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn-private-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-family: $font;
+  color: $muted;
+  background: $surface2;
+  border: 1px solid $border;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+  &:hover { background: $private-light; color: $private-color; }
+
+  &.active {
+    color: $private-color;
+    background: $private-light;
+    border-color: $private-color;
+  }
+}
+
+.private-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 24px 0;
+  font-size: 11px;
+  color: $private-color;
 }
 
 // Project chip (in ChatsPanel items and ChatView header)
