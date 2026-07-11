@@ -78,12 +78,12 @@ test('inc2: GET /api/chats includes activeLeafId in each chat', async () => {
 
 test('POST /api/chats creates a chat', async () => {
   mockDynamo.putChat.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '' }) as any))
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-5', systemPrompt: '' }) as any))
   expect(res.statusCode).toBe(201)
   const body = JSON.parse(res.body ?? '{}')
   expect(typeof body.chatId).toBe('string')
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
-    expect.objectContaining({ title: 'New Chat', model: 'global.anthropic.claude-sonnet-4-6' }),
+    expect.objectContaining({ title: 'New Chat', model: 'global.anthropic.claude-sonnet-5' }),
   )
 })
 
@@ -195,7 +195,7 @@ test('POST /api/chats with unknown model returns 400', async () => {
 
 test('POST /api/chats with valid model succeeds', async () => {
   mockDynamo.putChat.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6' }) as any))
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-5' }) as any))
   expect(res.statusCode).toBe(201)
 })
 
@@ -279,7 +279,7 @@ const makeForkRow = (
 test('inc6: fork on assistant bubble clones root→that bubble; 201 + new chatId', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1',
-    title: 'My Chat', model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: 'sys',
+    title: 'My Chat', model: 'global.anthropic.claude-sonnet-5', systemPrompt: 'sys',
     createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
   })
   const rows = [
@@ -298,13 +298,13 @@ test('inc6: fork on assistant bubble clones root→that bubble; 201 + new chatId
 
   // putChat called with correct fork metadata
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
-    expect.objectContaining({ title: 'My Chat (fork)', model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: 'sys' })
+    expect.objectContaining({ title: 'My Chat (fork)', model: 'global.anthropic.claude-sonnet-5', systemPrompt: 'sys' })
   )
 })
 
 test('inc6: cloned rows have fresh msgIds and internally consistent parentId links', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '',
   })
   const rows = [
@@ -342,7 +342,7 @@ test('inc6: cloned rows have fresh msgIds and internally consistent parentId lin
 test('inc6: fork on multi-turn (tool-use) assistant includes whole response group', async () => {
   // a1(r2) → tr1(r2, toolResult user) → a2(r2) — same responseId, one "bubble"
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '',
   })
   const rows = [
@@ -364,7 +364,7 @@ test('inc6: fork on multi-turn (tool-use) assistant includes whole response grou
 
 test('inc6: fork on user bubble clones up to its parent (user turn NOT included)', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '',
   })
   // u1 → a1 → u2 → a2 — fork on u2 → should clone u1 + a1 only
@@ -386,7 +386,7 @@ test('inc6: fork on user bubble clones up to its parent (user turn NOT included)
 
 test('inc6: fork on root user bubble clones nothing; batchPutMessages not called', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '',
   })
   const rows = [
@@ -414,7 +414,7 @@ test('inc6: fork returns 404 when chat not found', async () => {
 
 test('inc6: fork returns 400 on unknown fromMsgId', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '',
   })
   mockDynamo.listMessages.mockResolvedValue([
@@ -618,7 +618,7 @@ test('POST /api/chats with valid client chatId uses that id', async () => {
   mockDynamo.getChat.mockResolvedValue(undefined)  // not a duplicate
   const clientId = '01arz3ndektsv4rrffq69g5fav'
   const res = result(await handler(makeEvent('POST', '/api/chats', {
-    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: clientId,
+    model: 'global.anthropic.claude-sonnet-5', systemPrompt: '', chatId: clientId,
   }) as any))
   expect(res.statusCode).toBe(201)
   const body = JSON.parse(res.body ?? '{}')
@@ -629,7 +629,7 @@ test('POST /api/chats with valid client chatId uses that id', async () => {
 
 test('POST /api/chats with invalid chatId returns 400', async () => {
   const res = result(await handler(makeEvent('POST', '/api/chats', {
-    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: 'not-a-uuid',
+    model: 'global.anthropic.claude-sonnet-5', systemPrompt: '', chatId: 'not-a-uuid',
   }) as any))
   expect(res.statusCode).toBe(400)
   expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid chatId' })
@@ -637,7 +637,7 @@ test('POST /api/chats with invalid chatId returns 400', async () => {
 
 test('POST /api/chats with uppercase ULID chatId returns 400 (lowercase-only invariant)', async () => {
   const res = result(await handler(makeEvent('POST', '/api/chats', {
-    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    model: 'global.anthropic.claude-sonnet-5', systemPrompt: '', chatId: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
   }) as any))
   expect(res.statusCode).toBe(400)
   expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Invalid chatId' })
@@ -647,7 +647,7 @@ test('POST /api/chats with duplicate chatId returns 409', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#existing' })
   const clientId = '01arz3ndektsv4rrffq69g5fav'
   const res = result(await handler(makeEvent('POST', '/api/chats', {
-    model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', chatId: clientId,
+    model: 'global.anthropic.claude-sonnet-5', systemPrompt: '', chatId: clientId,
   }) as any))
   expect(res.statusCode).toBe(409)
   expect(JSON.parse(res.body ?? '{}')).toMatchObject({ message: 'Chat already exists' })
@@ -762,7 +762,7 @@ test('B5: GET /api/chats omits modelSettings when absent', async () => {
 
 test('B6: POST /api/chats with modelSettings persists it', async () => {
   mockDynamo.putChat.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-4-6', modelSettings: { webSearchEnabled: false } }) as any))
+  const res = result(await handler(makeEvent('POST', '/api/chats', { model: 'global.anthropic.claude-sonnet-5', modelSettings: { webSearchEnabled: false } }) as any))
   expect(res.statusCode).toBe(201)
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
     expect.objectContaining({ modelSettings: { webSearchEnabled: false } })
@@ -771,7 +771,7 @@ test('B6: POST /api/chats with modelSettings persists it', async () => {
 
 test('B7: fork carries modelSettings from source chat', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: 'sys', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
     modelSettings: { webSearchEnabled: false },
   })
@@ -792,7 +792,7 @@ test('B7: fork carries modelSettings from source chat', async () => {
 
 test('B8: fork without modelSettings does not set it on fork', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z',
     // no modelSettings
   })
@@ -812,7 +812,7 @@ test('B8: fork without modelSettings does not set it on fork', async () => {
 
 test('inc6: original chat rows are not modified (no writes to original CHAT#c1 partition)', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '',
   })
   const rows = [
@@ -928,7 +928,7 @@ test('proj: PATCH projectId with unknown project → 400', async () => {
 
 test('proj: fork carries projectId from source chat', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '', projectId: 'proj-1',
   })
   mockDynamo.listMessages.mockResolvedValue([
@@ -948,7 +948,7 @@ test('proj: fork carries projectId from source chat', async () => {
 
 test('proj: fork without projectId does not set it on fork', async () => {
   mockDynamo.getChat.mockResolvedValue({
-    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-4-6',
+    PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-sonnet-5',
     systemPrompt: '', createdAt: '', updatedAt: '',
     // no projectId
   })
