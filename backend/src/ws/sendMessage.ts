@@ -647,114 +647,123 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
-  // ── Post-turn enrichment (user facts + chat summary/topics + project facts) ──
-  // Skipped when memoryEnabled is false, and always skipped for private chats — extracting
-  // facts or a searchable summary from a private chat would leak it right back out through
-  // memory or search_history. See "Chat deletion & temporary/private chats" in backend/CLAUDE.md.
-  if (memoryEnabled && !chat.isPrivate) {
-    try {
-      const needTitle = !isRerun && !isEdit && !isContinue && chat.title === 'New Chat'
-      const isProject = !!projectId
+  // ── Post-turn enrichment (title + user facts + chat summary/topics + project facts) ──
+  // Gated by the per-chat memory toggle. Within that, a sensitive chat still gets an auto-title
+  // (stored on the chat itself, masked by the sidebar eye — it never resurfaces elsewhere) but is
+  // skipped for memory, summary, and project facts: each of those writes into a shared or
+  // searchable store (user memory, project memory, the search_history-indexed summary) that could
+  // surface this chat's content from a different chat. See "Sensitive & ephemeral chats" in
+  // backend/CLAUDE.md.
+  if (memoryEnabled) {
+    const transcript = [
+      `User: ${content ?? ''}`,
+      `Assistant: ${assistantTextForMemory}`,
+    ].join('\n')
 
-      const transcript = [
-        `User: ${content ?? ''}`,
-        `Assistant: ${assistantTextForMemory}`,
-      ].join('\n')
-
-      const memNow = new Date().toISOString()
-      let totalChanged = 0
-
-      // Re-read memories AFTER the agentic loop, not the pre-loop snapshots
-      // (userMemoriesRaw / projectMemoriesRaw loaded for the system prompt). The
-      // model may have written via manage_memory / manage_project_memory during
-      // the loop; passive enrichment must see those writes (with their memIds) so
-      // it retains/merges them instead of re-deriving a paraphrase as a NEW item
-      // (the dual-writer duplicate). One cheap read each — same partition the
-      // tool just wrote to.
-      const [freshUserMemsRaw, freshProjectMemsRaw] = await Promise.all([
-        listUserMemories(sub),
-        projectId ? listProjectMemories(projectId) : Promise.resolve([]),
-      ])
-
-      // ── User facts (from the post-loop re-read, so tool writes are included) ──
-      const existingUserMems = freshUserMemsRaw.map(i => ({
-        memId: i.memId as string,
-        text: i.text as string,
-        category: i.category as string,
-        createdAt: i.createdAt as string,
-      }))
-      const userResult = await enrichUserFacts(transcript, existingUserMems, chatId)
-      const userOps = reconcileMemoryList(userResult.memories, existingUserMems)
-      for (const op of userOps) {
-        if (op.op === 'ADD') {
-          const memId = newId()
-          await putUserMemory({ ...buildUserMemKey(sub, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
-          totalChanged++
-        } else if (op.op === 'UPDATE') {
-          await putUserMemory({ ...buildUserMemKey(sub, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
-          totalChanged++
-        } else if (op.op === 'DELETE') {
-          await deleteUserMemory(sub, op.memId)
-          totalChanged++
-        }
-      }
-
-      // Title — independent call (own model, own try/catch upstream) so a
-      // memory-extraction parse failure can never suppress titling, and vice versa.
-      if (needTitle) {
+    // Title — allowed even for a sensitive chat. Own try/catch so a title failure (or a skipped
+    // memory pass below) can never suppress the other.
+    const needTitle = !isRerun && !isEdit && !isContinue && chat.title === 'New Chat'
+    if (needTitle) {
+      try {
         const title = await generateChatTitle(transcript, chatId)
         if (title) {
           await updateChatTitle(sub, chatId, title)
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title }) })
         }
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'title_gen_error', chatId, error: String(err) }))
       }
+    }
 
-      // ── Chat summary + topics — every chat, not just project ones; merges
-      // into whatever summary/topics this chat already has. ──
-      const summaryResult = await summarizeChat(
-        transcript,
-        (chat.summary as string | undefined) ?? '',
-        (chat.topics as string[] | undefined) ?? [],
-        chatId,
-      )
-      if (summaryResult.summary || summaryResult.topics.length > 0) {
-        await updateChatSummary(sub, chatId, { summary: summaryResult.summary, topics: summaryResult.topics })
-      }
+    // Memory / summary / project facts — never for a sensitive chat (would resurface elsewhere).
+    if (!chat.sensitive) {
+      try {
+        const isProject = !!projectId
+        const memNow = new Date().toISOString()
+        let totalChanged = 0
 
-      // ── Project facts (from the post-loop re-read, so tool writes are included) ──
-      if (isProject && projectId) {
-        const existingProjectMems = (freshProjectMemsRaw as Record<string, unknown>[]).map(i => ({
+        // Re-read memories AFTER the agentic loop, not the pre-loop snapshots
+        // (userMemoriesRaw / projectMemoriesRaw loaded for the system prompt). The
+        // model may have written via manage_memory / manage_project_memory during
+        // the loop; passive enrichment must see those writes (with their memIds) so
+        // it retains/merges them instead of re-deriving a paraphrase as a NEW item
+        // (the dual-writer duplicate). One cheap read each — same partition the
+        // tool just wrote to.
+        const [freshUserMemsRaw, freshProjectMemsRaw] = await Promise.all([
+          listUserMemories(sub),
+          projectId ? listProjectMemories(projectId) : Promise.resolve([]),
+        ])
+
+        // ── User facts (from the post-loop re-read, so tool writes are included) ──
+        const existingUserMems = freshUserMemsRaw.map(i => ({
           memId: i.memId as string,
           text: i.text as string,
           category: i.category as string,
           createdAt: i.createdAt as string,
         }))
-        const projectResult = await enrichProjectFacts(transcript, existingProjectMems, chatId)
-        const projectOps = reconcileMemoryList(projectResult.memories, existingProjectMems)
-        for (const op of projectOps) {
+        const userResult = await enrichUserFacts(transcript, existingUserMems, chatId)
+        const userOps = reconcileMemoryList(userResult.memories, existingUserMems)
+        for (const op of userOps) {
           if (op.op === 'ADD') {
             const memId = newId()
-            await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
+            await putUserMemory({ ...buildUserMemKey(sub, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
             totalChanged++
           } else if (op.op === 'UPDATE') {
-            await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
+            await putUserMemory({ ...buildUserMemKey(sub, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
             totalChanged++
           } else if (op.op === 'DELETE') {
-            await deleteProjectMemory(projectId, op.memId)
+            await deleteUserMemory(sub, op.memId)
             totalChanged++
           }
         }
-      }
 
-      if (totalChanged > 0 && !memoryChangedDuringStream) {
-        await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged }) })
-      }
+        // ── Chat summary + topics — every chat, not just project ones; merges
+        // into whatever summary/topics this chat already has. ──
+        const summaryResult = await summarizeChat(
+          transcript,
+          (chat.summary as string | undefined) ?? '',
+          (chat.topics as string[] | undefined) ?? [],
+          chatId,
+        )
+        if (summaryResult.summary || summaryResult.topics.length > 0) {
+          await updateChatSummary(sub, chatId, { summary: summaryResult.summary, topics: summaryResult.topics })
+        }
 
-      console.log(JSON.stringify({ event: 'llm_call', purpose: 'enrich_turn', model: MEMORY_EXTRACTION_MODEL, chatId }))
-    } catch (err) {
-      console.error(JSON.stringify({ event: 'enrich_turn_error', chatId, error: String(err) }))
-      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'warning', message: 'Post-turn enrichment failed (memory/summary not updated)' }) })
-      // Never re-throw — enrichment failure must not break the chat turn
+        // ── Project facts (from the post-loop re-read, so tool writes are included) ──
+        if (isProject && projectId) {
+          const existingProjectMems = (freshProjectMemsRaw as Record<string, unknown>[]).map(i => ({
+            memId: i.memId as string,
+            text: i.text as string,
+            category: i.category as string,
+            createdAt: i.createdAt as string,
+          }))
+          const projectResult = await enrichProjectFacts(transcript, existingProjectMems, chatId)
+          const projectOps = reconcileMemoryList(projectResult.memories, existingProjectMems)
+          for (const op of projectOps) {
+            if (op.op === 'ADD') {
+              const memId = newId()
+              await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
+              totalChanged++
+            } else if (op.op === 'UPDATE') {
+              await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
+              totalChanged++
+            } else if (op.op === 'DELETE') {
+              await deleteProjectMemory(projectId, op.memId)
+              totalChanged++
+            }
+          }
+        }
+
+        if (totalChanged > 0 && !memoryChangedDuringStream) {
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged }) })
+        }
+
+        console.log(JSON.stringify({ event: 'llm_call', purpose: 'enrich_turn', model: MEMORY_EXTRACTION_MODEL, chatId }))
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'enrich_turn_error', chatId, error: String(err) }))
+        await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'warning', message: 'Post-turn enrichment failed (memory/summary not updated)' }) })
+        // Never re-throw — enrichment failure must not break the chat turn
+      }
     }
   }
 

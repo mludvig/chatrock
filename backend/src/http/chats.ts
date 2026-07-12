@@ -1,7 +1,7 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
-import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, updateChatSensitive, updateChatEphemeral, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
@@ -16,7 +16,7 @@ const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   body: JSON.stringify(body),
 })
 
-const PRIVATE_CHAT_TTL_SECONDS = Number(process.env.PRIVATE_CHAT_TTL_SECONDS ?? 604800)
+const EPHEMERAL_CHAT_TTL_SECONDS = Number(process.env.EPHEMERAL_CHAT_TTL_SECONDS ?? 604800)
 
 const err = (status: number, message: string): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -39,7 +39,8 @@ async function resolveChatModel(sub: string, chatId: string, chat: Record<string
 }
 
 // Chat item -> client DTO. Shared by the list and single-chat GET routes so both expose the
-// same shape; the list route additionally filters out isPrivate chats before mapping.
+// same shape — sensitive chats ARE included (the sidebar eye/mask handles visibility, not the
+// API), only their content (memory/summary/search) is excluded elsewhere.
 async function chatDto(sub: string, i: Record<string, unknown>) {
   const chatId = (i.SK as string).replace('CHAT#', '')
   const { model, modelMigratedFrom } = await resolveChatModel(sub, chatId, i)
@@ -55,7 +56,8 @@ async function chatDto(sub: string, i: Record<string, unknown>) {
     ...(i.projectId !== undefined ? { projectId: i.projectId } : {}),
     ...(i.summary !== undefined ? { summary: i.summary } : {}),
     ...(i.topics !== undefined ? { topics: i.topics } : {}),
-    ...(i.isPrivate === true ? { isPrivate: true, expiresAt: new Date((i.ttl as number) * 1000).toISOString() } : {}),
+    ...(i.sensitive === true ? { sensitive: true } : {}),
+    ...(i.ephemeral === true ? { ephemeral: true, expiresAt: new Date((i.ttl as number) * 1000).toISOString() } : {}),
     ...(modelMigratedFrom ? { modelMigratedFrom } : {}),
   }
 }
@@ -68,8 +70,10 @@ export const handler = async (
 
   if (route === 'GET /api/chats') {
     const items = await listChats(sub)
-    // Private chats never appear in the list — only reachable by knowing the chatId (URL).
-    const chats = await Promise.all(items.filter(i => i.isPrivate !== true).map(i => chatDto(sub, i)))
+    // Sensitive chats ARE returned — the frontend's sidebar eye toggle hides/masks them by
+    // default, but the API doesn't filter them out (see "Sensitive & ephemeral chats" in
+    // backend/CLAUDE.md).
+    const chats = await Promise.all(items.map(i => chatDto(sub, i)))
     return ok({ chats })
   }
 
@@ -100,15 +104,17 @@ export const handler = async (
     if (body.projectId !== undefined && body.projectId !== null && typeof body.projectId !== 'string') {
       return err(400, 'projectId must be a string')
     }
-    if (body.isPrivate !== undefined && typeof body.isPrivate !== 'boolean') {
-      return err(400, 'isPrivate must be a boolean')
+    if (body.sensitive !== undefined && typeof body.sensitive !== 'boolean') {
+      return err(400, 'sensitive must be a boolean')
     }
-    const isPrivate = body.isPrivate === true
-    // Private chats can't belong to a project — project instructions/memory are shared
-    // context, and mixing them with a chat meant to leave no trace defeats the point.
-    if (isPrivate && body.projectId !== undefined && body.projectId !== null) {
-      return err(400, 'A private chat cannot be assigned to a project')
+    if (body.ephemeral !== undefined && typeof body.ephemeral !== 'boolean') {
+      return err(400, 'ephemeral must be a boolean')
     }
+    const sensitive = body.sensitive === true
+    const ephemeral = body.ephemeral === true
+    // sensitive/ephemeral are independent flags — both are allowed on project chats. A
+    // sensitive chat still reads project context in (instructions/files/memory) but never
+    // writes back to it; see "Sensitive & ephemeral chats" in backend/CLAUDE.md.
     await putChat({
       ...buildChatKey(sub, chatId),
       title: 'New Chat',
@@ -118,15 +124,16 @@ export const handler = async (
         ? { modelSettings: body.modelSettings }
         : {}),
       ...(body.projectId !== undefined && body.projectId !== null ? { projectId: body.projectId as string } : {}),
-      // TTL is fixed at creation time, not sliding — see "Chat deletion & temporary/private
-      // chats" in backend/CLAUDE.md. Cascade cleanup (messages + S3) runs off the Chat item's
-      // own DynamoDB Stream REMOVE event (terraform/stream_chat_cleanup.tf), not this ttl
-      // field directly, so there's nothing else to wire up here.
-      ...(isPrivate ? { isPrivate: true, ttl: Math.floor(Date.now() / 1000) + PRIVATE_CHAT_TTL_SECONDS } : {}),
+      ...(sensitive ? { sensitive: true } : {}),
+      // TTL is fixed at creation time, not sliding — see "Sensitive & ephemeral chats" in
+      // backend/CLAUDE.md. Cascade cleanup (messages + S3) runs off the Chat item's own
+      // DynamoDB Stream REMOVE event (terraform/stream_chat_cleanup.tf), not this ttl field
+      // directly, so there's nothing else to wire up here.
+      ...(ephemeral ? { ephemeral: true, ttl: Math.floor(Date.now() / 1000) + EPHEMERAL_CHAT_TTL_SECONDS } : {}),
       createdAt: now,
       updatedAt: now,
     })
-    console.log(JSON.stringify({ event: 'chat_created', sub, chatId, model, isPrivate }))
+    console.log(JSON.stringify({ event: 'chat_created', sub, chatId, model, sensitive, ephemeral }))
     return ok({ chatId }, 201)
   }
 
@@ -211,10 +218,19 @@ export const handler = async (
       await updateChatModelSettings(sub, chatId, body.modelSettings as Record<string, unknown>)
       updatedFields.push('modelSettings')
     }
+    if (body.sensitive !== undefined) {
+      if (typeof body.sensitive !== 'boolean') return err(400, 'sensitive must be a boolean')
+      await updateChatSensitive(sub, chatId, body.sensitive)
+      updatedFields.push('sensitive')
+    }
+    if (body.ephemeral !== undefined) {
+      if (typeof body.ephemeral !== 'boolean') return err(400, 'ephemeral must be a boolean')
+      await updateChatEphemeral(sub, chatId, body.ephemeral, EPHEMERAL_CHAT_TTL_SECONDS)
+      updatedFields.push('ephemeral')
+    }
     if (body.projectId !== undefined) {
-      if (chat.isPrivate === true && body.projectId !== null) {
-        return err(400, 'A private chat cannot be assigned to a project')
-      }
+      // sensitive/ephemeral no longer block project membership — a sensitive chat reads
+      // project context in but never writes back to it (see backend/CLAUDE.md).
       const prevProjectId = chat.projectId as string | undefined
       if (body.projectId === null) {
         await updateChatProject(sub, chatId, null)
@@ -262,9 +278,8 @@ export const handler = async (
   if (route === 'POST /api/chats/{chatId}/retitle') {
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
-    // Never send a private chat's content through the title model — it would defeat the
-    // point of "private" even though nothing renders this button for a private chat today.
-    if (chat.isPrivate === true) return err(400, 'Cannot generate a title for a private chat')
+    // Title generation is allowed for sensitive chats — the title is stored on the chat
+    // itself and masked by the sidebar eye, unlike memory/summary which resurface elsewhere.
     const messages = await listMessages(chatId)
     if (messages.length === 0) return err(400, 'No messages to generate title from')
     const transcript = messages
@@ -287,9 +302,9 @@ export const handler = async (
   if (route === 'POST /api/chats/{chatId}/resummarize') {
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
-    // Same reasoning as retitle above — summary is also what search_history indexes, so a
-    // private chat's content must never flow through this even on manual trigger.
-    if (chat.isPrivate === true) return err(400, 'Cannot generate a summary for a private chat')
+    // Summary is what search_history indexes, so a sensitive chat's content must never flow
+    // through this even on manual trigger.
+    if (chat.sensitive === true) return err(400, 'Cannot generate a summary for a sensitive chat')
     const result = await summarizeChatById(sub, chatId)
     if (!result) return err(500, 'Summary generation failed')
     return ok({ summary: result.summary, topics: result.topics })
@@ -358,9 +373,10 @@ export const handler = async (
       systemPrompt: (chat.systemPrompt as string | undefined) ?? '',
       ...(chat.modelSettings !== undefined ? { modelSettings: chat.modelSettings } : {}),
       ...(chat.projectId !== undefined ? { projectId: chat.projectId } : {}),
-      // A fork of a private chat stays private, with a fresh TTL (fork is itself a creation
-      // event) — a fork must never silently un-hide something private.
-      ...(chat.isPrivate === true ? { isPrivate: true, ttl: Math.floor(Date.now() / 1000) + PRIVATE_CHAT_TTL_SECONDS } : {}),
+      // A fork inherits both flags from its source. ephemeral gets a FRESH ttl (fork is
+      // itself a creation event) rather than the source's remaining ttl.
+      ...(chat.sensitive === true ? { sensitive: true } : {}),
+      ...(chat.ephemeral === true ? { ephemeral: true, ttl: Math.floor(Date.now() / 1000) + EPHEMERAL_CHAT_TTL_SECONDS } : {}),
       createdAt: now,
       updatedAt: now,
       ...(cloned.length ? { activeLeafId: cloned[cloned.length - 1].msgId } : {}),

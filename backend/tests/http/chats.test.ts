@@ -878,24 +878,29 @@ test('retitle: returns 400 when chat has no messages', async () => {
   expect(res.statusCode).toBe(400)
 })
 
-test('retitle: returns 400 for a private chat and never calls the title model', async () => {
+test('retitle: allowed for a sensitive chat (title never resurfaces elsewhere)', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1', title: 'New Chat', model: 'x',
-    systemPrompt: '', createdAt: '', updatedAt: '', isPrivate: true, ttl: 123,
+    systemPrompt: '', createdAt: '', updatedAt: '', sensitive: true,
   })
+  mockDynamo.listMessages.mockResolvedValue([
+    { PK: 'CHAT#c1', SK: 'MSG#t#0#u1', msgId: 'u1', parentId: null, role: 'user',
+      blocks: [{ text: 'hi' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+  ])
+  mockBedrock.converseOnce.mockResolvedValue('New Title')
+  mockDynamo.updateChatTitle.mockResolvedValue(undefined)
 
   const res = result(await handler(
     makeEvent('POST', '/api/chats/{chatId}/retitle', undefined, { chatId: 'c1' }) as any
   ))
-  expect(res.statusCode).toBe(400)
-  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()
-  expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateChatTitle).toHaveBeenCalledWith('user-1', 'c1', 'New Title')
 })
 
-test('resummarize: returns 400 for a private chat and never generates a summary', async () => {
+test('resummarize: returns 400 for a sensitive chat and never generates a summary', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1', title: 'New Chat', model: 'x',
-    systemPrompt: '', createdAt: '', updatedAt: '', isPrivate: true, ttl: 123,
+    systemPrompt: '', createdAt: '', updatedAt: '', sensitive: true, ttl: 123,
   })
 
   const res = result(await handler(
