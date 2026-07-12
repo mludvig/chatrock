@@ -1127,11 +1127,13 @@ $header-h: 45px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-top: 4px;
-  padding-bottom: 6px;
-  border-top: 1px solid $border;
-  border-bottom: 1px solid $border;
+  padding-top: 10px;
   margin: 4px 0 16px;
+  border-top: 1px solid $border;
+
+  // The section label (Tools / Model settings) shouldn't inherit the row gap twice —
+  // pull it back up against the border, matching .pref-label's look everywhere else.
+  > .pref-label { margin-bottom: -2px; }
 }
 
 .model-setting-row {

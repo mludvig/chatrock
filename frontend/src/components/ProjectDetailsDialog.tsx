@@ -1,7 +1,8 @@
 import type { Model, ModelCapabilities, ModelSettings } from '../api/http'
 import Dialog from './Dialog'
-import ModelSettingsPanel from './ModelSettingsPanel'
-import { ToggleRow, EffortRow } from './PrefControls'
+import ToolsPanel from './ToolsPanel'
+import ModelTuningPanel from './ModelTuningPanel'
+import { ToggleRow } from './PrefControls'
 
 interface Props {
   open: boolean
@@ -56,6 +57,13 @@ export default function ProjectDetailsDialog({
           />
         </div>
 
+        <ToggleRow
+          label="Project memory"
+          title="When off, project memories are not injected and the manage_project_memory tool is disabled."
+          on={memoryEnabled}
+          onToggle={onToggleMemory}
+        />
+
         <div className="pref-section">
           <div className="pref-label">Default model</div>
           <select
@@ -70,21 +78,8 @@ export default function ProjectDetailsDialog({
           </select>
         </div>
 
-        <ModelSettingsPanel caps={caps} settings={settings} onChange={onSettingsChange} />
-
-        <EffortRow
-          label="Answer length"
-          options={['default', 'short', 'extensive'] as const}
-          value={settings.answerLength ?? 'default'}
-          onChange={v => onSettingsChange({ ...settings, answerLength: v })}
-        />
-
-        <ToggleRow
-          label="Project memory"
-          hint="When off, project memories are not injected and the manage_project_memory tool is disabled."
-          on={memoryEnabled}
-          onToggle={onToggleMemory}
-        />
+        <ToolsPanel settings={settings} onChange={onSettingsChange} />
+        <ModelTuningPanel caps={caps} settings={settings} onChange={onSettingsChange} />
       </div>
     </Dialog>
   )

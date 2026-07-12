@@ -27,8 +27,8 @@ test.describe('Preferences panel', () => {
     await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
     await expect(page.locator('.dialog-title')).toHaveText('Chat details')
     await expect(page.locator('.dialog .pref-textarea')).toBeVisible()
-    // ModelSettingsPanel rendered (web search toggle is always shown)
-    await expect(page.locator('.dialog .model-settings')).toBeVisible()
+    // ToolsPanel + ModelTuningPanel rendered (web search toggle is always shown)
+    await expect(page.locator('.dialog .model-settings').first()).toBeVisible()
   })
 
   test('model select is still present in chat header', async ({ page }) => {
