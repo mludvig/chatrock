@@ -1,32 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faSlidersH } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
-import type { UserPreferences, ModelCapabilities, ModelSettings, Project } from '../api/http'
+import type { UserPreferences } from '../api/http'
 import { THINKING_EFFORTS } from '../api/http'
 import { useChatStore } from '../store/chatStore'
-import ModelSettingsPanel from './ModelSettingsPanel'
+import { ToggleRow, EffortRow } from './PrefControls'
 
+// App-wide defaults only — per-chat and per-project overrides now live in their own
+// "details" dialogs (ChatDetailsDialog / ProjectDetailsDialog), reachable from the
+// chat header cog and the project page's gear respectively. Keeping this panel scoped
+// to just Defaults means there's exactly one place values here can come from.
 export default function PreferencesPanel() {
-  const {
-    models, userPreferences, setUserPreferences,
-    currentChatId, draftModelSettings, draftSystemPrompt,
-    setDraftModelSettings, setDraftSystemPrompt,
-    updateChatSettings, updateChatSystemPrompt, chats,
-    projects, updateProject,
-  } = useChatStore()
+  const { models, userPreferences, setUserPreferences } = useChatStore()
 
-  const activeChat = currentChatId ? chats.find(c => c.chatId === currentChatId) : null
-  const activeProject = activeChat?.projectId
-    ? projects.find(p => p.projectId === activeChat.projectId)
-    : null
-
-  type Tab = 'defaults' | 'project' | 'chat'
-
-  const [tab, setTab] = useState<Tab>('chat')
   const [prefs, setPrefs] = useState<UserPreferences>(userPreferences)
   const [saved, setSaved] = useState(false)
   const debounceRef = useRef<number | null>(null)
-  const chatInstructionsDebounceRef = useRef<number | null>(null)
-  const chatSettingsDebounceRef = useRef<number | null>(null)
   // Gates both the mount-time fetch below and the auto-save effect: true once the user
   // has made a real edit. Guards two races at once — (1) the fetch resolving after a quick
   // edit must not clobber it, and (2) an edit made before the fetch resolves must still
@@ -34,12 +24,6 @@ export default function PreferencesPanel() {
   // a ref flip alone doesn't re-trigger the save effect).
   const editedRef = useRef(false)
 
-  // Project tab state
-  const [projectDraft, setProjectDraft] = useState<Partial<Project>>({})
-  const projectDebounceRef = useRef<number | null>(null)
-  const projectDraftInitRef = useRef<string | null>(null)
-
-  // Load preferences from server on mount
   useEffect(() => {
     api.getPreferences().then(res => {
       if (!editedRef.current) setPrefs(res.preferences)
@@ -47,20 +31,6 @@ export default function PreferencesPanel() {
     }).catch(() => {})
   }, [setUserPreferences])
 
-  // Seed project draft when active project changes
-  useEffect(() => {
-    if (!activeProject) return
-    if (projectDraftInitRef.current === activeProject.projectId) return
-    projectDraftInitRef.current = activeProject.projectId
-    setProjectDraft({
-      instructions:  activeProject.instructions,
-      defaultModel:  activeProject.defaultModel,
-      modelSettings: activeProject.modelSettings,
-      memoryEnabled: activeProject.memoryEnabled,
-    })
-  }, [activeProject])
-
-  // Auto-save defaults with 800ms debounce
   useEffect(() => {
     if (!editedRef.current) return
     if (debounceRef.current !== null) clearTimeout(debounceRef.current)
@@ -82,428 +52,97 @@ export default function PreferencesPanel() {
     setPrefs(p => ({ ...p, ...update }))
   }
 
-  const isNew = !currentChatId
-
   const selectedModelDef = models.find(m => m.id === prefs.defaultModel)
-  const selectedCaps = selectedModelDef?.capabilities
-  const supportsThinking = selectedCaps ? selectedCaps.thinking !== 'none' : false
-  const effort = prefs.thinkingEffort ?? 'off'
-
-  // Derive caps for the active chat's model
-  const activeChatModelId = isNew ? '' : (activeChat?.model ?? '')
-  const activeChatModelDef = models.find(m => m.id === activeChatModelId)
-  const activeCaps: ModelCapabilities = activeChatModelDef?.capabilities
-    ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
-
-  // Caps for the project's default model
-  const projectModelId = projectDraft.defaultModel ?? ''
-  const projectModelDef = models.find(m => m.id === projectModelId)
-  const projectCaps: ModelCapabilities = projectModelDef?.capabilities
-    ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
-  const projectSupportsThinking = projectCaps.thinking !== 'none'
-
-  function handleChatInstructionsChange(value: string) {
-    if (isNew) {
-      setDraftSystemPrompt(value)
-    } else if (currentChatId) {
-      updateChatSystemPrompt(currentChatId, value)
-      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
-      chatInstructionsDebounceRef.current = window.setTimeout(() => {
-        api.updateSystemPrompt(currentChatId, value).catch(() => {})
-      }, 800)
-    }
-  }
-
-  function handleChatSettingsChange(newSettings: ModelSettings) {
-    setDraftModelSettings(newSettings)
-    if (!isNew && currentChatId) {
-      updateChatSettings(currentChatId, newSettings)
-      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
-      chatSettingsDebounceRef.current = window.setTimeout(() => {
-        api.updateChatSettings(currentChatId, newSettings).catch(() => {})
-      }, 800)
-    }
-  }
-
-  function patchProjectDraft(update: Partial<Project>) {
-    if (!activeProject) return
-    setProjectDraft(prev => {
-      const next = { ...prev, ...update }
-      updateProject(activeProject.projectId, next as Partial<Project>)
-      if (projectDebounceRef.current !== null) clearTimeout(projectDebounceRef.current)
-      projectDebounceRef.current = window.setTimeout(() => {
-        api.updateProject(activeProject.projectId, next as Parameters<typeof api.updateProject>[1]).catch(() => {})
-      }, 800)
-      return next
-    })
-  }
-
-  function patchProjectModelSettings(update: Partial<ModelSettings>) {
-    patchProjectDraft({ modelSettings: { ...(projectDraft.modelSettings ?? {}), ...update } })
-  }
-
-  useEffect(() => {
-    return () => {
-      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
-      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
-      if (projectDebounceRef.current !== null) clearTimeout(projectDebounceRef.current)
-    }
-  }, [])
-
-  // If the project disappears (chat moved out), fall back to 'chat' tab
-  useEffect(() => {
-    if (!activeProject && tab === 'project') setTab('chat')
-  }, [activeProject, tab])
+  const supportsThinking = selectedModelDef ? selectedModelDef.capabilities.thinking !== 'none' : false
 
   return (
     <div className="prefs-panel">
-      <div className="prefs-tabs">
-        <button
-          className={`prefs-tab${tab === 'defaults' ? ' active' : ''}`}
-          onClick={() => setTab('defaults')}
-        >
-          Defaults
-        </button>
-        {activeProject && (
-          <button
-            className={`prefs-tab${tab === 'project' ? ' active' : ''}`}
-            onClick={() => setTab('project')}
-          >
-            This project
-          </button>
-        )}
-        <button
-          className={`prefs-tab${tab === 'chat' ? ' active' : ''}`}
-          onClick={() => setTab('chat')}
-        >
-          This chat
-        </button>
+      <div className="panel-header">
+        <FontAwesomeIcon icon={faSlidersH} />
+        <span>Defaults</span>
       </div>
+      <div className="prefs-tab-content">
+        <p className="prefs-desc">Applies to all chats. A chat's or project's own details dialog can override any of these.</p>
 
-      {tab === 'defaults' && (
-        <div className="prefs-tab-content">
-          <p className="prefs-desc">Applies to all chats as defaults. Per-chat settings override these.</p>
-
-          {/* Custom instructions */}
-          <div className="pref-section">
-            <div className="pref-label">Custom instructions</div>
-            <textarea
-              className="pref-textarea"
-              placeholder="Describe how you'd like the assistant to behave (e.g. 'You are a senior software engineer...', 'Keep answers concise', 'Always respond in French')"
-              value={prefs.persona ?? ''}
-              onChange={e => patch({ persona: e.target.value })}
-            />
-          </div>
-
-          {/* Default model */}
-          <div className="pref-section">
-            <div className="pref-label">Default model</div>
-            <select
-              className="pref-select"
-              value={prefs.defaultModel ?? ''}
-              onChange={e => patch({ defaultModel: e.target.value || undefined })}
-            >
-              <option value="">Use app default</option>
-              {models.map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Thinking effort */}
-          {supportsThinking && (
-            <div className="pref-section">
-              <div className="pref-label">Thinking effort</div>
-              <div className="effort-buttons">
-                {THINKING_EFFORTS.map(e => (
-                  <button
-                    key={e}
-                    className={`effort-btn${effort === e ? ' active' : ''}`}
-                    onClick={() => patch({ thinkingEffort: e })}
-                  >
-                    {e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Web search */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Web search</span>
-              <button
-                className={`toggle-btn${prefs.webSearchEnabled !== false ? ' active' : ''}`}
-                onClick={() => patch({ webSearchEnabled: prefs.webSearchEnabled === false ? true : false })}
-              >
-                {prefs.webSearchEnabled !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-          </div>
-
-          {/* Web search provider */}
-          <div className="pref-section">
-            <div className="pref-label">Web search provider</div>
-            <div className="effort-buttons">
-              {(['jina', 'agentcore'] as const).map(p => (
-                <button
-                  key={p}
-                  className={`effort-btn${(prefs.webSearchProvider ?? 'jina') === p ? ' active' : ''}`}
-                  onClick={() => patch({ webSearchProvider: p })}
-                >
-                  {p === 'jina' ? 'Jina' : 'AgentCore'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Browser tools */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Browser — Core</span>
-              <button
-                className={`toggle-btn${prefs.browserCoreEnabled !== false ? ' active' : ''}`}
-                onClick={() => patch({ browserCoreEnabled: prefs.browserCoreEnabled === false ? true : false })}
-              >
-                {prefs.browserCoreEnabled !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-            <div className="pref-row">
-              <span className="pref-row-label">Browser — Extended</span>
-              <button
-                className={`toggle-btn${prefs.browserExtendedEnabled === true ? ' active' : ''}`}
-                onClick={() => patch({ browserExtendedEnabled: prefs.browserExtendedEnabled === true ? false : true })}
-              >
-                {prefs.browserExtendedEnabled === true ? 'On' : 'Off'}
-              </button>
-            </div>
-          </div>
-
-          {/* Answer length */}
-          <div className="pref-section">
-            <div className="pref-label">Answer length</div>
-            <div className="effort-buttons">
-              {(['default', 'short', 'extensive'] as const).map(len => (
-                <button
-                  key={len}
-                  className={`effort-btn${(prefs.answerLength ?? 'default') === len ? ' active' : ''}`}
-                  onClick={() => patch({ answerLength: len })}
-                >
-                  {len.charAt(0).toUpperCase() + len.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Show token stats */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Show token stats</span>
-              <button
-                className={`toggle-btn${prefs.showTokenStats !== false ? ' active' : ''}`}
-                onClick={() => patch({ showTokenStats: prefs.showTokenStats === false ? true : false })}
-              >
-                {prefs.showTokenStats !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-          </div>
-
-          {/* Inject current timestamp */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Inject current timestamp</span>
-              <button
-                className={`toggle-btn${prefs.injectCurrentDate !== false ? ' active' : ''}`}
-                onClick={() => patch({ injectCurrentDate: prefs.injectCurrentDate === false ? true : false })}
-              >
-                {prefs.injectCurrentDate !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-          </div>
-
-          <div className="saved-indicator">{saved ? 'Saved' : ''}</div>
-        </div>
-      )}
-
-      {tab === 'project' && activeProject && (
-        <div className="prefs-tab-content">
-          <p className="prefs-desc">Applies to all chats in <strong>{activeProject.name}</strong>. Per-chat settings override these.</p>
-
-          {/* Project instructions */}
-          <div className="pref-section">
-            <div className="pref-label">Project instructions</div>
-            <textarea
-              className="pref-textarea"
-              placeholder="Context or instructions for the assistant in every chat within this project…"
-              value={projectDraft.instructions ?? ''}
-              onChange={e => patchProjectDraft({ instructions: e.target.value })}
-            />
-          </div>
-
-          {/* Project default model */}
-          <div className="pref-section">
-            <div className="pref-label">Default model</div>
-            <select
-              className="pref-select"
-              value={projectDraft.defaultModel ?? ''}
-              onChange={e => patchProjectDraft({ defaultModel: e.target.value || undefined })}
-            >
-              <option value="">Same as user default</option>
-              {models.map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Thinking effort */}
-          {projectSupportsThinking && (
-            <div className="pref-section">
-              <div className="pref-label">Thinking effort</div>
-              <div className="effort-buttons">
-                {THINKING_EFFORTS.map(e => (
-                  <button
-                    key={e}
-                    className={`effort-btn${(projectDraft.modelSettings?.thinkingEffort ?? 'off') === e ? ' active' : ''}`}
-                    onClick={() => patchProjectModelSettings({ thinkingEffort: e })}
-                  >
-                    {e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Web search */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Web search</span>
-              <button
-                className={`toggle-btn${projectDraft.modelSettings?.webSearchEnabled !== false ? ' active' : ''}`}
-                onClick={() => patchProjectModelSettings({ webSearchEnabled: projectDraft.modelSettings?.webSearchEnabled === false ? true : false })}
-              >
-                {projectDraft.modelSettings?.webSearchEnabled !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-          </div>
-
-          {/* Browser tools */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Browser — Core</span>
-              <button
-                className={`toggle-btn${projectDraft.modelSettings?.browserCoreEnabled !== false ? ' active' : ''}`}
-                onClick={() => patchProjectModelSettings({ browserCoreEnabled: projectDraft.modelSettings?.browserCoreEnabled === false ? true : false })}
-              >
-                {projectDraft.modelSettings?.browserCoreEnabled !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-            <div className="pref-row">
-              <span className="pref-row-label">Browser — Extended</span>
-              <button
-                className={`toggle-btn${projectDraft.modelSettings?.browserExtendedEnabled === true ? ' active' : ''}`}
-                onClick={() => patchProjectModelSettings({ browserExtendedEnabled: projectDraft.modelSettings?.browserExtendedEnabled === true ? false : true })}
-              >
-                {projectDraft.modelSettings?.browserExtendedEnabled === true ? 'On' : 'Off'}
-              </button>
-            </div>
-          </div>
-
-          {/* Answer length */}
-          <div className="pref-section">
-            <div className="pref-label">Answer length</div>
-            <div className="effort-buttons">
-              {(['default', 'short', 'extensive'] as const).map(len => (
-                <button
-                  key={len}
-                  className={`effort-btn${(projectDraft.modelSettings?.answerLength ?? 'default') === len ? ' active' : ''}`}
-                  onClick={() => patchProjectModelSettings({ answerLength: len })}
-                >
-                  {len.charAt(0).toUpperCase() + len.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Project memory */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Project memory</span>
-              <button
-                className={`toggle-btn${projectDraft.memoryEnabled !== false ? ' active' : ''}`}
-                onClick={() => patchProjectDraft({ memoryEnabled: projectDraft.memoryEnabled === false ? true : false })}
-              >
-                {projectDraft.memoryEnabled !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-            <div className="pref-hint">When off, project memories are not injected and the manage_project_memory tool is disabled.</div>
-          </div>
-        </div>
-      )}
-
-      {tab === 'chat' && (
-        <div className="prefs-tab-content">
-          <p className="prefs-desc">Overrides the defaults for this chat only.</p>
-
-          {!isNew && (activeChat?.summary || (activeChat?.topics && activeChat.topics.length > 0)) && (
-            <div className="pref-section">
-              <div className="pref-label">Summary</div>
-              {activeChat?.summary && <p className="prefs-desc">{activeChat.summary}</p>}
-              {activeChat?.topics && activeChat.topics.length > 0 && (
-                <div className="topic-chips">
-                  {activeChat.topics.map(topic => (
-                    <span key={topic} className="topic-chip">{topic}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="pref-section">
-            <div className="pref-label">Custom instructions</div>
-            <textarea
-              className="pref-textarea"
-              placeholder="Override global instructions for this chat only…"
-              value={isNew ? draftSystemPrompt : (activeChat?.systemPrompt ?? '')}
-              onChange={e => handleChatInstructionsChange(e.target.value)}
-            />
-          </div>
-
-          <ModelSettingsPanel
-            caps={activeCaps}
-            settings={draftModelSettings}
-            onChange={handleChatSettingsChange}
+        <div className="pref-section">
+          <div className="pref-label">Custom instructions</div>
+          <textarea
+            className="pref-textarea"
+            placeholder="Describe how you'd like the assistant to behave (e.g. 'You are a senior software engineer...', 'Keep answers concise', 'Always respond in French')"
+            value={prefs.persona ?? ''}
+            onChange={e => patch({ persona: e.target.value })}
           />
-
-          {/* Answer length */}
-          <div className="pref-section">
-            <div className="pref-label">Answer length</div>
-            <div className="effort-buttons">
-              {(['default', 'short', 'extensive'] as const).map(len => (
-                <button
-                  key={len}
-                  className={`effort-btn${(draftModelSettings.answerLength ?? 'default') === len ? ' active' : ''}`}
-                  onClick={() => handleChatSettingsChange({ ...draftModelSettings, answerLength: len })}
-                >
-                  {len.charAt(0).toUpperCase() + len.slice(1)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Inject current timestamp */}
-          <div className="pref-section">
-            <div className="pref-row">
-              <span className="pref-row-label">Inject current timestamp</span>
-              <button
-                className={`toggle-btn${draftModelSettings.injectCurrentDate !== false ? ' active' : ''}`}
-                onClick={() => handleChatSettingsChange({ ...draftModelSettings, injectCurrentDate: draftModelSettings.injectCurrentDate === false ? true : false })}
-              >
-                {draftModelSettings.injectCurrentDate !== false ? 'On' : 'Off'}
-              </button>
-            </div>
-          </div>
         </div>
-      )}
+
+        <div className="pref-section">
+          <div className="pref-label">Default model</div>
+          <select
+            className="pref-select"
+            value={prefs.defaultModel ?? ''}
+            onChange={e => patch({ defaultModel: e.target.value || undefined })}
+          >
+            <option value="">Use app default</option>
+            {models.map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {supportsThinking && (
+          <EffortRow
+            label="Thinking effort"
+            options={THINKING_EFFORTS}
+            value={prefs.thinkingEffort ?? 'off'}
+            onChange={v => patch({ thinkingEffort: v })}
+            format={e => e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}
+          />
+        )}
+
+        <ToggleRow
+          label="Web search"
+          on={prefs.webSearchEnabled !== false}
+          onToggle={() => patch({ webSearchEnabled: prefs.webSearchEnabled === false ? true : false })}
+        />
+
+        <EffortRow
+          label="Web search provider"
+          options={['jina', 'agentcore'] as const}
+          value={prefs.webSearchProvider ?? 'jina'}
+          onChange={v => patch({ webSearchProvider: v })}
+          format={p => p === 'jina' ? 'Jina' : 'AgentCore'}
+        />
+
+        <ToggleRow
+          label="Browser — Core"
+          on={prefs.browserCoreEnabled !== false}
+          onToggle={() => patch({ browserCoreEnabled: prefs.browserCoreEnabled === false ? true : false })}
+        />
+        <ToggleRow
+          label="Browser — Extended"
+          on={prefs.browserExtendedEnabled === true}
+          onToggle={() => patch({ browserExtendedEnabled: prefs.browserExtendedEnabled === true ? false : true })}
+        />
+
+        <EffortRow
+          label="Answer length"
+          options={['default', 'short', 'extensive'] as const}
+          value={prefs.answerLength ?? 'default'}
+          onChange={v => patch({ answerLength: v })}
+        />
+
+        <ToggleRow
+          label="Show token stats"
+          on={prefs.showTokenStats !== false}
+          onToggle={() => patch({ showTokenStats: prefs.showTokenStats === false ? true : false })}
+        />
+        <ToggleRow
+          label="Inject current timestamp"
+          on={prefs.injectCurrentDate !== false}
+          onToggle={() => patch({ injectCurrentDate: prefs.injectCurrentDate === false ? true : false })}
+        />
+
+        <div className="saved-indicator">{saved ? 'Saved' : ''}</div>
+      </div>
     </div>
   )
 }

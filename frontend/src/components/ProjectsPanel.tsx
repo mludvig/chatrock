@@ -4,7 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderTree, faFolderOpen, faFolder, faFolderPlus,
   faPenToSquare, faTrash, faChevronRight, faChevronDown,
-  faComment, faFile, faBrain, faSpinner, faPlus,
+  faComment, faFile, faBrain, faSpinner,
   faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
@@ -18,7 +18,7 @@ export default function ProjectsPanel() {
   const matchProject = useMatch('/p/:projectId')
   const activeProjectId = matchProject?.params.projectId
 
-  const { projects, chats, addProject, updateProject, removeProject, removeChat, pushToast, mergeProjectFiles, addChat, userPreferences, models } = useChatStore()
+  const { projects, chats, addProject, removeProject, removeChat, pushToast, mergeProjectFiles, updateProject, newProjectTick } = useChatStore()
   const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
 
   // URL-driven when on /p/:projectId; stays open when navigating into a chat
@@ -31,7 +31,12 @@ export default function ProjectsPanel() {
   const [newName, setNewName] = useState('')
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [editProjectName, setEditProjectName] = useState('')
-  const [creatingChatInProject, setCreatingChatInProject] = useState<string | null>(null)
+
+  // Triggered by the global "New project" button (App.tsx) so project creation has exactly
+  // one entry point regardless of which panel is currently open.
+  useEffect(() => {
+    if (newProjectTick > 0) { setShowNewInput(true); setNewName('') }
+  }, [newProjectTick])
 
   // Sub-section state (per project)
   const [expandedSections, setExpandedSections] = useState<Record<string, Set<'files' | 'memory'>>>({})
@@ -88,22 +93,6 @@ export default function ProjectsPanel() {
       await api.deleteProject(projectId)
     } catch (err) {
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    }
-  }
-
-  async function handleNewChatInProject(e: React.MouseEvent, projectId: string) {
-    e.stopPropagation()
-    setCreatingChatInProject(projectId)
-    try {
-      const model = userPreferences.defaultModel || models[0]?.id || ''
-      const res = await api.createChat(model, '', undefined, undefined, projectId)
-      const now = new Date().toISOString()
-      addChat({ chatId: res.chatId, title: 'New Chat', model, systemPrompt: '', createdAt: now, updatedAt: now, projectId })
-      navigate(`/c/${res.chatId}`)
-    } catch (err) {
-      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    } finally {
-      setCreatingChatInProject(null)
     }
   }
 
@@ -226,13 +215,6 @@ export default function ProjectsPanel() {
                   />
                   <span className="project-title">{project.name}</span>
                   <div className="project-actions">
-                    <button
-                      onClick={e => handleNewChatInProject(e, project.projectId)}
-                      title="New chat in project"
-                      disabled={creatingChatInProject === project.projectId}
-                    >
-                      <FontAwesomeIcon icon={creatingChatInProject === project.projectId ? faSpinner : faPlus} spin={creatingChatInProject === project.projectId} />
-                    </button>
                     <button onClick={e => startProjectRename(e, project.projectId, project.name)} title="Rename project">
                       <FontAwesomeIcon icon={faPenToSquare} />
                     </button>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faComments, faPlus, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
+import { faComments, faPlus, faFolderPlus, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import { api, setAccessToken } from './api/http'
 import { ENV } from './env'
 import { useChatStore } from './store/chatStore'
@@ -16,7 +16,7 @@ import './app.scss'
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingSearch, setActivePanel, bumpNewChatTick } = useChatStore()
+  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingSearch, setActivePanel, bumpNewChatTick, bumpNewProjectTick } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   // Default on: searching from inside a project most often means "this project", not everywhere.
@@ -128,6 +128,14 @@ function AuthedApp() {
           tabIndex={-1}
         >
           <FontAwesomeIcon icon={faPlus} />
+        </button>
+        <button
+          className="btn-new btn-new--secondary"
+          onClick={e => { e.stopPropagation(); setActivePanel('projects'); setSidebarOpen(true); bumpNewProjectTick() }}
+          title="New project"
+          tabIndex={-1}
+        >
+          <FontAwesomeIcon icon={faFolderPlus} />
         </button>
       </div>
       <ActivityBar

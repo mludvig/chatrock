@@ -579,25 +579,29 @@ test.describe('Projects — Settings section', () => {
     await page.waitForURL(/\/p\//, { timeout: 10000 })
     await expect(page.locator('.project-view')).toBeVisible()
 
-    const settingsSection = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Settings' }) })
-    await expect(settingsSection).toBeVisible()
+    // Project settings now live in the Project details dialog, opened from the gear
+    // next to the project name (moved out of an always-scrolling inline section —
+    // see "Chat details dialog & the settings surfaces" in frontend/CLAUDE.md).
+    await page.locator('.project-view-header .btn-icon[title="Project details"]').click()
+    const dialog = page.locator('.dialog')
+    await expect(dialog).toBeVisible()
 
     const isProjectPatch = (resp: import('@playwright/test').Response) =>
       resp.request().method() === 'PATCH' && /\/api\/projects\/[^/]+$/.test(resp.url())
 
     // Edit description — wait for the PATCH to actually land before moving on,
     // since a reload would otherwise cancel an in-flight request
-    const descTextarea = settingsSection.locator('.pref-textarea').first()
+    const descTextarea = dialog.locator('.pref-textarea').first()
     await descTextarea.fill('A project for end-to-end testing.')
     await Promise.all([page.waitForResponse(isProjectPatch), descTextarea.blur()])
 
     // Edit instructions
-    const instrTextarea = settingsSection.locator('.pref-textarea').nth(1)
+    const instrTextarea = dialog.locator('.pref-textarea').nth(1)
     await instrTextarea.fill('Always answer in haiku.')
     await Promise.all([page.waitForResponse(isProjectPatch), instrTextarea.blur()])
 
     // Toggle memory off
-    const memoryToggle = settingsSection.locator('.toggle-btn')
+    const memoryToggle = dialog.locator('.pref-row', { hasText: 'Project memory' }).locator('.toggle-btn')
     await expect(memoryToggle).toHaveText('On')
     await Promise.all([page.waitForResponse(isProjectPatch), memoryToggle.click()])
     await expect(memoryToggle).toHaveText('Off', { timeout: 3000 })
@@ -608,10 +612,12 @@ test.describe('Projects — Settings section', () => {
     await page.waitForURL(url)
     await expect(page.locator('.project-view')).toBeVisible()
 
-    const settingsAfterReload = page.locator('.project-section').filter({ has: page.locator('.project-section-header', { hasText: 'Settings' }) })
-    await expect(settingsAfterReload.locator('.pref-textarea').first()).toHaveValue('A project for end-to-end testing.', { timeout: 5000 })
-    await expect(settingsAfterReload.locator('.pref-textarea').nth(1)).toHaveValue('Always answer in haiku.')
-    await expect(settingsAfterReload.locator('.toggle-btn')).toHaveText('Off')
+    await page.locator('.project-view-header .btn-icon[title="Project details"]').click()
+    const dialogAfterReload = page.locator('.dialog')
+    await expect(dialogAfterReload.locator('.pref-textarea').first()).toHaveValue('A project for end-to-end testing.', { timeout: 5000 })
+    await expect(dialogAfterReload.locator('.pref-textarea').nth(1)).toHaveValue('Always answer in haiku.')
+    await expect(dialogAfterReload.locator('.pref-row', { hasText: 'Project memory' }).locator('.toggle-btn')).toHaveText('Off')
+    await page.keyboard.press('Escape')
 
     // Cleanup
     try {

@@ -3,13 +3,14 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPlus, faArrowRightFromBracket, faSpinner, faTrash,
-  faUpload, faFile, faExclamationTriangle, faWandMagicSparkles,
+  faUpload, faFile, faExclamationTriangle, faWandMagicSparkles, faGear,
 } from '@fortawesome/free-solid-svg-icons'
 import { api, uploadToS3 } from '../api/http'
-import type { Chat, ProjectMemory, ProjectFile } from '../api/http'
+import type { Chat, ModelSettings, ProjectMemory, ProjectFile } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { sortByRecent } from '../lib/sort'
 import ChatListFilter, { applyChatListFilter, useChatListFilter } from './ChatListFilter'
+import ProjectDetailsDialog from './ProjectDetailsDialog'
 
 interface Props {
   defaultModel: string
@@ -56,6 +57,8 @@ export default function ProjectView({ defaultModel }: Props) {
   const [descDraft, setDescDraft] = useState('')
   const [instrDraft, setInstrDraft] = useState('')
   const settingsInitRef = useRef<string | null>(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const settingsDebounceRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!projectId) return
@@ -89,6 +92,12 @@ export default function ProjectView({ defaultModel }: Props) {
       setExpandedSummaries(prev => new Set([...prev, selectedFileId]))
     }
   }, [selectedFileId])
+
+  useEffect(() => {
+    return () => {
+      if (settingsDebounceRef.current !== null) clearTimeout(settingsDebounceRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (project && settingsInitRef.current !== project.projectId) {
@@ -350,12 +359,37 @@ export default function ProjectView({ defaultModel }: Props) {
     }
   }
 
+  async function handleDefaultModelChange(modelId: string) {
+    if (!projectId) return
+    const defaultModel = modelId || undefined
+    updateProject(projectId, { defaultModel })
+    try {
+      await api.updateProject(projectId, { defaultModel })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  function handleModelSettingsChange(modelSettings: ModelSettings) {
+    if (!projectId) return
+    updateProject(projectId, { modelSettings })
+    if (settingsDebounceRef.current !== null) clearTimeout(settingsDebounceRef.current)
+    settingsDebounceRef.current = window.setTimeout(() => {
+      api.updateProject(projectId, { modelSettings }).catch(err => {
+        pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+      })
+    }, 800)
+  }
+
   const memoryCategories: Array<ProjectMemory['category']> = ['decision', 'convention', 'fact', 'constraint', 'glossary', 'other']
   const groupedMemories = Object.fromEntries(
     memoryCategories.map(cat => [cat, projectMemories.filter(m => m.category === cat)])
   ) as Record<ProjectMemory['category'], ProjectMemory[]>
 
   const displayName = project?.name ?? 'Project'
+  const projectModelDef = models.find(m => m.id === project?.defaultModel)
+  const projectCaps = projectModelDef?.capabilities
+    ?? { temperature: true, topP: true, topK: false, thinking: 'none' as const, attachments: true }
 
   return (
     <div className="project-view">
@@ -378,6 +412,9 @@ export default function ProjectView({ defaultModel }: Props) {
             {displayName}
           </h2>
         )}
+        <button className="btn-icon" onClick={() => setDetailsOpen(true)} title="Project details">
+          <FontAwesomeIcon icon={faGear} />
+        </button>
         <button className="btn-action" onClick={handleNewChat}>
           <FontAwesomeIcon icon={faPlus} /> New chat
         </button>
@@ -598,44 +635,27 @@ export default function ProjectView({ defaultModel }: Props) {
           )}
         </div>
 
-        {/* ── Settings ── */}
-        <div className="project-section">
-          <div className="project-section-header">Settings</div>
-          <div className="prefs-tab-content">
-            <div className="pref-section">
-              <div className="pref-label">Description</div>
-              <textarea
-                className="pref-textarea"
-                placeholder="What is this project about?"
-                value={descDraft}
-                onChange={e => setDescDraft(e.target.value)}
-                onBlur={handleDescriptionBlur}
-              />
-            </div>
-            <div className="pref-section">
-              <div className="pref-label">Instructions</div>
-              <textarea
-                className="pref-textarea"
-                placeholder="Custom instructions applied to every chat in this project…"
-                value={instrDraft}
-                onChange={e => setInstrDraft(e.target.value)}
-                onBlur={handleInstructionsBlur}
-              />
-            </div>
-            <div className="pref-section">
-              <div className="pref-row">
-                <span className="pref-row-label">Project memory</span>
-                <button
-                  className={`toggle-btn${project?.memoryEnabled !== false ? ' active' : ''}`}
-                  onClick={handleToggleMemoryEnabled}
-                >
-                  {project?.memoryEnabled !== false ? 'On' : 'Off'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
+
+      <ProjectDetailsDialog
+        open={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        projectName={displayName}
+        descDraft={descDraft}
+        onDescChange={setDescDraft}
+        onDescBlur={handleDescriptionBlur}
+        instrDraft={instrDraft}
+        onInstrChange={setInstrDraft}
+        onInstrBlur={handleInstructionsBlur}
+        models={models}
+        defaultModel={project?.defaultModel ?? ''}
+        onDefaultModelChange={handleDefaultModelChange}
+        caps={projectCaps}
+        settings={project?.modelSettings ?? {}}
+        onSettingsChange={handleModelSettingsChange}
+        memoryEnabled={project?.memoryEnabled !== false}
+        onToggleMemory={handleToggleMemoryEnabled}
+      />
     </div>
   )
 }
