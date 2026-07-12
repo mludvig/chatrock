@@ -9,6 +9,7 @@ import { api, uploadToS3 } from '../api/http'
 import type { Chat, ProjectMemory, ProjectFile } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { sortByRecent } from '../lib/sort'
+import ChatListFilter, { applyChatListFilter, useChatListFilter } from './ChatListFilter'
 
 interface Props {
   defaultModel: string
@@ -26,6 +27,7 @@ export default function ProjectView({ defaultModel }: Props) {
 
   const [projectChats, setProjectChats] = useState<Chat[]>([])
   const [loading, setLoading] = useState(true)
+  const chatFilter = useChatListFilter()
 
   const [editingName, setEditingName] = useState(false)
   const [editName, setEditName] = useState('')
@@ -384,14 +386,19 @@ export default function ProjectView({ defaultModel }: Props) {
       <div className="project-view-body">
         {/* ── Chats ── */}
         <div className="project-section">
-          <div className="project-section-header">Chats</div>
+          <div className="project-section-header">
+            Chats
+            <ChatListFilter filter={chatFilter} showProjectToggle={false} />
+          </div>
           {loading ? (
             <div className="panel-loading"><FontAwesomeIcon icon={faSpinner} spin /> Loading…</div>
           ) : projectChats.length === 0 ? (
             <div className="panel-empty">No chats in this project yet.</div>
+          ) : applyChatListFilter(projectChats, chatFilter, { includeProjectChats: true }).length === 0 ? (
+            <div className="panel-empty">No chats match the current filter.</div>
           ) : (
-            sortByRecent(projectChats).map(chat => (
-              <div key={chat.chatId} className="chat-item" onClick={() => navigate(`/c/${chat.chatId}`)}>
+            sortByRecent(applyChatListFilter(projectChats, chatFilter, { includeProjectChats: true })).map(chat => (
+              <div key={chat.chatId} className={`chat-item${chat.sensitive ? ' sensitive' : ''}`} onClick={() => navigate(`/c/${chat.chatId}`)}>
                 <div className="chat-item-content">
                   <span className="chat-title">{chat.title}</span>
                   {editingChatSummaryId === chat.chatId ? (

@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useNavigate, useMatch } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen, faLayerGroup } from '@fortawesome/free-solid-svg-icons'
+import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { useChatActions } from '../lib/useChatActions'
 import { sortByRecent } from '../lib/sort'
+import ChatListFilter, { applyChatListFilter, useChatListFilter } from './ChatListFilter'
 
 export default function ChatsPanel() {
   const navigate = useNavigate()
@@ -14,7 +15,7 @@ export default function ChatsPanel() {
   const { chats, pushToast, projects, updateChatProjectId } = useChatStore()
   const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
   const [movingId, setMovingId] = useState<string | null>(null)
-  const [showProjectChats, setShowProjectChats] = useState(false)
+  const filter = useChatListFilter()
 
   function toggleMoveMenu(e: React.MouseEvent, chatId: string) {
     e.stopPropagation()
@@ -34,19 +35,12 @@ export default function ChatsPanel() {
     }
   }
 
-  const sorted = sortByRecent(chats.filter(c => showProjectChats || !c.projectId))
+  const sorted = sortByRecent(applyChatListFilter(chats, filter))
 
   return (
     <>
       <div className="chat-list-header">
-        <button
-          className={`chat-filter-btn${showProjectChats ? ' active' : ''}`}
-          onClick={() => setShowProjectChats(v => !v)}
-          title={showProjectChats ? 'Hide project chats' : 'Show all chats including project chats'}
-        >
-          <FontAwesomeIcon icon={faLayerGroup} />
-          {showProjectChats ? 'All chats' : 'Non-project only'}
-        </button>
+        <ChatListFilter filter={filter} />
       </div>
       <div className="chat-list">
         {sorted.map(chat => {
@@ -54,7 +48,7 @@ export default function ChatsPanel() {
           return (
             <div
               key={chat.chatId}
-              className={`chat-item${chat.chatId === activeChatId ? ' active' : ''}`}
+              className={`chat-item${chat.chatId === activeChatId ? ' active' : ''}${chat.sensitive ? ' sensitive' : ''}`}
               style={{ position: 'relative', flexDirection: 'column', alignItems: 'stretch', gap: 2 }}
               onClick={() => { setMovingId(null); navigate(`/c/${chat.chatId}`) }}
             >
@@ -137,11 +131,9 @@ export default function ChatsPanel() {
         })}
         {sorted.length === 0 && (
           <p className="empty-hint">
-            {showProjectChats
-              ? 'No chats yet. Click + to start.'
-              : chats.length > 0
-                ? 'All chats are in projects. Toggle above to see them.'
-                : 'No chats yet. Click + to start.'}
+            {chats.length > 0
+              ? 'No chats match the current filter. Adjust the filter above to see them.'
+              : 'No chats yet. Click + to start.'}
           </p>
         )}
       </div>
