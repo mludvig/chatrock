@@ -35,9 +35,12 @@ export interface Chat {
   projectId?: string
   summary?: string
   topics?: string[]
-  // Private/temporary chat — never returned by listChats; expiresAt is the DynamoDB TTL
-  // deadline (fixed at creation), shown so the user knows when it disappears.
-  isPrivate?: boolean
+  // Independent flags — see "Sensitive & ephemeral chats" in backend/CLAUDE.md.
+  // sensitive: excluded from memory/summary/search_history; masked in the chat list unless
+  // the "show sensitive" filter is on. ephemeral: auto-deletes at expiresAt (the DynamoDB TTL
+  // deadline, fixed at creation).
+  sensitive?: boolean
+  ephemeral?: boolean
   expiresAt?: string
   // Present exactly once, the first time this chat is read after its stored model was
   // retired from config/models.ts — the backend already swapped `model` to the current
@@ -163,6 +166,11 @@ export interface UserPreferences {
   topP?: number
   topK?: number
   showTokenStats?: boolean
+  // Chat-list view filters (LHS filter dialog) — client-only display preferences, not
+  // per-chat data. showSensitiveChats defaults to false (the "eye"); hideProjectChats
+  // declutters the main list since project chats are also visible in ProjectView.
+  showSensitiveChats?: boolean
+  hideProjectChats?: boolean
 }
 
 export interface Model {
@@ -205,13 +213,14 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
 export const api = {
   listChats: ()                        => req<{ chats: Chat[] }>('GET', '/api/chats'),
   getChat: (chatId: string)            => req<Chat>('GET', `/api/chats/${chatId}`),
-  createChat: (model: string, systemPrompt: string, chatId?: string, modelSettings?: ModelSettings, projectId?: string, isPrivate?: boolean) =>
+  createChat: (model: string, systemPrompt: string, chatId?: string, modelSettings?: ModelSettings, projectId?: string, flags?: { sensitive?: boolean; ephemeral?: boolean }) =>
     req<{ chatId: string }>('POST', '/api/chats', {
       model, systemPrompt,
       ...(chatId ? { chatId } : {}),
       ...(modelSettings ? { modelSettings } : {}),
       ...(projectId ? { projectId } : {}),
-      ...(isPrivate ? { isPrivate } : {}),
+      ...(flags?.sensitive ? { sensitive: true } : {}),
+      ...(flags?.ephemeral ? { ephemeral: true } : {}),
     }),
   renameChat: (chatId: string, title: string) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { title }),
@@ -221,6 +230,8 @@ export const api = {
     req<void>('PATCH', `/api/chats/${chatId}`, { model }),
   updateChatSettings: (chatId: string, settings: ModelSettings) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { modelSettings: settings }),
+  updateChatFlags: (chatId: string, flags: { sensitive?: boolean; ephemeral?: boolean }) =>
+    req<void>('PATCH', `/api/chats/${chatId}`, flags),
   deleteChat: (chatId: string)         => req<void>('DELETE', `/api/chats/${chatId}`),
   listMessages: (chatId: string)       => req<{ bubbles: Message[]; conversationUsage: TokenUsage }>('GET', `/api/chats/${chatId}/messages`),
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
