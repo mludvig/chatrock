@@ -41,12 +41,6 @@ export interface PendingSearch {
 
 interface ChatState {
   chats: Chat[]
-  // Private chats are deliberately excluded from `chats` (GET /api/chats filters them out
-  // server-side too — see backend/CLAUDE.md), so a direct-URL visit to one populates it here
-  // instead, keyed by chatId. Never rendered by ChatsPanel; ChatView reads chats.find(...) ??
-  // privateChats[chatId] so the rest of its logic (send/rerun/fork, all keyed off that lookup)
-  // works unchanged for a private chat.
-  privateChats: Record<string, Chat>
   activeChatId: string | null
   messages: Message[]
   streamingMsg: StreamingMsg | null
@@ -61,7 +55,8 @@ interface ChatState {
 
   setChats: (chats: Chat[]) => void
   addChat: (chat: Chat) => void
-  setPrivateChat: (chat: Chat) => void
+  /** Merge PATCH'd fields (e.g. sensitive/ephemeral/expiresAt) into a chat already in the store. */
+  patchChat: (chatId: string, fields: Partial<Chat>) => void
   /** Dismiss the one-time "this chat's model was migrated" notice for a chat. */
   clearModelMigrationNotice: (chatId: string) => void
   removeChat: (chatId: string) => void
@@ -169,7 +164,6 @@ export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
       chats: [],
-      privateChats: {},
       activeChatId: null,
       messages: [],
       streamingMsg: null,
@@ -193,12 +187,11 @@ export const useChatStore = create<ChatState>()(
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
-      setPrivateChat: (chat) => set((s) => ({ privateChats: { ...s.privateChats, [chat.chatId]: chat } })),
+      patchChat: (chatId, fields) => set((s) => ({
+        chats: s.chats.map(c => c.chatId === chatId ? { ...c, ...fields } : c),
+      })),
       clearModelMigrationNotice: (chatId) => set((s) => ({
         chats: s.chats.map(c => c.chatId === chatId ? { ...c, modelMigratedFrom: undefined } : c),
-        privateChats: s.privateChats[chatId]
-          ? { ...s.privateChats, [chatId]: { ...s.privateChats[chatId], modelMigratedFrom: undefined } }
-          : s.privateChats,
       })),
       removeChat: (chatId) => set((s) => ({
         chats: s.chats.filter(c => c.chatId !== chatId),

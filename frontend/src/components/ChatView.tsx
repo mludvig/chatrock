@@ -25,7 +25,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const isNew = !chatId || chatId === 'new'
 
   const {
-    chats, privateChats, setPrivateChat, clearModelMigrationNotice, loading: chatsLoading, messages, streamingMsg,
+    chats, clearModelMigrationNotice, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream,
     renameChat, removeChat, sending, setSending, pushToast,
@@ -38,8 +38,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   // For /c/new: local model state (not yet persisted)
   const [newModel, setNewModel] = useState(defaultModel)
-  // For /c/new: whether the chat-about-to-be-created is private. Irrelevant once a chat
-  // exists — private-ness is fixed at creation (see backend/CLAUDE.md).
+  // For /c/new: the "Private" preset toggle — sets BOTH sensitive + ephemeral at creation.
+  // Once the chat exists, sensitive/ephemeral can each be changed independently via the
+  // header cog; this draft toggle only controls the initial combination.
   const [isPrivateDraft, setIsPrivateDraft] = useState(false)
 
   const [input, setInput] = useState('')
@@ -93,21 +94,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
 
-  const activeChat = isNew ? null : (chats.find(c => c.chatId === chatId) ?? (chatId ? privateChats[chatId] : undefined))
+  // Sensitive chats are returned by GET /api/chats like any other (visibility is a frontend
+  // filter, not an API-level exclusion — see "Sensitive & ephemeral chats" in backend/CLAUDE.md),
+  // so activeChat is a plain lookup with no fallback fetch needed.
+  const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
   const chatProject = activeChat?.projectId ? projects.find(p => p.projectId === activeChat.projectId) : null
 
-  // A private chat is deliberately absent from `chats` (never listed) — when its URL is
-  // visited directly, fetch its metadata once and cache it in the store's private-chat slot
-  // so the rest of this component (send/rerun/fork, all keyed off `activeChat`) works
-  // unchanged. Only fires when the id truly isn't a private chat we already know about;
-  // if the chat doesn't exist at all, GET 404s and this silently no-ops (activeChat stays
-  // undefined, same as any other not-found chat).
-  useEffect(() => {
-    if (isNew || !chatId || chatsLoading || chats.some(c => c.chatId === chatId) || privateChats[chatId]) return
-    let cancelled = false
-    api.getChat(chatId).then(c => { if (!cancelled && c.isPrivate) setPrivateChat(c) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [isNew, chatId, chatsLoading, chats, privateChats, setPrivateChat])
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
@@ -549,25 +541,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (!chatId || isNew || !activeChat) return
     try {
       const res = await api.forkChat(chatId, fromMsgId)
-      const now = new Date().toISOString()
-      if (activeChat.isPrivate) {
-        // Backend already makes a fork of a private chat private too — never addChat() it,
-        // that would surface it in the LHS list. Fetch the authoritative DTO (expiresAt is a
-        // fresh TTL, not the source's) rather than hand-building one.
-        await api.getChat(res.chatId).then(useChatStore.getState().setPrivateChat)
-      } else {
-        useChatStore.getState().addChat({
-          chatId: res.chatId,
-          title: `${activeChat.title} (fork)`,
-          model: activeChat.model,
-          systemPrompt: activeChat.systemPrompt,
-          ...(activeChat.modelSettings ? { modelSettings: activeChat.modelSettings } : {}),
-          ...(activeChat.projectId ? { projectId: activeChat.projectId } : {}),
-          createdAt: now,
-          updatedAt: now,
-        })
-      }
-      pushToast({ kind: 'success', text: activeChat.isPrivate ? 'Forked into a new private chat' : 'Forked into a new chat' })
+      // Backend inherits sensitive/ephemeral from the source, with a FRESH ttl (not the
+      // source's remaining one) — fetch the authoritative DTO rather than hand-building one,
+      // so expiresAt is correct from the start.
+      const forked = await api.getChat(res.chatId)
+      useChatStore.getState().addChat(forked)
+      pushToast({ kind: 'success', text: activeChat.sensitive ? 'Forked into a new sensitive chat' : 'Forked into a new chat' })
       if (role === 'user') pendingDraftRef.current = text
       navigate(`/c/${res.chatId}`)
     } catch (err) {
@@ -818,15 +797,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
       try {
         const newChatId = pendingNewChatIdRef.current ?? newId()
-        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride, isPrivateDraft)
+        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride, { sensitive: isPrivateDraft, ephemeral: isPrivateDraft })
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
         if (isPrivateDraft) {
-          // Never addChat() a private chat — that would surface it in the LHS list, which is
-          // exactly what "private" means it must not do. Fetch the authoritative DTO (with
-          // expiresAt) rather than hand-building one, so the footer's expiry date is accurate
-          // from the start instead of waiting on the fallback-fetch effect above.
-          api.getChat(res.chatId).then(setPrivateChat).catch(() => {})
+          // Fetch the authoritative DTO (with expiresAt) rather than hand-building one, so the
+          // footer's expiry date is accurate from the start.
+          api.getChat(res.chatId).then(c => useChatStore.getState().addChat(c)).catch(() => {})
         } else {
           useChatStore.getState().addChat({
             chatId: res.chatId,
@@ -931,12 +908,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
 
   return (
-    <div className={`chat-view${(isNew ? isPrivateDraft : activeChat?.isPrivate) ? ' chat-view--private' : ''}`}>
+    <div className={`chat-view${(isNew ? isPrivateDraft : activeChat?.sensitive) ? ' chat-view--private' : ''}`}>
       <div className="chat-header">
         <button className="btn-icon btn-hamburger" onClick={onOpenSidebar} title="Open sidebar">
           <FontAwesomeIcon icon={faBars} />
         </button>
-        <h2>{isNew ? 'New Chat' : (activeChat?.title ?? 'Chat')}</h2>
+        {/* Sensitive chats never show their title in the header — only in the LHS, gated by
+            the "show sensitive" filter. A bold header would announce the topic to anyone
+            glancing at the screen even while the sidebar is closed. */}
+        {!(isNew ? isPrivateDraft : activeChat?.sensitive) && <h2>{isNew ? 'New Chat' : (activeChat?.title ?? 'Chat')}</h2>}
         {chatProject && (
           <span
             className="project-chip"
@@ -946,8 +926,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <FontAwesomeIcon icon={faFolderOpen} /> {chatProject.name}
           </span>
         )}
-        {!isNew && activeChat?.isPrivate && (
-          <span className="private-chip" title="Private chat — hidden from the chat list, not used for memory or search">
+        {!isNew && activeChat?.sensitive && (
+          <span className="private-chip" title="Sensitive chat — excluded from memory & search, masked in the chat list unless revealed">
             <FontAwesomeIcon icon={faUserSecret} /> Private
           </span>
         )}
@@ -958,8 +938,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               className={`btn-private-toggle${isPrivateDraft ? ' active' : ''}`}
               onClick={() => setIsPrivateDraft(v => !v)}
               title={isPrivateDraft
-                ? 'Private chat: hidden from the chat list, excluded from memory & search, auto-deleted after the TTL. Click to make it a normal chat.'
-                : 'Make this a private chat: hidden from the chat list, excluded from memory & search, auto-deleted after the TTL.'}
+                ? 'Private chat: sensitive + auto-deleted after the TTL. Click to make it a normal chat.'
+                : 'Make this a private chat: excluded from memory & search, masked in the chat list, and auto-deleted after the TTL.'}
             >
               <FontAwesomeIcon icon={faUserSecret} /> Private
             </button>
@@ -1058,12 +1038,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           addFiles(Array.from(e.dataTransfer.files))
         }}
       >
-        {(isNew ? isPrivateDraft : activeChat?.isPrivate) && (
+        {(isNew ? isPrivateDraft : (activeChat?.sensitive || activeChat?.ephemeral)) && (
           <div className="private-footer">
             <FontAwesomeIcon icon={faUserSecret} />
-            {isNew || !activeChat?.expiresAt
-              ? 'Private chat — hidden from the chat list, not used for memory or search.'
-              : `Private chat — expires ${new Date(activeChat.expiresAt).toLocaleString()} unless you delete it sooner.`}
+            {isNew
+              ? 'Private chat — excluded from memory & search, masked in the chat list, and auto-deleted.'
+              : activeChat?.ephemeral && activeChat?.expiresAt
+                ? `Expires ${new Date(activeChat.expiresAt).toLocaleString()} unless you delete it sooner.`
+                : 'Sensitive chat — excluded from memory & search, masked in the chat list.'}
           </div>
         )}
 
