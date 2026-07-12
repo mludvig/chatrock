@@ -114,12 +114,14 @@ export async function updateChatModelSettings(sub: string, chatId: string, model
 }
 
 // Toggles the `sensitive` flag. Cleared (not just set false) when turning it off, so a
-// chatDto() read never has to special-case a stale `false` vs. absent.
+// chatDto() read never has to special-case a stale `false` vs. absent. `sensitive` is a
+// DynamoDB reserved keyword — must go through ExpressionAttributeNames or every call 400s.
 export async function updateChatSensitive(sub: string, chatId: string, sensitive: boolean) {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
     Key: buildChatKey(sub, chatId),
-    UpdateExpression: sensitive ? 'SET sensitive = :s, updatedAt = :u' : 'REMOVE sensitive SET updatedAt = :u',
+    UpdateExpression: sensitive ? 'SET #s = :s, updatedAt = :u' : 'REMOVE #s SET updatedAt = :u',
+    ExpressionAttributeNames: { '#s': 'sensitive' },
     ExpressionAttributeValues: sensitive ? { ':s': true, ':u': new Date().toISOString() } : { ':u': new Date().toISOString() },
   }))
 }
@@ -127,11 +129,13 @@ export async function updateChatSensitive(sub: string, chatId: string, sensitive
 // Toggles the `ephemeral` flag (+ `ttl`). Turning it on stamps a FRESH ttl from now — never
 // resurrects whatever ttl the chat may have had before. Turning it off removes both attributes
 // so DynamoDB's TTL sweep no longer considers the item, and chatDto() has nothing stale to read.
+// `ttl` is also a DynamoDB reserved keyword.
 export async function updateChatEphemeral(sub: string, chatId: string, ephemeral: boolean, ttlSeconds?: number) {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
     Key: buildChatKey(sub, chatId),
-    UpdateExpression: ephemeral ? 'SET ephemeral = :e, ttl = :t, updatedAt = :u' : 'REMOVE ephemeral, ttl SET updatedAt = :u',
+    UpdateExpression: ephemeral ? 'SET ephemeral = :e, #t = :t, updatedAt = :u' : 'REMOVE ephemeral, #t SET updatedAt = :u',
+    ExpressionAttributeNames: { '#t': 'ttl' },
     ExpressionAttributeValues: ephemeral
       ? { ':e': true, ':t': Math.floor(Date.now() / 1000) + (ttlSeconds ?? 604800), ':u': new Date().toISOString() }
       : { ':u': new Date().toISOString() },
