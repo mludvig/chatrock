@@ -43,6 +43,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // header cog; this draft toggle only controls the initial combination.
   const [isPrivateDraft, setIsPrivateDraft] = useState(false)
   const [cogOpen, setCogOpen] = useState(false)
+  const cogRef = useRef<HTMLDivElement>(null)
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -492,10 +493,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // from a previous chat the user made private.
   useEffect(() => { setIsPrivateDraft(false) }, [newChatTick])
 
-  // Close the chat-properties cog popover on any outside click.
+  // Close the chat-properties cog popover on any outside click. Must ignore clicks inside
+  // cogRef (the toggle button included) — React's onClick runs synchronously within the
+  // native bubble phase, so a plain document listener added here is already attached by the
+  // time the SAME click that just opened it continues bubbling up to document, closing it
+  // instantly otherwise.
   useEffect(() => {
     if (!cogOpen) return
-    const close = () => setCogOpen(false)
+    const close = (e: MouseEvent) => {
+      if (cogRef.current?.contains(e.target as Node)) return
+      setCogOpen(false)
+    }
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [cogOpen])
@@ -983,12 +991,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             ))}
           </select>
           {!isNew && activeChat && (
-            <div className="chat-cog" style={{ position: 'relative' }}>
+            <div className="chat-cog" style={{ position: 'relative' }} ref={cogRef}>
               <button className="btn-icon" onClick={() => setCogOpen(v => !v)} title="Chat properties">
                 <FontAwesomeIcon icon={faGear} />
               </button>
               {cogOpen && (
-                <div className="chat-cog-menu" onClick={e => e.stopPropagation()}>
+                <div className="chat-cog-menu">
                   <label className="chat-list-filter-item">
                     <input type="checkbox" checked={!!activeChat.sensitive} onChange={() => handleToggleFlag('sensitive')} />
                     Sensitive (excluded from memory &amp; search)

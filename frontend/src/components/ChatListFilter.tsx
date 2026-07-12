@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFilter } from '@fortawesome/free-solid-svg-icons'
 
@@ -29,16 +29,25 @@ export function applyChatListFilter<T extends { sensitive?: boolean; projectId?:
 export default function ChatListFilter({ filter, showProjectToggle = true }: { filter: ChatListFilterState; showProjectToggle?: boolean }) {
   const [open, setOpen] = useState(false)
   const active = filter.showSensitive || filter.showProjectChats
+  const containerRef = useRef<HTMLDivElement>(null)
 
+  // A plain document 'click' listener also catches the SAME click that just opened this
+  // (React's onClick runs synchronously within the native bubble phase, so the listener
+  // added here is already attached by the time that same click continues bubbling up to
+  // document) — closing it the instant it opens. Guard by ignoring clicks that originated
+  // inside this component (the toggle button included).
   useEffect(() => {
     if (!open) return
-    const close = () => setOpen(false)
+    const close = (e: MouseEvent) => {
+      if (containerRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [open])
 
   return (
-    <div className="chat-list-filter" style={{ position: 'relative' }}>
+    <div className="chat-list-filter" style={{ position: 'relative' }} ref={containerRef}>
       <button
         type="button"
         className={`chat-filter-btn${active ? ' active' : ''}`}
@@ -48,7 +57,7 @@ export default function ChatListFilter({ filter, showProjectToggle = true }: { f
         <FontAwesomeIcon icon={faFilter} /> Filter
       </button>
       {open && (
-        <div className="chat-list-filter-menu" onClick={e => e.stopPropagation()}>
+        <div className="chat-list-filter-menu">
           {showProjectToggle && (
             <label className="chat-list-filter-item">
               <input
