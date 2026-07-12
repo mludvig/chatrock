@@ -29,8 +29,8 @@ variable "jina_api_key" {
   sensitive   = true
 }
 
-variable "private_chat_ttl_seconds" {
-  description = "TTL applied to private/temporary chats at creation (fixed, not sliding). Set low (e.g. 1 day) while testing the expiry/cleanup path."
+variable "ephemeral_chat_ttl_seconds" {
+  description = "TTL applied to ephemeral chats at creation (fixed, not sliding). Set low (e.g. 1 day) while testing the expiry/cleanup path."
   type        = number
   default     = 86400
 }

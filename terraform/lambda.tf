@@ -15,7 +15,7 @@ locals {
     CLOUDFRONT_DOMAIN                   = "https://${var.domain_name}"
     CLOUDFRONT_KEY_PAIR_ID              = aws_cloudfront_public_key.attachments.id
     CLOUDFRONT_PRIVATE_KEY_SSM          = aws_ssm_parameter.cloudfront_attachments_private_key.name
-    PRIVATE_CHAT_TTL_SECONDS            = tostring(var.private_chat_ttl_seconds)
+    EPHEMERAL_CHAT_TTL_SECONDS          = tostring(var.ephemeral_chat_ttl_seconds)
   }
 }
 

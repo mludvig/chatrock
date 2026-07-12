@@ -149,7 +149,7 @@ function projectIdFromRow(row: Record<string, unknown>): string {
 async function chatCorpusItems(sub: string, filterProjectId?: string): Promise<SearchHistoryCorpusItem[]> {
   const rows = await listChats(sub)
   return rows
-    .filter(r => r.isPrivate !== true) // never surfaced via search_history from another chat
+    .filter(r => r.sensitive !== true) // never surfaced via search_history from another chat
     .filter(r => (filterProjectId ? r.projectId === filterProjectId : true))
     .filter(r => typeof r.summary === 'string' && (r.summary as string).trim().length > 0)
     .map(r => ({
