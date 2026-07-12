@@ -46,7 +46,7 @@ test('Chat details dialog toggles Sensitive/Auto-delete independently on an exis
   // Open the Chat details dialog (the cog, always present) and turn Sensitive on.
   await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
   await expect(page.locator('.dialog')).toBeVisible()
-  const sensitiveRow = page.locator('.dialog .pref-row').filter({ hasText: 'Sensitive' })
+  const sensitiveRow = page.locator('.dialog .model-setting-row').filter({ hasText: 'Sensitive' })
   await sensitiveRow.locator('.toggle-btn').click()
 
   // The chat re-fetches and the header title disappears; a private chip appears — visible
@@ -82,6 +82,6 @@ test('Header "Private" button is a one-click shortcut for both flags together', 
 
   // Both flags landed independently-verifiable via the dialog.
   await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
-  await expect(page.locator('.dialog .pref-row').filter({ hasText: 'Sensitive' }).locator('.toggle-btn')).toHaveText('On')
-  await expect(page.locator('.dialog .pref-row').filter({ hasText: 'Auto-delete' }).locator('.toggle-btn')).toHaveText('On')
+  await expect(page.locator('.dialog .model-setting-row').filter({ hasText: 'Sensitive' }).locator('.toggle-btn')).toHaveText('On')
+  await expect(page.locator('.dialog .model-setting-row').filter({ hasText: 'Auto-delete' }).locator('.toggle-btn')).toHaveText('On')
 })

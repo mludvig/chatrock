@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faEyeSlash, faTrash } from '@fortawesome/free-solid-svg-icons'
 import type { Chat, ModelCapabilities, ModelSettings } from '../api/http'
 import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
 import ModelTuningPanel from './ModelTuningPanel'
-import { ToggleRow } from './PrefControls'
 
 interface Props {
   open: boolean
@@ -82,20 +83,6 @@ export default function ChatDetailsDialog({
         </div>
       ) : (
         <div className="prefs-tab-content">
-          <div className="pref-label">Privacy</div>
-          <ToggleRow
-            label="Sensitive"
-            title="Excluded from memory, summaries and search. Masked in the chat list unless revealed."
-            on={sensitive}
-            onToggle={onToggleSensitive}
-          />
-          <ToggleRow
-            label="Auto-delete"
-            title={ephemeral && expiresAt ? `Expires ${new Date(expiresAt).toLocaleString()}.` : 'Deletes itself after a TTL.'}
-            on={ephemeral}
-            onToggle={onToggleEphemeral}
-          />
-
           <div className="pref-section">
             <div className="pref-label">Custom instructions for this chat</div>
             <textarea
@@ -104,6 +91,31 @@ export default function ChatDetailsDialog({
               value={systemPrompt}
               onChange={e => onSystemPromptChange(e.target.value)}
             />
+          </div>
+
+          <div className="model-settings">
+            <div className="pref-label">Privacy</div>
+            <div className="model-setting-row model-setting-row--inline">
+              <label className="setting-label" title="Excluded from memory, summaries and search. Masked in the chat list unless revealed.">
+                <FontAwesomeIcon icon={faEyeSlash} />
+                <span>Sensitive</span>
+              </label>
+              <button className={`toggle-btn${sensitive ? ' active' : ''}`} onClick={onToggleSensitive} title="Toggle sensitive">
+                {sensitive ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="model-setting-row model-setting-row--inline">
+              <label
+                className="setting-label"
+                title={ephemeral && expiresAt ? `Expires ${new Date(expiresAt).toLocaleString()}.` : 'Deletes itself after a TTL.'}
+              >
+                <FontAwesomeIcon icon={faTrash} />
+                <span>Auto-delete</span>
+              </label>
+              <button className={`toggle-btn${ephemeral ? ' active' : ''}`} onClick={onToggleEphemeral} title="Toggle auto-delete">
+                {ephemeral ? 'On' : 'Off'}
+              </button>
+            </div>
           </div>
 
           <ToolsPanel settings={settings} onChange={onSettingsChange} />

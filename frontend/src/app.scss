@@ -1155,12 +1155,21 @@ $header-h: 45px;
   .setting-value {
     margin-left: auto;
     font-weight: 400;
+    font-family: $font;
     color: $text;
     font-size: 12px;
     background: $surface2;
     border: 1px solid $border;
     border-radius: 4px;
     padding: 1px 6px;
+    cursor: default;
+
+    // Rendered as a <button> so a set (non-default) value can be clicked to reset —
+    // disabled (already at default) looks identical to the old plain <span>.
+    &:not(:disabled) {
+      cursor: pointer;
+      &:hover { background: $accent-light; border-color: $accent; color: $accent-h; }
+    }
   }
 }
 
