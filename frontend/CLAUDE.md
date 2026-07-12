@@ -20,11 +20,12 @@ frontend/src/
     ActivityBar.tsx        — 48 px icon rail; four panel-switch buttons (Chats/Projects/Memory/Preferences) + sign-out
     Sidebar.tsx            — thin container; renders ChatsPanel | ProjectsPanel | MemoryPanel | PreferencesPanel per activePanel
     ChatsPanel.tsx         — chat list: navigate, rename, delete, AI retitle; per-item project chip + move-to-project dropdown
+    ChatListFilter.tsx     — shared popover (ChatsPanel + ProjectView): show-sensitive / show-project-chats toggles + applyChatListFilter()
     ProjectsPanel.tsx      — project list: create (inline), rename, delete; click → /p/:projectId
     ProjectView.tsx        — project detail (/p/:projectId): chats list (with summary), file upload/inclusion/delete, project memory, rename; 'New chat' creates chat in project
     MemoryPanel.tsx        — user memories grouped by category; delete; refreshes on memoryRefreshTick
     PreferencesPanel.tsx   — two tabs: Defaults (UserPreferences, 800ms debounce) and This chat (per-chat system prompt + ModelSettings)
-    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; private-chat toggle/tint/footer (see below)
+    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; Private toggle + cog (sensitive/ephemeral)/tint/footer (see below)
     ModelSettingsPanel.tsx — dynamic settings panel (temperature, topP, thinking effort, web search toggle, memory toggle)
     MessageBubble.tsx      — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
     Toaster.tsx            — stacked toast notifications (bottom-center), auto-dismiss 3s
@@ -45,9 +46,11 @@ Per-assistant-turn `thinkingEffort` and `webSearchEnabled` are persisted in Dyna
 
 If a chat's stored model was retired from the backend's `MODELS` registry, the backend already swapped it to the current default and reports it once via `Chat.modelMigratedFrom` (see `backend/CLAUDE.md`). `ChatView.tsx` shows this as a dismissible `.error-banner.warning` banner (the existing `.error-banner` shape with an amber modifier instead of a whole new banner style) right below the header; dismissing calls `clearModelMigrationNotice(chatId)`, which just clears the field locally — the backend never re-sends it once the chat's `model` is valid, so there's nothing to persist.
 
-## Private chats
+## Sensitive & ephemeral chats
 
-Created via a "Private" toggle in `ChatView.tsx`'s header, shown only for `/c/new`; passes `isPrivate: true` to `api.createChat`. Backend excludes them from `GET /api/chats`, so they're deliberately never pushed into the store's `chats` array (`ChatsPanel` renders exactly that array — pushing to it would surface a "private" chat in the list). Instead they live in `chatStore.ts`'s `privateChats: Record<chatId, Chat>` slot (not part of `persist`'s `partialize`, so it doesn't survive a reload — a reload re-fetches via `GET /api/chats/{chatId}` on demand). `ChatView.tsx` resolves `activeChat = chats.find(...) ?? privateChats[chatId]`, which is why every other piece of chat logic (already written against `activeChat`) needed no changes to support private chats. See "Chat deletion & temporary/private chats" in `backend/CLAUDE.md` for the full backend design (TTL, cascade delete, memory/search exclusion).
+Two independent per-chat flags (`Chat.sensitive`, `Chat.ephemeral`+`expiresAt`) — see "Sensitive & ephemeral chats" in `backend/CLAUDE.md` for the full design (why they're separate, what each excludes). A "Private" toggle in `ChatView.tsx`'s header, shown only for `/c/new`, sets both together at creation via `api.createChat(..., {sensitive, ephemeral})`. Once a chat exists, a cog button next to the header's model select opens a small popover to toggle each flag independently through `api.updateChatFlags` — every toggle refetches the chat's DTO afterward (`patchChat`) rather than hand-computing `expiresAt`, since the server owns `ttl` and its fresh-on-enable semantics.
+
+Sensitive chats are returned by `GET /api/chats` like any other chat (no backend exclusion), so they live in the normal Zustand `chats` array — no separate store slot, no fallback fetch. Visibility is purely a frontend filter: `ChatListFilter.tsx` is a shared popover (used by both `ChatsPanel` and `ProjectView`) with a "show sensitive chats" checkbox (default off) folded together with the pre-existing "show project chats" checkbox; `applyChatListFilter()` is the one shared predicate both panels apply, so they can't drift. Revealed sensitive chats render with an italic title (`.chat-item.sensitive`) to set them apart subtly — no separate section/list. The chat header itself never shows a sensitive chat's title (only a discreet "Private" chip); the real title only ever appears in the LHS, gated by the same filter. Visuals: `.chat-view--private` violet tint (header/messages/input area) and a footer line showing `expiresAt` when `ephemeral`.
 
 ## Env vars
 
