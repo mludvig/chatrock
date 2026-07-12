@@ -17,21 +17,20 @@ test('thinking and search results survive page reload', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  // Select a thinking-capable model: Claude Sonnet 4.6
+  // Select a thinking-capable model: Claude Sonnet 5
   const modelSelect = page.locator('.model-select')
-  await modelSelect.selectOption({ label: 'Claude Sonnet 4.6' })
+  await modelSelect.selectOption({ label: 'Claude Sonnet 5' })
 
-  // Open the Preferences panel → This chat tab to enable thinking effort
-  await page.locator('[data-panel="prefs"]').click()
-  await expect(page.locator('.prefs-panel')).toBeVisible({ timeout: 5_000 })
-  await page.locator('.prefs-tab', { hasText: 'This chat' }).click()
+  // Open the Chat details dialog (header cog) to enable thinking effort for this chat
+  await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
+  await expect(page.locator('.dialog-title')).toHaveText('Chat details')
   // Enable thinking by clicking a non-off effort button (e.g. "Low")
-  const lowEffortBtn = page.locator('.model-settings .effort-btn', { hasText: 'Low' })
+  const lowEffortBtn = page.locator('.dialog .model-settings .effort-btn', { hasText: 'Low' })
   if (await lowEffortBtn.isVisible()) {
     await lowEffortBtn.click()
   }
-  // Switch back to chats panel so the message input is accessible
-  await page.locator('[data-panel="chats"]').click()
+  // Close the dialog so the message input is accessible
+  await page.keyboard.press('Escape')
 
   // Send a prompt that will trigger a web search
   const input = page.locator('.message-input')

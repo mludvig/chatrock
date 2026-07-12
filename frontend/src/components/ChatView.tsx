@@ -3,13 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faUserSecret, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
-import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
+import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
+import ChatDetailsDialog from './ChatDetailsDialog'
 
 interface Props {
   accessToken: string
@@ -32,18 +33,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     userPreferences, triggerMemoryRefresh,
     draftModelSettings, draftSystemPrompt,
     setCurrentChatId, setDraftModelSettings, setDraftSystemPrompt,
+    updateChatSettings, updateChatSystemPrompt,
     projects, mergeProjectFiles,
     newChatTick,
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
   const [newModel, setNewModel] = useState(defaultModel)
-  // For /c/new: the "Private" preset toggle — sets BOTH sensitive + ephemeral at creation.
-  // Once the chat exists, sensitive/ephemeral can each be changed independently via the
-  // header cog; this draft toggle only controls the initial combination.
-  const [isPrivateDraft, setIsPrivateDraft] = useState(false)
-  const [cogOpen, setCogOpen] = useState(false)
-  const cogRef = useRef<HTMLDivElement>(null)
+  // For /c/new: draft sensitive/ephemeral flags, independently settable — mirrors the
+  // saved-chat cog exactly (see handleToggleFlag) so the Chat details dialog is the same
+  // component in both states. Included directly in the createChat() flags payload.
+  const [draftSensitive, setDraftSensitive] = useState(false)
+  const [draftEphemeral, setDraftEphemeral] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -92,6 +94,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
   const pendingNewChatIdRef = useRef<string | null>(null)
+  // Debounce refs for the Chat details dialog's system-prompt/model-settings edits
+  // (moved here from the old PreferencesPanel "This chat" tab — same 800ms pattern).
+  const chatInstructionsDebounceRef = useRef<number | null>(null)
+  const chatSettingsDebounceRef = useRef<number | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
@@ -197,6 +203,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     return () => {
       attachments.forEach(a => { if (a.localUrl) URL.revokeObjectURL(a.localUrl) })
+      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
+      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -489,27 +497,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (newChatTick > 0) requestAnimationFrame(() => inputRef.current?.focus())
   }, [newChatTick])
 
-  // Private must default off for every fresh /c/new — it should never silently carry over
-  // from a previous chat the user made private.
-  useEffect(() => { setIsPrivateDraft(false) }, [newChatTick])
+  // Sensitive/ephemeral must default off for every fresh /c/new — they should never
+  // silently carry over from a previous chat the user made sensitive.
+  useEffect(() => { setDraftSensitive(false); setDraftEphemeral(false) }, [newChatTick])
 
-  // Close the chat-properties cog popover on any outside click. Must ignore clicks inside
-  // cogRef (the toggle button included) — React's onClick runs synchronously within the
-  // native bubble phase, so a plain document listener added here is already attached by the
-  // time the SAME click that just opened it continues bubbling up to document, closing it
-  // instantly otherwise.
-  useEffect(() => {
-    if (!cogOpen) return
-    const close = (e: MouseEvent) => {
-      if (cogRef.current?.contains(e.target as Node)) return
-      setCogOpen(false)
-    }
-    document.addEventListener('click', close)
-    return () => document.removeEventListener('click', close)
-  }, [cogOpen])
-
-  // Close the cog when switching chats so it doesn't linger open across navigation.
-  useEffect(() => { setCogOpen(false) }, [chatId])
+  // Close the Chat details dialog when switching chats so it doesn't linger open across
+  // navigation to a different chat.
+  useEffect(() => { setDetailsOpen(false) }, [chatId])
 
   function handleMessagesScroll() {
     const el = messagesRef.current
@@ -817,10 +811,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
       try {
         const newChatId = pendingNewChatIdRef.current ?? newId()
-        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride, { sensitive: isPrivateDraft, ephemeral: isPrivateDraft })
+        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride, { sensitive: draftSensitive, ephemeral: draftEphemeral })
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
-        if (isPrivateDraft) {
+        if (draftSensitive || draftEphemeral) {
           // Fetch the authoritative DTO (with expiresAt) rather than hand-building one, so the
           // footer's expiry date is accurate from the start.
           api.getChat(res.chatId).then(c => useChatStore.getState().addChat(c)).catch(() => {})
@@ -925,6 +919,32 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }))
   }
 
+  // Chat details dialog: custom instructions + model settings. Applies immediately to
+  // local/draft state either way, and debounce-persists to the server for a saved chat
+  // (moved here from the old PreferencesPanel "This chat" tab).
+  function handleChatInstructionsChange(value: string) {
+    if (isNew) {
+      setDraftSystemPrompt(value)
+    } else if (chatId) {
+      updateChatSystemPrompt(chatId, value)
+      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
+      chatInstructionsDebounceRef.current = window.setTimeout(() => {
+        api.updateSystemPrompt(chatId, value).catch(() => {})
+      }, 800)
+    }
+  }
+
+  function handleChatSettingsChange(newSettings: ModelSettings) {
+    setDraftModelSettings(newSettings)
+    if (!isNew && chatId) {
+      updateChatSettings(chatId, newSettings)
+      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
+      chatSettingsDebounceRef.current = window.setTimeout(() => {
+        api.updateChatSettings(chatId, newSettings).catch(() => {})
+      }, 800)
+    }
+  }
+
   // Sensitive/ephemeral are independent per-chat flags (see backend/CLAUDE.md) — toggled from
   // the header cog. Applies the flip optimistically so the checkbox/header respond instantly
   // (the PATCH+GET round trip alone felt like nothing was happening), then reconciles with the
@@ -947,10 +967,46 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }
 
+  // One-click "Private" shortcut in the header — sets both flags together in a single
+  // PATCH rather than two handleToggleFlag calls. The Chat details dialog still exposes
+  // Sensitive/Auto-delete independently for anyone who wants just one.
+  async function handleSetPrivate(next: boolean) {
+    if (isNew) {
+      setDraftSensitive(next)
+      setDraftEphemeral(next)
+      return
+    }
+    if (!chatId || !activeChat) return
+    const prev = { sensitive: activeChat.sensitive, ephemeral: activeChat.ephemeral, expiresAt: activeChat.expiresAt }
+    patchChat(chatId, { sensitive: next || undefined, ephemeral: next || undefined, expiresAt: next ? prev.expiresAt : undefined })
+    try {
+      await api.updateChatFlags(chatId, { sensitive: next, ephemeral: next })
+      const fresh = await api.getChat(chatId)
+      patchChat(chatId, { sensitive: fresh.sensitive, ephemeral: fresh.ephemeral, expiresAt: fresh.expiresAt })
+    } catch (err) {
+      patchChat(chatId, prev)
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  async function handleRenameChat(title: string) {
+    if (!chatId || isNew) return
+    renameChat(chatId, title)
+    try {
+      await api.renameChat(chatId, title)
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
 
+  const sensitive = isNew ? draftSensitive : !!activeChat?.sensitive
+  const ephemeral = isNew ? draftEphemeral : !!activeChat?.ephemeral
+  const isPrivate = sensitive && ephemeral
+
   return (
-    <div className={`chat-view${(isNew ? isPrivateDraft : activeChat?.sensitive) ? ' chat-view--private' : ''}`}>
+    <div className={`chat-view${sensitive ? ' chat-view--private' : ''}`}>
       <div className="chat-header">
         <button className="btn-icon btn-hamburger" onClick={onOpenSidebar} title="Open sidebar">
           <FontAwesomeIcon icon={faBars} />
@@ -960,7 +1016,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             glancing at the screen even while the sidebar is closed. A plain spacer (not a
             hidden h2) fills the same flex:1 slot so header-controls doesn't shift left —
             the real title text never enters the DOM at all, not even visibility:hidden. */}
-        {(isNew ? isPrivateDraft : activeChat?.sensitive)
+        {sensitive
           ? <div className="chat-header-spacer" />
           : <h2>{isNew ? 'New Chat' : (activeChat?.title ?? 'Chat')}</h2>}
         {chatProject && (
@@ -972,24 +1028,25 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <FontAwesomeIcon icon={faFolderOpen} /> {chatProject.name}
           </span>
         )}
-        {!isNew && activeChat?.sensitive && (
+        {/* State indicator, distinct wording from the "Private" action button beside it —
+            reads "Sensitive" unless auto-delete is also on, in which case it matches the
+            button's own label so the two don't look like they disagree. */}
+        {sensitive && (
           <span className="private-chip" title="Sensitive chat — excluded from memory & search, masked in the chat list unless revealed">
-            <FontAwesomeIcon icon={faUserSecret} /> Private
+            <FontAwesomeIcon icon={faUserSecret} /> {ephemeral ? 'Private' : 'Sensitive'}
           </span>
         )}
         <div className="header-controls">
-          {isNew && (
-            <button
-              type="button"
-              className={`btn-private-toggle${isPrivateDraft ? ' active' : ''}`}
-              onClick={() => setIsPrivateDraft(v => !v)}
-              title={isPrivateDraft
-                ? 'Private chat: sensitive + auto-deleted after the TTL. Click to make it a normal chat.'
-                : 'Make this a private chat: excluded from memory & search, masked in the chat list, and auto-deleted after the TTL.'}
-            >
-              <FontAwesomeIcon icon={faUserSecret} /> Private
-            </button>
-          )}
+          <button
+            type="button"
+            className={`btn-private-toggle${isPrivate ? ' active' : ''}`}
+            onClick={() => handleSetPrivate(!isPrivate)}
+            title={isPrivate
+              ? 'Private: sensitive + auto-delete, both on. Click to turn both off.'
+              : 'Quick-set Private: sensitive + auto-delete, both on. Use the chat details dialog to set them independently.'}
+          >
+            <FontAwesomeIcon icon={faUserSecret} /> Private
+          </button>
           <select
             className="model-select"
             value={currentModelId}
@@ -1000,25 +1057,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
-          {!isNew && activeChat && (
-            <div className="chat-cog" style={{ position: 'relative' }} ref={cogRef}>
-              <button className="btn-icon" onClick={() => setCogOpen(v => !v)} title="Chat properties">
-                <FontAwesomeIcon icon={faGear} />
-              </button>
-              {cogOpen && (
-                <div className="chat-cog-menu">
-                  <label className="chat-list-filter-item">
-                    <input type="checkbox" checked={!!activeChat.sensitive} onChange={() => handleToggleFlag('sensitive')} />
-                    Sensitive (excluded from memory &amp; search)
-                  </label>
-                  <label className="chat-list-filter-item">
-                    <input type="checkbox" checked={!!activeChat.ephemeral} onChange={() => handleToggleFlag('ephemeral')} />
-                    Auto-delete{activeChat.ephemeral && activeChat.expiresAt ? ` (${new Date(activeChat.expiresAt).toLocaleDateString()})` : ''}
-                  </label>
-                </div>
-              )}
-            </div>
-          )}
+          <button className="btn-icon" onClick={() => setDetailsOpen(true)} title="Chat details">
+            <FontAwesomeIcon icon={faGear} />
+          </button>
         </div>
       </div>
 
@@ -1103,13 +1144,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           addFiles(Array.from(e.dataTransfer.files))
         }}
       >
-        {(isNew ? isPrivateDraft : (activeChat?.sensitive || activeChat?.ephemeral)) && (
+        {(sensitive || ephemeral) && (
           <div className="private-footer">
             <FontAwesomeIcon icon={faUserSecret} />
-            {isNew
-              ? 'Private chat — excluded from memory & search, masked in the chat list, and auto-deleted.'
-              : activeChat?.ephemeral && activeChat?.expiresAt
-                ? `Expires ${new Date(activeChat.expiresAt).toLocaleString()} unless you delete it sooner.`
+            {sensitive && ephemeral
+              ? (activeChat?.expiresAt ? `Private — sensitive, and expires ${new Date(activeChat.expiresAt).toLocaleString()}.` : 'Private — excluded from memory & search, masked in the chat list, and auto-deleted.')
+              : ephemeral
+                ? (activeChat?.expiresAt ? `Expires ${new Date(activeChat.expiresAt).toLocaleString()} unless you delete it sooner.` : 'This chat will auto-delete after the TTL.')
                 : 'Sensitive chat — excluded from memory & search, masked in the chat list.'}
           </div>
         )}
@@ -1245,6 +1286,24 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           )}
         </div>
       </div>
+
+      <ChatDetailsDialog
+        open={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
+        isNew={isNew}
+        chat={activeChat ?? null}
+        onRename={handleRenameChat}
+        sensitive={sensitive}
+        ephemeral={ephemeral}
+        expiresAt={activeChat?.expiresAt}
+        onToggleSensitive={() => isNew ? setDraftSensitive(v => !v) : handleToggleFlag('sensitive')}
+        onToggleEphemeral={() => isNew ? setDraftEphemeral(v => !v) : handleToggleFlag('ephemeral')}
+        caps={currentCaps}
+        settings={draftModelSettings}
+        onSettingsChange={handleChatSettingsChange}
+        systemPrompt={isNew ? draftSystemPrompt : (activeChat?.systemPrompt ?? '')}
+        onSystemPromptChange={handleChatInstructionsChange}
+      />
     </div>
   )
 }

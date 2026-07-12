@@ -9,7 +9,6 @@ test.describe('AgentCore web search provider', () => {
 
     // Switch the Defaults web search provider to AgentCore
     await page.locator('[data-panel="prefs"]').click()
-    await page.locator('.prefs-tab', { hasText: 'Defaults' }).click()
     await page.locator('.pref-section', { hasText: 'Web search provider' })
       .locator('.effort-btn', { hasText: 'AgentCore' })
       .click()

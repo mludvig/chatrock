@@ -17,28 +17,24 @@ test('Private toggle creates a sensitive+ephemeral chat, hidden from the list un
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
 
-  // No title in the header for a sensitive chat — only the discreet chip.
   await expect(page.locator('.chat-header h2')).toHaveCount(0)
   await expect(page.locator('.chat-header .private-chip')).toBeVisible()
 
-  // Sidebar: no sensitive chats rendered at all while the list filter defaults to off,
-  // even though the API returns this chat like any other.
   await expect(page.locator('.chat-item.sensitive')).toHaveCount(0)
 
-  // Reveal via the filter dialog.
   await page.locator('.chat-list-filter .chat-filter-btn').click()
   await page.getByText('Show sensitive chats').click()
 
   await expect(page.locator('.chat-item.sensitive').first()).toBeVisible({ timeout: 5_000 })
 })
 
-test('Header cog toggles Sensitive/Auto-delete independently on an existing chat', async ({ page }) => {
+test('Chat details dialog toggles Sensitive/Auto-delete independently on an existing chat', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
   await page.locator('.model-select').selectOption({ label: 'Claude Haiku 4.5' })
 
   const input = page.locator('.message-input')
-  await input.fill('Reply with exactly: "Cog test answer."')
+  await input.fill('Reply with exactly: "Chat details test answer."')
   await input.press('Enter')
 
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
@@ -47,20 +43,45 @@ test('Header cog toggles Sensitive/Auto-delete independently on an existing chat
   // A normal chat still shows its title in the header.
   await expect(page.locator('.chat-header h2')).toBeVisible()
 
-  // Open the cog and turn Sensitive on. Click (not .check()) — the toggle round-trips through
-  // a PATCH + GET before the checked state actually flips (no optimistic update), so asserting
-  // via the header title change below is more reliable than racing .check()'s own re-verify.
-  await page.locator('.chat-cog button.btn-icon').click()
-  const sensitiveLabel = page.locator('.chat-cog-menu .chat-list-filter-item').filter({ hasText: 'Sensitive' })
-  await sensitiveLabel.click()
+  // Open the Chat details dialog (the cog, always present) and turn Sensitive on.
+  await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
+  await expect(page.locator('.dialog')).toBeVisible()
+  const sensitiveRow = page.locator('.dialog .pref-row').filter({ hasText: 'Sensitive' })
+  await sensitiveRow.locator('.toggle-btn').click()
 
-  // The chat re-fetches and the header title disappears; a private chip appears.
+  // The chat re-fetches and the header title disappears; a private chip appears — visible
+  // even with the dialog still open, since it sits in the header behind it.
   await expect(page.locator('.chat-header h2')).toHaveCount(0, { timeout: 10_000 })
   await expect(page.locator('.chat-header .private-chip')).toBeVisible()
+  await expect(sensitiveRow.locator('.toggle-btn')).toHaveText('On')
 
-  // Turn it back off — title returns. The cog popover is still open from the click above
-  // (toggling a flag doesn't close it), so no need to re-click the cog button.
-  await sensitiveLabel.click()
+  // Turn it back off — title returns.
+  await sensitiveRow.locator('.toggle-btn').click()
   await expect(page.locator('.chat-header h2')).toBeVisible({ timeout: 10_000 })
   await expect(page.locator('.chat-header .private-chip')).toHaveCount(0)
+
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.dialog')).toHaveCount(0)
+})
+
+test('Header "Private" button is a one-click shortcut for both flags together', async ({ page }) => {
+  await page.goto('/c/new')
+  await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
+  await page.locator('.model-select').selectOption({ label: 'Claude Haiku 4.5' })
+
+  const input = page.locator('.message-input')
+  await input.fill('Reply with exactly: "Private shortcut test answer."')
+  await input.press('Enter')
+
+  await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
+  await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
+
+  await page.locator('.chat-header .btn-private-toggle').click()
+  await expect(page.locator('.chat-header .btn-private-toggle')).toHaveClass(/active/, { timeout: 10_000 })
+  await expect(page.locator('.chat-header .private-chip')).toContainText('Private')
+
+  // Both flags landed independently-verifiable via the dialog.
+  await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
+  await expect(page.locator('.dialog .pref-row').filter({ hasText: 'Sensitive' }).locator('.toggle-btn')).toHaveText('On')
+  await expect(page.locator('.dialog .pref-row').filter({ hasText: 'Auto-delete' }).locator('.toggle-btn')).toHaveText('On')
 })
