@@ -255,6 +255,35 @@ $header-h: 45px;
   &.active { color: $accent; }
 }
 
+.chat-list-filter-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-list-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: $text;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+
+  &:hover { background: $surface2; }
+}
+
 .chat-list {
   flex: 1;
   overflow-y: auto;
@@ -286,6 +315,10 @@ $header-h: 45px;
   }
 
   &:hover .chat-actions { max-width: 120px; }
+
+  // Sensitive chats are visible (revealed by the list filter) but subtly set apart — no
+  // separate section, just a quieter treatment, per "Sensitive & ephemeral chats" design.
+  &.sensitive .chat-title { font-style: italic; }
 }
 
 .chat-item-content {

@@ -166,11 +166,6 @@ export interface UserPreferences {
   topP?: number
   topK?: number
   showTokenStats?: boolean
-  // Chat-list view filters (LHS filter dialog) — client-only display preferences, not
-  // per-chat data. showSensitiveChats defaults to false (the "eye"); hideProjectChats
-  // declutters the main list since project chats are also visible in ProjectView.
-  showSensitiveChats?: boolean
-  hideProjectChats?: boolean
 }
 
 export interface Model {
