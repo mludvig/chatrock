@@ -22,26 +22,23 @@ export function ToggleRow({ label, hint, on, onToggle, title }: {
   )
 }
 
-export function EffortRow<T extends string>({ label, options, value, onChange, format }: {
+export function EffortRow<T extends string>({ label, options, value, onChange, format, title }: {
   label: string
   options: readonly T[]
   value: T
   onChange: (v: T) => void
   format?: (v: T) => string
+  title?: string
 }) {
   return (
     <div className="pref-section">
-      <div className="pref-label">{label}</div>
-      <div className="effort-buttons">
-        {options.map(opt => (
-          <button
-            key={opt}
-            className={`effort-btn${value === opt ? ' active' : ''}`}
-            onClick={() => onChange(opt)}
-          >
-            {format ? format(opt) : opt.charAt(0).toUpperCase() + opt.slice(1)}
-          </button>
-        ))}
+      <div className="pref-row">
+        <span className="pref-row-label" title={title}>{label}</span>
+        <select className="model-select" value={value} onChange={e => onChange(e.target.value as T)} title={title}>
+          {options.map(opt => (
+            <option key={opt} value={opt}>{format ? format(opt) : opt.charAt(0).toUpperCase() + opt.slice(1)}</option>
+          ))}
+        </select>
       </div>
     </div>
   )

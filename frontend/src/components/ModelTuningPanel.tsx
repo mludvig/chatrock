@@ -10,11 +10,13 @@ interface Props {
 }
 
 const ANSWER_LENGTHS = ['default', 'short', 'extensive'] as const
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 // Answer length, thinking effort, and temperature — the controls that shape how the
 // model reasons and writes, as opposed to what it's allowed to call out to (ToolsPanel).
-// Top P is deliberately not offered here — it's rarely worth tuning independently of
-// temperature and was mostly clutter.
+// Same icon+inline row shape as ToolsPanel throughout, so nothing in this dialog looks
+// like it belongs to a different UI. Top P is deliberately not offered here — it's
+// rarely worth tuning independently of temperature and was mostly clutter.
 export default function ModelTuningPanel({ caps, settings, onChange }: Props) {
   function set(patch: Partial<ModelSettings>) {
     onChange({ ...settings, ...patch })
@@ -27,46 +29,32 @@ export default function ModelTuningPanel({ caps, settings, onChange }: Props) {
     <div className="model-settings">
       <div className="pref-label">Model settings</div>
 
-      <div className="model-setting-row">
+      <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label">
           <FontAwesomeIcon icon={faRulerHorizontal} />
           <span>Answer length</span>
-          <span className="setting-value">{answerLength.charAt(0).toUpperCase() + answerLength.slice(1)}</span>
         </label>
-        <div className="effort-buttons">
+        <select className="model-select" value={answerLength} onChange={e => set({ answerLength: e.target.value as typeof answerLength })}>
           {ANSWER_LENGTHS.map(len => (
-            <button
-              key={len}
-              className={`effort-btn${answerLength === len ? ' active' : ''}`}
-              onClick={() => set({ answerLength: len })}
-            >
-              {len.charAt(0).toUpperCase() + len.slice(1)}
-            </button>
+            <option key={len} value={len}>{capitalize(len)}</option>
           ))}
-        </div>
+        </select>
       </div>
 
       {caps.thinking !== 'none' && (
-        <div className="model-setting-row">
+        <div className="model-setting-row model-setting-row--inline">
           <label
             className="setting-label"
             title="This model uses adaptive thinking — 'Off' disables it entirely; Low/Medium/High/Max controls how much effort is spent (token budget). Off → no thinking tokens; Low → minimal reasoning; Max → deep reasoning for hard problems."
           >
             <FontAwesomeIcon icon={faBrain} />
             <span>Thinking effort</span>
-            <span className="setting-value">{effort === 'off' ? 'Off' : effort.charAt(0).toUpperCase() + effort.slice(1)}</span>
           </label>
-          <div className="effort-buttons">
+          <select className="model-select" value={effort} onChange={e => set({ thinkingEffort: e.target.value as typeof effort })}>
             {THINKING_EFFORTS.map(e => (
-              <button
-                key={e}
-                className={`effort-btn${effort === e ? ' active' : ''}`}
-                onClick={() => set({ thinkingEffort: e })}
-              >
-                {e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}
-              </button>
+              <option key={e} value={e}>{e === 'off' ? 'Off' : capitalize(e)}</option>
             ))}
-          </div>
+          </select>
         </div>
       )}
 
@@ -75,7 +63,15 @@ export default function ModelTuningPanel({ caps, settings, onChange }: Props) {
           <label className="setting-label">
             <FontAwesomeIcon icon={faTemperatureHalf} />
             <span>Temperature</span>
-            <span className="setting-value">{settings.temperature?.toFixed(2) ?? 'default'}</span>
+            <button
+              type="button"
+              className="setting-value"
+              disabled={settings.temperature === undefined}
+              onClick={() => set({ temperature: undefined })}
+              title={settings.temperature === undefined ? undefined : 'Click to reset to default'}
+            >
+              {settings.temperature?.toFixed(2) ?? 'default'}
+            </button>
           </label>
           <input
             type="range"

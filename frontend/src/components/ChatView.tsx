@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faUserSecret, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
@@ -1033,7 +1033,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             button's own label so the two don't look like they disagree. */}
         {sensitive && (
           <span className="private-chip" title="Sensitive chat — excluded from memory & search, masked in the chat list unless revealed">
-            <FontAwesomeIcon icon={faUserSecret} /> {ephemeral ? 'Private' : 'Sensitive'}
+            <FontAwesomeIcon icon={faEyeSlash} /> {ephemeral ? 'Private' : 'Sensitive'}
           </span>
         )}
         <div className="header-controls">
@@ -1045,7 +1045,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               ? 'Private: sensitive + auto-delete, both on. Click to turn both off.'
               : 'Quick-set Private: sensitive + auto-delete, both on. Use the chat details dialog to set them independently.'}
           >
-            <FontAwesomeIcon icon={faUserSecret} /> Private
+            <FontAwesomeIcon icon={faEyeSlash} /> Private
           </button>
           <select
             className="model-select"
@@ -1146,7 +1146,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       >
         {(sensitive || ephemeral) && (
           <div className="private-footer">
-            <FontAwesomeIcon icon={faUserSecret} />
+            <FontAwesomeIcon icon={faEyeSlash} />
             {sensitive && ephemeral
               ? (activeChat?.expiresAt ? `Private — sensitive, and expires ${new Date(activeChat.expiresAt).toLocaleString()}.` : 'Private — excluded from memory & search, masked in the chat list, and auto-deleted.')
               : ephemeral
