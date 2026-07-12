@@ -589,6 +589,22 @@ $header-h: 45px;
   flex-shrink: 0;
 }
 
+.chat-cog-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  background: $surface;
+  border: 1px solid $border;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .model-select {
   background: $surface2;
   border: 1px solid $border;

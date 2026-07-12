@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faUserSecret, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faUserSecret, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
 import type { Model, ModelCapabilities, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
@@ -25,7 +25,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const isNew = !chatId || chatId === 'new'
 
   const {
-    chats, clearModelMigrationNotice, messages, streamingMsg,
+    chats, patchChat, clearModelMigrationNotice, messages, streamingMsg,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream,
     renameChat, removeChat, sending, setSending, pushToast,
@@ -42,6 +42,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Once the chat exists, sensitive/ephemeral can each be changed independently via the
   // header cog; this draft toggle only controls the initial combination.
   const [isPrivateDraft, setIsPrivateDraft] = useState(false)
+  const [cogOpen, setCogOpen] = useState(false)
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -491,6 +492,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // from a previous chat the user made private.
   useEffect(() => { setIsPrivateDraft(false) }, [newChatTick])
 
+  // Close the chat-properties cog popover on any outside click.
+  useEffect(() => {
+    if (!cogOpen) return
+    const close = () => setCogOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [cogOpen])
+
+  // Close the cog when switching chats so it doesn't linger open across navigation.
+  useEffect(() => { setCogOpen(false) }, [chatId])
+
   function handleMessagesScroll() {
     const el = messagesRef.current
     if (!el) return
@@ -905,6 +917,22 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }))
   }
 
+  // Sensitive/ephemeral are independent per-chat flags (see backend/CLAUDE.md) — toggled from
+  // the header cog. Refetches the DTO after each PATCH rather than hand-computing expiresAt,
+  // since the server owns ttl (and the fresh-ttl-on-enable semantics). chatDto() omits
+  // sensitive/ephemeral/expiresAt entirely when false/unset, so they're set explicitly here
+  // (as `undefined`) rather than spread — a merge-spread would leave a stale `true` in place.
+  async function handleToggleFlag(flag: 'sensitive' | 'ephemeral') {
+    if (!chatId || isNew || !activeChat) return
+    try {
+      await api.updateChatFlags(chatId, { [flag]: !activeChat[flag] })
+      const fresh = await api.getChat(chatId)
+      patchChat(chatId, { sensitive: fresh.sensitive, ephemeral: fresh.ephemeral, expiresAt: fresh.expiresAt })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
 
   return (
@@ -954,6 +982,25 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
+          {!isNew && activeChat && (
+            <div className="chat-cog" style={{ position: 'relative' }}>
+              <button className="btn-icon" onClick={() => setCogOpen(v => !v)} title="Chat properties">
+                <FontAwesomeIcon icon={faGear} />
+              </button>
+              {cogOpen && (
+                <div className="chat-cog-menu" onClick={e => e.stopPropagation()}>
+                  <label className="chat-list-filter-item">
+                    <input type="checkbox" checked={!!activeChat.sensitive} onChange={() => handleToggleFlag('sensitive')} />
+                    Sensitive (excluded from memory &amp; search)
+                  </label>
+                  <label className="chat-list-filter-item">
+                    <input type="checkbox" checked={!!activeChat.ephemeral} onChange={() => handleToggleFlag('ephemeral')} />
+                    Auto-delete{activeChat.ephemeral && activeChat.expiresAt ? ` (${new Date(activeChat.expiresAt).toLocaleDateString()})` : ''}
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
