@@ -27,10 +27,11 @@ frontend/src/
     PreferencesPanel.tsx   — Defaults only (UserPreferences, 800ms debounce), no tabs — per-chat/per-project overrides live in their own dialogs (see below)
     Dialog.tsx             — shared modal shell (centered card on desktop, full-width bottom sheet on mobile); Esc/backdrop-click to close
     PrefControls.tsx       — ToggleRow / EffortRow — shared row primitives used by PreferencesPanel, ChatDetailsDialog, ProjectDetailsDialog so a toggle looks identical everywhere
-    ChatDetailsDialog.tsx  — rename, Sensitive/Auto-delete, per-chat custom instructions + ModelSettingsPanel, summary/topics; same component for a /c/new draft and a saved chat (see below)
-    ProjectDetailsDialog.tsx — description, instructions, default model + ModelSettingsPanel, project memory toggle
+    ChatDetailsDialog.tsx  — two tabs on a saved chat (Settings, default open; Info — title/summary/topics), no tabs on a /c/new draft (Info has nothing to show pre-send); same component either way (see below)
+    ProjectDetailsDialog.tsx — description, instructions, project memory toggle, default model, ToolsPanel, ModelTuningPanel
     ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; "Private" quick-toggle + model select + cog (opens ChatDetailsDialog)/tint/footer (see below)
-    ModelSettingsPanel.tsx — dynamic settings panel (temperature, topP, thinking effort, web search toggle, memory toggle)
+    ToolsPanel.tsx          — what the model may call out to: web search, browser core/extended, memory, search history, inject-timestamp (all always shown, none capability-gated)
+    ModelTuningPanel.tsx    — how the model reasons/writes: answer length, thinking effort (capability-gated), temperature (capability-gated). No Top P control — dropped as rarely-worth-tuning clutter.
     MessageBubble.tsx      — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
     Toaster.tsx            — stacked toast notifications (bottom-center), auto-dismiss 3s
   env.ts                  — VITE_* env var access
@@ -56,7 +57,9 @@ Per-chat and per-project overrides live in one modal shell (`Dialog.tsx`) instea
 
 `ChatDetailsDialog.tsx` is the *same component* for a `/c/new` draft and a saved chat — it's handed either the draft state (`draftModelSettings`/`draftSystemPrompt`/`draftSensitive`/`draftEphemeral` in `ChatView.tsx`) or the saved chat's fields, and `ChatView.tsx` decides which write path a toggle takes (local state pre-send vs. `api.updateChatFlags`/`updateChatSettings`/`updateSystemPrompt` post-send). The header cog (`title="Chat details"`) is present in both states — there's no separate pre-send "Private" pill that gets swapped out once the chat exists.
 
-`ProjectDetailsDialog.tsx` merges what used to be two independently-editable copies of `description`/`instructions`/`memoryEnabled` (one in the old Preferences "This project" tab, one inline on the project page) into a single editor — that duplication was a real bug (two live editors racing the same DynamoDB field), not just visual clutter.
+A saved chat's dialog splits into two tabs (`.prefs-tabs`, reusing the same tab CSS the old multi-tab `PreferencesPanel` used before it became Defaults-only): **Settings** (default open — Privacy, custom instructions, Tools, Model settings) and **Info** (title, summary, topic chips). A draft has nothing to put in Info yet, so it skips the tab bar entirely and shows Settings content directly. Within Settings, order is deliberate: Privacy first (what this chat is), then how it should behave (custom instructions), then what it can reach for (`ToolsPanel.tsx` — web search, browser, memory, search history, timestamp injection), then how it reasons/writes (`ModelTuningPanel.tsx` — answer length, thinking effort, temperature). Privacy rows use hover tooltips (`title=`) rather than always-visible hint text, matching every other toggle in the dialog.
+
+`ProjectDetailsDialog.tsx` merges what used to be two independently-editable copies of `description`/`instructions`/`memoryEnabled` (one in the old Preferences "This project" tab, one inline on the project page) into a single editor — that duplication was a real bug (two live editors racing the same DynamoDB field), not just visual clutter. It shares `ToolsPanel`/`ModelTuningPanel` with the chat dialog, so a Top P removal or a new tool toggle only needs to happen once.
 
 `PrefControls.tsx` (`ToggleRow`, `EffortRow`) is the shared row shape all three settings surfaces render through, so a toggle looks and behaves identically whether it's in Defaults, a chat's dialog, or a project's dialog.
 

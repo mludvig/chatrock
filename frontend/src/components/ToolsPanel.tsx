@@ -1,83 +1,23 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBrain, faGlobe, faTemperatureHalf, faSlidersH, faMemory, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
-import type { ModelCapabilities, ModelSettings } from '../api/http'
-import { THINKING_EFFORTS } from '../api/http'
+import { faGlobe, faMemory, faMagnifyingGlass, faClock } from '@fortawesome/free-solid-svg-icons'
+import type { ModelSettings } from '../api/http'
 
 interface Props {
-  caps: ModelCapabilities
   settings: ModelSettings
   onChange: (s: ModelSettings) => void
 }
 
-export default function ModelSettingsPanel({ caps, settings, onChange }: Props) {
-  const hasAny = caps.temperature || caps.topP || caps.topK || caps.thinking !== 'none' || true
-  if (!hasAny) return null
-
+// Every capability the model can reach for during a turn — none of these are
+// gated by model capabilities (unlike ModelTuningPanel), so no `caps` prop is needed.
+export default function ToolsPanel({ settings, onChange }: Props) {
   function set(patch: Partial<ModelSettings>) {
     onChange({ ...settings, ...patch })
   }
 
-  const effort = settings.thinkingEffort ?? 'off'
-
   return (
     <div className="model-settings">
-      {caps.temperature && (
-        <div className="model-setting-row">
-          <label className="setting-label">
-            <FontAwesomeIcon icon={faTemperatureHalf} />
-            <span>Temperature</span>
-            <span className="setting-value">{settings.temperature?.toFixed(2) ?? 'default'}</span>
-          </label>
-          <input
-            type="range"
-            className="setting-slider"
-            min={0} max={1} step={0.01}
-            value={settings.temperature ?? 1}
-            onChange={e => set({ temperature: Number(e.target.value) })}
-          />
-        </div>
-      )}
+      <div className="pref-label">Tools</div>
 
-      {caps.topP && (
-        <div className="model-setting-row">
-          <label className="setting-label">
-            <FontAwesomeIcon icon={faSlidersH} />
-            <span>Top P</span>
-            <span className="setting-value">{settings.topP?.toFixed(2) ?? 'default'}</span>
-          </label>
-          <input
-            type="range"
-            className="setting-slider"
-            min={0} max={1} step={0.01}
-            value={settings.topP ?? 1}
-            onChange={e => set({ topP: Number(e.target.value) })}
-          />
-        </div>
-      )}
-
-      {caps.thinking !== 'none' && (
-        <div className="model-setting-row">
-          <label
-            className="setting-label"
-            title="This model uses adaptive thinking — 'Off' disables it entirely; Low/Medium/High/Max controls how much effort is spent (token budget). Off → no thinking tokens; Low → minimal reasoning; Max → deep reasoning for hard problems."
-          >
-            <FontAwesomeIcon icon={faBrain} />
-            <span>Thinking effort</span>
-            <span className="setting-value">{effort === 'off' ? 'Off' : effort.charAt(0).toUpperCase() + effort.slice(1)}</span>
-          </label>
-          <div className="effort-buttons">
-            {THINKING_EFFORTS.map(e => (
-              <button
-                key={e}
-                className={`effort-btn${effort === e ? ' active' : ''}`}
-                onClick={() => set({ thinkingEffort: e })}
-              >
-                {e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Toggle web search (Jina). When off, the model cannot call web_search or web_fetch tools.">
           <FontAwesomeIcon icon={faGlobe} />
@@ -141,6 +81,19 @@ export default function ModelSettingsPanel({ caps, settings, onChange }: Props) 
           title="Toggle search history"
         >
           {settings.searchEnabled !== false ? 'On' : 'Off'}
+        </button>
+      </div>
+      <div className="model-setting-row model-setting-row--inline">
+        <label className="setting-label" title="Inject the current date/time into the system prompt, so the model knows 'now' without you having to say it.">
+          <FontAwesomeIcon icon={faClock} />
+          <span>Inject current timestamp</span>
+        </label>
+        <button
+          className={`toggle-btn${settings.injectCurrentDate !== false ? ' active' : ''}`}
+          onClick={() => set({ injectCurrentDate: settings.injectCurrentDate === false ? true : false })}
+          title="Toggle timestamp injection"
+        >
+          {settings.injectCurrentDate !== false ? 'On' : 'Off'}
         </button>
       </div>
     </div>
