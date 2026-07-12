@@ -926,17 +926,23 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   }
 
   // Sensitive/ephemeral are independent per-chat flags (see backend/CLAUDE.md) — toggled from
-  // the header cog. Refetches the DTO after each PATCH rather than hand-computing expiresAt,
-  // since the server owns ttl (and the fresh-ttl-on-enable semantics). chatDto() omits
+  // the header cog. Applies the flip optimistically so the checkbox/header respond instantly
+  // (the PATCH+GET round trip alone felt like nothing was happening), then reconciles with the
+  // authoritative DTO — needed for expiresAt, which only the server knows (fresh ttl on
+  // enable). Reverts to the pre-toggle values on failure. chatDto() omits
   // sensitive/ephemeral/expiresAt entirely when false/unset, so they're set explicitly here
   // (as `undefined`) rather than spread — a merge-spread would leave a stale `true` in place.
   async function handleToggleFlag(flag: 'sensitive' | 'ephemeral') {
     if (!chatId || isNew || !activeChat) return
+    const prev = { sensitive: activeChat.sensitive, ephemeral: activeChat.ephemeral, expiresAt: activeChat.expiresAt }
+    const next = !activeChat[flag]
+    patchChat(chatId, { ...prev, [flag]: next || undefined, ...(flag === 'ephemeral' && !next ? { expiresAt: undefined } : {}) })
     try {
-      await api.updateChatFlags(chatId, { [flag]: !activeChat[flag] })
+      await api.updateChatFlags(chatId, { [flag]: next })
       const fresh = await api.getChat(chatId)
       patchChat(chatId, { sensitive: fresh.sensitive, ephemeral: fresh.ephemeral, expiresAt: fresh.expiresAt })
     } catch (err) {
+      patchChat(chatId, prev)
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
   }
@@ -951,8 +957,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         </button>
         {/* Sensitive chats never show their title in the header — only in the LHS, gated by
             the "show sensitive" filter. A bold header would announce the topic to anyone
-            glancing at the screen even while the sidebar is closed. */}
-        {!(isNew ? isPrivateDraft : activeChat?.sensitive) && <h2>{isNew ? 'New Chat' : (activeChat?.title ?? 'Chat')}</h2>}
+            glancing at the screen even while the sidebar is closed. A plain spacer (not a
+            hidden h2) fills the same flex:1 slot so header-controls doesn't shift left —
+            the real title text never enters the DOM at all, not even visibility:hidden. */}
+        {(isNew ? isPrivateDraft : activeChat?.sensitive)
+          ? <div className="chat-header-spacer" />
+          : <h2>{isNew ? 'New Chat' : (activeChat?.title ?? 'Chat')}</h2>}
         {chatProject && (
           <span
             className="project-chip"

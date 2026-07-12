@@ -571,8 +571,11 @@ $header-h: 45px;
   background: $surface;
   flex-shrink: 0;
 
-  h2 {
+  h2, .chat-header-spacer {
     flex: 1;
+  }
+
+  h2 {
     font-size: 15px;
     font-weight: 600;
     white-space: nowrap;

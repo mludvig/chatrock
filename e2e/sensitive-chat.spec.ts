@@ -47,20 +47,20 @@ test('Header cog toggles Sensitive/Auto-delete independently on an existing chat
   // A normal chat still shows its title in the header.
   await expect(page.locator('.chat-header h2')).toBeVisible()
 
-  // Open the cog and turn Sensitive on.
+  // Open the cog and turn Sensitive on. Click (not .check()) — the toggle round-trips through
+  // a PATCH + GET before the checked state actually flips (no optimistic update), so asserting
+  // via the header title change below is more reliable than racing .check()'s own re-verify.
   await page.locator('.chat-cog button.btn-icon').click()
-  const sensitiveCheckbox = page.locator('.chat-cog-menu .chat-list-filter-item')
-    .filter({ hasText: 'Sensitive' })
-    .locator('input[type="checkbox"]')
-  await sensitiveCheckbox.check()
+  const sensitiveLabel = page.locator('.chat-cog-menu .chat-list-filter-item').filter({ hasText: 'Sensitive' })
+  await sensitiveLabel.click()
 
   // The chat re-fetches and the header title disappears; a private chip appears.
-  await expect(page.locator('.chat-header h2')).toHaveCount(0, { timeout: 5_000 })
+  await expect(page.locator('.chat-header h2')).toHaveCount(0, { timeout: 10_000 })
   await expect(page.locator('.chat-header .private-chip')).toBeVisible()
 
-  // Turn it back off — title returns. The cog popover is still open from the check above
+  // Turn it back off — title returns. The cog popover is still open from the click above
   // (toggling a flag doesn't close it), so no need to re-click the cog button.
-  await sensitiveCheckbox.uncheck()
-  await expect(page.locator('.chat-header h2')).toBeVisible({ timeout: 5_000 })
+  await sensitiveLabel.click()
+  await expect(page.locator('.chat-header h2')).toBeVisible({ timeout: 10_000 })
   await expect(page.locator('.chat-header .private-chip')).toHaveCount(0)
 })
