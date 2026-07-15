@@ -572,7 +572,10 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
         const hasContinue = isAssistant && onContinue && 'msgId' in message && !!(message as Message).errored
         const hasForkCopy = 'msgId' in message
-        const hasDelete = onDeleteBranch && 'msgId' in message && (message as Message).parentId != null
+        // A root message (parentId null) is only deletable when it has a sibling root to
+        // fall back to — mirrors the backend's "sole root" guard in DELETE /messages/{msgId}.
+        const hasDelete = onDeleteBranch && 'msgId' in message &&
+          ((message as Message).parentId != null || ((message as Message).siblingCount ?? 0) > 1)
         if (!hasSiblings && !hasEdit && !hasRerun && !hasContinue && !hasForkCopy && !hasDelete) return null
 
         const msg = message as Message
