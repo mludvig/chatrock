@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, forwardRef } from 'react'
+import { useState, useEffect, memo, forwardRef, Children, isValidElement } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -110,6 +110,18 @@ const mdComponents = {
       return <code className="inline-code" {...props}>{children}</code>
     }
     return <CodeBlock language={language} code={code} />
+  },
+  // A "loose" list (blank line between items in the source markdown — common in LLM
+  // output) wraps each item's content in a <p>. The hast tree's whitespace-only text
+  // nodes around that <p> survive into React's children, forcing an anonymous block
+  // before it — which pushes the ::marker onto its own line, visually separating "1."
+  // from the item's text. Unwrap a lone <p> child so list items always render "tight".
+  li({ children, ...props }: React.LiHTMLAttributes<HTMLLIElement>) {
+    const kids = Children.toArray(children).filter(c => !(typeof c === 'string' && c.trim() === ''))
+    if (kids.length === 1 && isValidElement<{ children?: React.ReactNode }>(kids[0]) && kids[0].type === 'p') {
+      return <li {...props}>{kids[0].props.children}</li>
+    }
+    return <li {...props}>{children}</li>
   },
 }
 
