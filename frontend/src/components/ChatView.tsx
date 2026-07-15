@@ -81,7 +81,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const messagesRef = useRef<HTMLDivElement>(null)
   // bubble DOM refs for prev/next stepping (C3)
   const bubbleRefsRef = useRef<(HTMLDivElement | null)[]>([])
-  const bubbleIdxRef = useRef(-1)
   const pendingScrollTopRef = useRef(false)
   const justLoadedRef = useRef(false)
   const streamCancelledRef = useRef(false)
@@ -485,7 +484,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     setShowScrollDown(false)
     bubbleRefsRef.current = []
-    bubbleIdxRef.current = -1
     pendingNewChatIdRef.current = null
     clearIdleTimer()
     clearAckTimer()
@@ -523,11 +521,27 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     el.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  // Derive the current bubble from actual scroll position rather than tracking a separate
+  // index — scrollToTop/scrollToBottom/manual scrolling would otherwise leave a stale index
+  // behind, so "prev/next" steps from where the user is actually looking.
+  function currentBubbleIndex(refs: HTMLDivElement[]): number {
+    const container = messagesRef.current
+    if (!container || refs.length === 0) return -1
+    const containerTop = container.getBoundingClientRect().top
+    let best = 0
+    let bestDist = Infinity
+    refs.forEach((el, i) => {
+      const dist = Math.abs(el.getBoundingClientRect().top - containerTop)
+      if (dist < bestDist) { bestDist = dist; best = i }
+    })
+    return best
+  }
+
   function stepBubble(dir: 1 | -1) {
     const refs = bubbleRefsRef.current.filter((el): el is HTMLDivElement => !!el)
     if (refs.length === 0) return
-    const next = Math.max(0, Math.min(refs.length - 1, bubbleIdxRef.current + dir))
-    bubbleIdxRef.current = next
+    const current = currentBubbleIndex(refs)
+    const next = Math.max(0, Math.min(refs.length - 1, current + dir))
     refs[next]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
