@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEyeSlash, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faEyeSlash, faTrash, faHashtag } from '@fortawesome/free-solid-svg-icons'
 import type { Chat, ModelCapabilities, ModelSettings } from '../api/http'
 import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
@@ -17,6 +17,8 @@ interface Props {
   expiresAt?: string
   onToggleSensitive: () => void
   onToggleEphemeral: () => void
+  showTokenStats: boolean
+  onToggleShowTokenStats: () => void
   caps: ModelCapabilities
   settings: ModelSettings
   onSettingsChange: (s: ModelSettings) => void
@@ -29,6 +31,7 @@ type Tab = 'settings' | 'info'
 export default function ChatDetailsDialog({
   open, onClose, isNew, chat, onRename,
   sensitive, ephemeral, expiresAt, onToggleSensitive, onToggleEphemeral,
+  showTokenStats, onToggleShowTokenStats,
   caps, settings, onSettingsChange, systemPrompt, onSystemPromptChange,
 }: Props) {
   // A draft chat has no title/summary yet, so there's nothing for an Info tab to
@@ -114,6 +117,15 @@ export default function ChatDetailsDialog({
               </label>
               <button className={`toggle-btn${ephemeral ? ' active' : ''}`} onClick={onToggleEphemeral} title="Toggle auto-delete">
                 {ephemeral ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="model-setting-row model-setting-row--inline">
+              <label className="setting-label" title="Shows per-message and running-total token counts under bubbles and above the input box. Usage is always recorded regardless of this setting — it only controls whether it's displayed.">
+                <FontAwesomeIcon icon={faHashtag} />
+                <span>Show token stats</span>
+              </label>
+              <button className={`toggle-btn${showTokenStats ? ' active' : ''}`} onClick={onToggleShowTokenStats} title="Toggle token stats display">
+                {showTokenStats ? 'On' : 'Off'}
               </button>
             </div>
           </div>

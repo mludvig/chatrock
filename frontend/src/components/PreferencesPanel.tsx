@@ -132,8 +132,8 @@ export default function PreferencesPanel() {
 
         <ToggleRow
           label="Show token stats"
-          on={prefs.showTokenStats !== false}
-          onToggle={() => patch({ showTokenStats: prefs.showTokenStats === false ? true : false })}
+          on={prefs.showTokenStats === true}
+          onToggle={() => patch({ showTokenStats: prefs.showTokenStats === true ? false : true })}
         />
         <ToggleRow
           label="Inject current timestamp"
