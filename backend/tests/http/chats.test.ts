@@ -499,6 +499,31 @@ test('inc7: delete branch returns 400 when deleting root (no parentId)', async (
   expect(mockDynamo.batchDeleteMessages).not.toHaveBeenCalled()
 })
 
+test('inc7: delete branch allows deleting a root when a sibling root survives, resetting activeLeafId to the survivor', async () => {
+  // Two root-level messages (e.g. an accidental edit forked at the top level): u1 (kept) and
+  // u1b → a1b (to be deleted, currently active). Deleting u1b must succeed and fall back to u1.
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1b' })
+  const rows = [
+    makeRow('u1', null),
+    makeRow('u1b', null),
+    makeRow('a1b', 'u1b'),
+  ]
+  mockDynamo.listMessages.mockResolvedValue(rows)
+  mockDynamo.batchDeleteMessages.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'u1b' }) as any))
+  expect(res.statusCode).toBe(204)
+
+  const deletedKeys = mockDynamo.batchDeleteMessages.mock.calls[0][0] as {PK: string; SK: string}[]
+  const deletedSKs = deletedKeys.map(k => k.SK)
+  expect(deletedSKs.some(sk => sk.endsWith('#u1b'))).toBe(true)
+  expect(deletedSKs.some(sk => sk.endsWith('#a1b'))).toBe(true)
+  expect(deletedSKs.some(sk => sk.endsWith('#u1'))).toBe(false)
+
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledWith('user-1', 'c1', 'u1')
+})
+
 test('inc7: delete branch returns 404 when chat not found', async () => {
   mockDynamo.getChat.mockResolvedValue(undefined)
   const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/messages/{msgId}', undefined, { chatId: 'c1', msgId: 'a1' }) as any))

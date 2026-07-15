@@ -407,8 +407,12 @@ export const handler = async (
     const targetRow = rows.find(r => r.msgId === msgId)
     if (!targetRow) return err(404, 'Message not found')
 
-    // Refuse to delete the root (no parent to reset activeLeafId to)
-    if (targetRow.parentId === null) return err(400, 'Cannot delete the root message')
+    // Refuse to delete a root only when it's the sole root (no parent to reset activeLeafId
+    // to). A root with a sibling root — e.g. an accidental edit that forked at the top level —
+    // is safe to delete: resolveSafeLeaf below falls back to the surviving root's leaf.
+    if (targetRow.parentId === null && !rows.some(r => r.parentId === null && r.msgId !== msgId)) {
+      return err(400, 'Cannot delete the only root message')
+    }
 
     const toDelete = subtreeMsgIds(rows, msgId)
     const toDeleteSet = new Set(toDelete)
@@ -431,8 +435,9 @@ export const handler = async (
     if (activeLeafId && toDeleteSet.has(activeLeafId)) {
       const remainingRows = rows.filter(r => !toDeleteSet.has(r.msgId))
       const newLeaf = resolveSafeLeaf(remainingRows, targetRow.parentId)
-      // remainingRows always has at least the root (deleting the root is refused above),
-      // so newLeaf should never be null here — but guard rather than write a bad value.
+      // remainingRows always has at least one surviving root (deleting the sole root is
+      // refused above), so newLeaf should never be null here — but guard rather than write
+      // a bad value.
       if (newLeaf) await updateChatActiveLeaf(sub, chatId, newLeaf)
     }
 
