@@ -119,6 +119,7 @@ export interface ModelSettings {
   searchEnabled?: boolean
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
+  showTokenStats?: boolean
 }
 
 export interface UserMemory {
@@ -202,6 +203,7 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     browserExtendedEnabled: prev.browserExtendedEnabled ?? legacyBrowserToolEnabled ?? false,
     memoryEnabled: prev.memoryEnabled ?? true,
     searchEnabled: prev.searchEnabled ?? true,
+    ...(prev.showTokenStats !== undefined ? { showTokenStats: prev.showTokenStats } : {}),
   }
 }
 

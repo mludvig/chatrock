@@ -548,7 +548,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
               <FontAwesomeIcon icon={faRobot} />
               {modelShort}
             </span>
-            {showTokenStats !== false && msg.usage && (
+            {showTokenStats && msg.usage && (
               <span className="msg-meta-item">
                 <FontAwesomeIcon icon={faCoins} />
                 {fmtTokens(msg.usage.inputTokens + msg.usage.outputTokens)} tok

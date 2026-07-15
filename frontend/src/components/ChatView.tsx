@@ -112,6 +112,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
     ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
 
+  // Per-chat override wins when set; otherwise fall back to the global default. Usage is
+  // always recorded either way — this only gates whether it's rendered.
+  const effectiveShowTokenStats = draftModelSettings.showTokenStats ?? userPreferences.showTokenStats ?? false
+
   const ALLOWED_TYPES: Record<string, 'image' | 'document'> = {
     'image/png': 'image', 'image/jpeg': 'image', 'image/gif': 'image', 'image/webp': 'image',
     'application/pdf': 'document',
@@ -1114,7 +1118,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               onEditRequest={!isNew ? handleEditRequest : undefined}
               onForkToHere={!isNew ? handleForkToHere : undefined}
               onDeleteBranch={!isNew ? handleDeleteBranch : undefined}
-              showTokenStats={userPreferences.showTokenStats !== false}
+              showTokenStats={effectiveShowTokenStats}
             />
           ))}
           <div ref={bottomRef} />
@@ -1169,8 +1173,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </div>
         )}
 
-        {/* Token stats line — shown when there are any usage stats */}
-        {(lastTurnUsage || conversationUsage) && (
+        {/* Token stats line — usage is always recorded regardless of this toggle;
+            it only controls whether it's displayed. */}
+        {effectiveShowTokenStats && (lastTurnUsage || conversationUsage) && (
           <div className="stats-bar">
             {lastTurnUsage && (
               <UsageStats usage={lastTurnUsage} label="Last:" />
@@ -1312,6 +1317,8 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         expiresAt={activeChat?.expiresAt}
         onToggleSensitive={() => isNew ? setDraftSensitive(v => !v) : handleToggleFlag('sensitive')}
         onToggleEphemeral={() => isNew ? setDraftEphemeral(v => !v) : handleToggleFlag('ephemeral')}
+        showTokenStats={effectiveShowTokenStats}
+        onToggleShowTokenStats={() => handleChatSettingsChange({ ...draftModelSettings, showTokenStats: !effectiveShowTokenStats })}
         caps={currentCaps}
         settings={draftModelSettings}
         onSettingsChange={handleChatSettingsChange}
