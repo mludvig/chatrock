@@ -47,7 +47,7 @@ import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faLightbulb, faRotateRight, faPenToSquare,
   faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile, faPlay,
-  faComments, faMagnifyingGlass, faMemory,
+  faComments, faMagnifyingGlass, faMemory, faImage,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Message, Step, TokenUsage } from '../api/http'
 import { useChatStore } from '../store/chatStore'
@@ -198,6 +198,8 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
     ? `Page: ${safeInput(step.input, 'url')}`
     : step.name === 'browse_web'
     ? `Browse: ${firstBrowserUrl(step.input)}`
+    : step.name === 'generate_image'
+    ? `Image: ${safeInput(step.input, 'prompt')}`
     : step.name === 'read_project_file'
     ? (() => {
         const fid = safeInput(step.input, 'fileId')
@@ -217,7 +219,7 @@ function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streami
   return (
     <div className={`tool-pill${step.isError ? ' error' : pending ? ' pending' : ''}`}>
       <button className="tool-pill-header" onClick={() => !pending && setExpanded(e => !e)}>
-        <FontAwesomeIcon icon={isMemoryTool ? faMemory : step.name === 'search_history' ? faMagnifyingGlass : faGlobe} className="tool-icon" />
+        <FontAwesomeIcon icon={isMemoryTool ? faMemory : step.name === 'search_history' ? faMagnifyingGlass : step.name === 'generate_image' ? faImage : faGlobe} className="tool-icon" />
         <span className="tool-label">{label}</span>
         <FontAwesomeIcon icon={icon} className="tool-status" spin={pending} />
         {!pending && (
