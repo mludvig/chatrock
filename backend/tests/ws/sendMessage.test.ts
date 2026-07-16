@@ -1181,6 +1181,22 @@ test('prefs2: client modelSettings override user preference defaults', async () 
   expect((passedSettings as Record<string, unknown>).webSearchEnabled).toBe(true)
 })
 
+test('prefs2b: client modelSettings.imageGenerationEnabled flows through to converseStream (regression — was silently dropped by the chatPrefs/effectiveModelSettings field allowlist)', async () => {
+  prefsBase()
+  mockDynamo.getUserPrefs.mockResolvedValue({})
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { imageGenerationEnabled: true } }))
+
+  const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
+  expect((passedSettings as Record<string, unknown>).imageGenerationEnabled).toBe(true)
+})
+
 test('prefs3: getUserPrefs failure propagates as a fatal error — converseStream not called', async () => {
   prefsBase()
   mockDynamo.getUserPrefs.mockRejectedValue(new Error('DynamoDB unavailable'))

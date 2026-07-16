@@ -147,6 +147,7 @@ export const buildHandler = (postFn: PostFn) => async (
     browserExtendedEnabled: modelSettings.browserExtendedEnabled,
     memoryEnabled:          modelSettings.memoryEnabled,
     searchEnabled:          modelSettings.searchEnabled,
+    imageGenerationEnabled: modelSettings.imageGenerationEnabled,
     answerLength:           modelSettings.answerLength as UserPreferences['answerLength'],
     injectCurrentDate:      modelSettings.injectCurrentDate,
   }
@@ -162,6 +163,7 @@ export const buildHandler = (postFn: PostFn) => async (
     browserExtendedEnabled: effectivePrefs.browserExtendedEnabled,
     memoryEnabled:          effectivePrefs.memoryEnabled,
     searchEnabled:          effectivePrefs.searchEnabled,
+    imageGenerationEnabled: effectivePrefs.imageGenerationEnabled,
   }
 
   // Build project manifest and forced files (project chats only)

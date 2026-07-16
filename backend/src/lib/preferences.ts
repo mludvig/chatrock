@@ -10,6 +10,7 @@ export interface UserPreferences {
   browserExtendedEnabled?: boolean    // true = enable the scripted browse_web tool
   memoryEnabled?: boolean             // false = skip user memory injection + extraction
   searchEnabled?: boolean             // false = omit the search_history tool from organic tool choice
+  imageGenerationEnabled?: boolean    // true = enable the generate_image tool (opt-in — costs money per call)
   temperature?: number
   topP?: number
   topK?: number
