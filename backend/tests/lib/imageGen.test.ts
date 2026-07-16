@@ -118,6 +118,7 @@ describe('executeGenerateImageTool', () => {
 
     expect(result.status).toBe('success')
     expect(result.content).toEqual([
+      { text: 'a red panda skateboarding' },
       { image: { format: 'png', source: { bytes: expect.any(Uint8Array) } } },
     ])
   })

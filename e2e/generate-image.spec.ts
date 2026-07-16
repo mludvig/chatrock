@@ -40,19 +40,27 @@ test.describe('generate_image tool', () => {
     await expect(pill).not.toHaveClass(/pending/, { timeout: 60_000 })
     await expect(pill).not.toHaveClass(/error/)
 
-    // Expand it and confirm a real thumbnail rendered — never the raw JSON envelope.
-    await pill.locator('.tool-pill-header').click()
+    // generate_image auto-expands (unlike a browser screenshot, the image IS the point) —
+    // confirm a real thumbnail rendered with no click needed, never the raw JSON envelope.
     const thumbnail = pill.locator('.browser-screenshots img').first()
     await expect(thumbnail).toBeVisible({ timeout: 10_000 })
     await expect(pill.locator('.tool-result-body')).not.toContainText('screenshotUrls')
 
+    // The full prompt the model actually used must be visible in the expanded body — not just
+    // the 60-char-truncated pill header label.
+    const promptText = pill.locator('.tool-result-body pre')
+    await expect(promptText).toBeVisible({ timeout: 10_000 })
+    const fullPrompt = (await promptText.textContent()) ?? ''
+    expect(fullPrompt.length).toBeGreaterThan(60)
+    expect(fullPrompt.toLowerCase()).toContain('panda')
+
     await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60_000 })
 
-    // Reload and confirm the same thumbnail still renders via GET /messages (no re-stream).
+    // Reload and confirm the same thumbnail still renders via GET /messages (no re-stream),
+    // still auto-expanded, still with no click needed.
     await page.reload()
     await page.waitForLoadState('networkidle')
     const reloadedPill = page.locator('.tool-pill', { hasText: 'Image:' }).first()
-    await reloadedPill.locator('.tool-pill-header').click()
     await expect(reloadedPill.locator('.browser-screenshots img').first()).toBeVisible({ timeout: 10_000 })
   })
 })
