@@ -4,6 +4,7 @@ import * as projectContextLib from '../../src/lib/projectContext'
 import * as searchLib from '../../src/lib/search'
 import * as gatewayLib from '../../src/lib/agentcore/gateway'
 import * as browserLib from '../../src/lib/agentcore/browser'
+import * as imageGenToolLib from '../../src/lib/imageGen/tool'
 
 // Mock both memory tool executors so we can spy on them without real dynamo calls
 jest.mock('../../src/lib/memory', () => ({
@@ -33,6 +34,12 @@ jest.mock('../../src/lib/agentcore/browser', () => ({
   runBrowserSteps: jest.fn(),
 }))
 
+// Mock the generate_image tool executor so dispatch tests don't hit a real Bedrock call
+jest.mock('../../src/lib/imageGen/tool', () => ({
+  ...jest.requireActual('../../src/lib/imageGen/tool'),
+  executeGenerateImageTool: jest.fn(),
+}))
+
 const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeMemoryTool
 const mockExecuteProjectMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeProjectMemoryTool
 const mockExecuteProjectReadFileTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadFileTool
@@ -40,6 +47,7 @@ const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof 
 const mockExecuteSearchHistoryTool = (searchLib as jest.Mocked<typeof searchLib>).executeSearchHistoryTool
 const mockCallGatewayTool = (gatewayLib as jest.Mocked<typeof gatewayLib>).callGatewayTool
 const mockRunBrowserSteps = (browserLib as jest.Mocked<typeof browserLib>).runBrowserSteps
+const mockExecuteGenerateImageTool = (imageGenToolLib as jest.Mocked<typeof imageGenToolLib>).executeGenerateImageTool
 
 const TEST_CTX = { sub: 'test-user' }
 
@@ -613,6 +621,30 @@ describe('take_screenshot dispatch', () => {
     })
     const result = await executeTool('take_screenshot', { url: 'https://bad.invalid' }, TEST_CTX)
     expect(result.status).toBe('error')
+  })
+})
+
+// ── generate_image dispatch ───────────────────────────────────────────────────
+
+describe('generate_image dispatch', () => {
+  beforeEach(() => {
+    mockExecuteGenerateImageTool.mockClear()
+  })
+
+  it('dispatches to executeGenerateImageTool', async () => {
+    mockExecuteGenerateImageTool.mockResolvedValueOnce({
+      toolUseId: '',
+      content: [{ image: { format: 'png', source: { bytes: Buffer.from('img') } } }],
+      status: 'success',
+    })
+
+    const result = await executeTool('generate_image', { prompt: 'a red panda skateboarding' }, { ...TEST_CTX, chatId: 'chat-1' })
+
+    expect(mockExecuteGenerateImageTool).toHaveBeenCalledWith(
+      { prompt: 'a red panda skateboarding' },
+      { ...TEST_CTX, chatId: 'chat-1' },
+    )
+    expect(result.status).toBe('success')
   })
 })
 

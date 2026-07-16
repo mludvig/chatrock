@@ -9,7 +9,7 @@ import {
   type ToolResultBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
-import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, SEARCH_HISTORY_TOOL, type ToolContext } from './tools'
+import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, SEARCH_HISTORY_TOOL, GENERATE_IMAGE_TOOL, type ToolContext } from './tools'
 import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from './attachments'
@@ -105,6 +105,7 @@ function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[]
   // the tool into the list even if searchEnabled:false, since Bedrock's toolChoice requires the
   // named tool to be present in `tools`.
   if (settings.searchEnabled !== false || ctx?.searchScope) list.push(SEARCH_HISTORY_TOOL)
+  if (settings.imageGenerationEnabled === true) list.push(GENERATE_IMAGE_TOOL)
   if (list.length === 0) return []
   return [...list, CACHE_POINT_TOOL]
 }
@@ -554,7 +555,7 @@ export async function* converseStream(
         if (!bytes) continue
         liveContent.push({ image: { format: format as 'png' | 'jpeg', source: { bytes } } })
         if (ctx?.sub && ctx?.chatId) {
-          const key = `${s3KeyPrefix(ctx.sub, ctx.chatId)}browser-${tu.toolUseId}-${i}.${format}`
+          const key = `${s3KeyPrefix(ctx.sub, ctx.chatId)}${tu.name}-${tu.toolUseId}-${i}.${format}`
           const uri = await putObjectBytes(key, bytes, `image/${format}`)
           persistContent.push({ image: { format: format as 'png' | 'jpeg', source: { s3Location: { uri } } } } as unknown as NonNullable<ToolResultBlock['content']>[number])
           screenshotUrls.push(await signCloudFrontUrl(key))
