@@ -2,7 +2,7 @@
  * End-to-end test: re-run an assistant answer.
  *
  * Scenario:
- *  1. Start a new chat (Sonnet 4.6)
+ *  1. Start a new chat
  *  2. Send a short prompt; wait for streaming to finish
  *  3. Hover the assistant bubble → Re-run button appears
  *  4. Click Re-run → a new answer streams and finalises
@@ -10,13 +10,14 @@
  *  6. Reload → the active-path (re-run) answer is shown, user prompt present
  */
 import { test, expect } from '@playwright/test'
+import { THINKING_MODEL_LABEL } from './testConfig'
 
 test('re-run produces a new answer and persists after reload', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  // Use Sonnet 4.6 (known-good model, no data-retention issues)
-  await page.locator('.model-select').selectOption({ label: 'Claude Sonnet 4.6' })
+  // Known-good model, no data-retention issues
+  await page.locator('.model-select').selectOption({ label: THINKING_MODEL_LABEL })
 
   // Send a short deterministic prompt
   const input = page.locator('.message-input')

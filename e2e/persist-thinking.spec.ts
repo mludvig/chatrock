@@ -2,7 +2,7 @@
  * End-to-end test: thinking + tool call results persist across page reload.
  *
  * Scenario:
- *  1. Start a new chat with a thinking-capable model (Sonnet 4.6)
+ *  1. Start a new chat with a thinking-capable model
  *  2. Send a prompt that forces a web search
  *  3. Verify thinking block + search result cards appear during streaming
  *  4. Wait for streaming to finish
@@ -11,15 +11,16 @@
  *     (this is the regression this increment fixes — previously they disappeared)
  */
 import { test, expect } from '@playwright/test'
+import { THINKING_MODEL_LABEL } from './testConfig'
 
 test('thinking and search results survive page reload', async ({ page }) => {
   // Navigate to a new chat
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  // Select a thinking-capable model: Claude Sonnet 5
+  // Select a thinking-capable model
   const modelSelect = page.locator('.model-select')
-  await modelSelect.selectOption({ label: 'Claude Sonnet 5' })
+  await modelSelect.selectOption({ label: THINKING_MODEL_LABEL })
 
   // Open the Chat details dialog (header cog) to enable thinking effort for this chat
   await page.locator('.chat-header .btn-icon[title="Chat details"]').click()

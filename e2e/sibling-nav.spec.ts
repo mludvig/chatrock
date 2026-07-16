@@ -2,20 +2,21 @@
  * End-to-end test: sibling navigation — ‹ idx/count › arrows switch active branch.
  *
  * Scenario:
- *  1. Start a new chat (Sonnet 4.6), send a short prompt, wait for answer
+ *  1. Start a new chat, send a short prompt, wait for answer
  *  2. Re-run → 2 siblings; assert ‹ 2/2 › appears
  *  3. Click ‹ → assert label changes to ‹ 1/2 › and answer text changes
  *  4. Reload → active branch (1/2) persists, prompt intact
  *  5. Click › → back to 2/2
  */
 import { test, expect } from '@playwright/test'
+import { THINKING_MODEL_LABEL } from './testConfig'
 
 test('sibling navigation switches active branch and persists after reload', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  // Use Sonnet 4.6 (stable, no data-retention issues)
-  await page.locator('.model-select').selectOption({ label: 'Claude Sonnet 4.6' })
+  // Stable, no data-retention issues
+  await page.locator('.model-select').selectOption({ label: THINKING_MODEL_LABEL })
 
   // Send a short prompt
   const input = page.locator('.message-input')

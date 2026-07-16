@@ -8,6 +8,7 @@
  *  4. Reload and confirm the thumbnail still renders via GET /messages
  */
 import { test, expect } from '@playwright/test'
+import { THINKING_MODEL_LABEL } from './testConfig'
 
 test.describe('generate_image tool', () => {
   test.use({ storageState: '.auth/state.json' })
@@ -18,7 +19,7 @@ test.describe('generate_image tool', () => {
 
     // Pin an explicit, known-valid model — a stale persisted lastModel can otherwise trigger
     // a server-side "Invalid model" rejection unrelated to this test.
-    await page.locator('.model-select').selectOption({ label: 'Claude Sonnet 5' })
+    await page.locator('.model-select').selectOption({ label: THINKING_MODEL_LABEL })
 
     // Enable Image generation for this chat (opt-in — off by default)
     await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
