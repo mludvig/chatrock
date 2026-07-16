@@ -21,6 +21,7 @@ export interface ModelSettings {
   browserExtendedEnabled?: boolean                  // true enables the scripted browse_web tool
   memoryEnabled?: boolean                           // false skips injection + extraction
   searchEnabled?: boolean                           // false omits the search_history tool from organic tool choice
+  imageGenerationEnabled?: boolean                  // true enables the generate_image tool (opt-in — costs money per call)
   answerLength?: 'default' | 'short' | 'extensive' // per-chat answer-length override
   injectCurrentDate?: boolean                       // true = prepend timestamp block to user turns
 }

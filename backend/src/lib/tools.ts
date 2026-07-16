@@ -4,6 +4,9 @@ import { executeProjectReadFileTool, executeProjectReadChatTool } from './projec
 import { executeSearchHistoryTool } from './search'
 import { callGatewayTool } from './agentcore/gateway'
 import type { BrowserStep } from './agentcore/browser'
+import { GENERATE_IMAGE_TOOL, executeGenerateImageTool } from './imageGen/tool'
+
+export { GENERATE_IMAGE_TOOL }
 
 // ── Tool execution context ────────────────────────────────────────────────────
 
@@ -369,6 +372,9 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     }
     if (name === 'get_rendered_page') {
       return await executeGetRenderedPageTool(input, ctx)
+    }
+    if (name === 'generate_image') {
+      return await executeGenerateImageTool(input, ctx)
     }
     // The model sometimes tries to call a browse_web step name (e.g. "browser_take_screenshot")
     // as if it were its own top-level tool — give it a self-correcting hint instead of a bare

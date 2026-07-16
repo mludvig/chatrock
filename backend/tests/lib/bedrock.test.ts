@@ -1245,7 +1245,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
 
     expect(mockPutObjectBytes).toHaveBeenCalledTimes(1)
     const [key, bytes, contentType] = mockPutObjectBytes.mock.calls[0]
-    expect(key).toBe(`${s3KeyPrefix(CTX.sub, CTX.chatId)}browser-tu-browse-0.png`)
+    expect(key).toBe(`${s3KeyPrefix(CTX.sub, CTX.chatId)}browse_web-tu-browse-0.png`)
     expect(bytes).toEqual(PNG_BYTES)
     expect(contentType).toBe('image/png')
     expect(mockSignCloudFrontUrl).toHaveBeenCalledWith(key)
@@ -1260,7 +1260,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     }
 
     expect(toolResultChunks).toHaveLength(1)
-    expect(toolResultChunks[0].screenshotUrls).toEqual(['https://cdn.example.com/' + s3KeyPrefix(CTX.sub, CTX.chatId) + 'browser-tu-browse-0.png?sig=x'])
+    expect(toolResultChunks[0].screenshotUrls).toEqual(['https://cdn.example.com/' + s3KeyPrefix(CTX.sub, CTX.chatId) + 'browse_web-tu-browse-0.png?sig=x'])
     // content is the plain joined text trace — parsing it as JSON must NOT succeed/round-trip
     // into a {texts, screenshotUrls} shape; it's just the raw capped text.
     expect(toolResultChunks[0].content).toContain('done')
