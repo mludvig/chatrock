@@ -7,6 +7,7 @@
  */
 import { test, expect } from '@playwright/test'
 import * as path from 'path'
+import { FAST_MODEL_LABEL } from './testConfig'
 
 const PNG_FIXTURE = path.join(__dirname, 'fixtures', 'test-image.png')
 const TXT_FIXTURE = path.join(__dirname, 'fixtures', 'hello.txt')
@@ -17,7 +18,7 @@ const TXT_FIXTURE = path.join(__dirname, 'fixtures', 'hello.txt')
 async function startNewChat(page: import('@playwright/test').Page) {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.model-select').selectOption({ label: 'Claude Haiku 4.5' })
+  await page.locator('.model-select').selectOption({ label: FAST_MODEL_LABEL })
 }
 
 /** Wait for streaming to fully finish. */
