@@ -34,7 +34,14 @@ export async function executeGenerateImageTool(input: Record<string, unknown>, c
     console.log(JSON.stringify({ event: 'generate_image', provider: provider.id, result: 'success', chatId: ctx.chatId }))
     return {
       toolUseId: '',
-      content: [{ image: { format: image.format, source: { bytes: image.bytes } } }] as ToolResultBlock['content'],
+      // The prompt text travels alongside the image (not just in the tool_call input, which
+      // the frontend truncates to a short pill label) — bedrock.ts's existing text+image
+      // tool-result handling threads it through as step.result, so the full prompt renders
+      // via the generic result-text fallback with no new frontend code needed.
+      content: [
+        { text: prompt },
+        { image: { format: image.format, source: { bytes: image.bytes } } },
+      ] as ToolResultBlock['content'],
       status: 'success',
     }
   } catch (err) {

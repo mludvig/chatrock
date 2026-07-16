@@ -175,7 +175,9 @@ function SearchHistoryResultCard({ r }: { r: SearchHistoryResult }) {
 // ── Tool call display ─────────────────────────────────────────────────────────
 
 function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streaming?: boolean }) {
-  const [expanded, setExpanded] = useState(false)
+  // generate_image's whole point IS the image — unlike an incidental browser screenshot,
+  // it shouldn't be hidden behind a click.
+  const [expanded, setExpanded] = useState(() => step.name === 'generate_image')
   const { projectFilesById, chats } = useChatStore()
   const pending = step.result === undefined
   const hasResults = !!step.searchResults?.length
