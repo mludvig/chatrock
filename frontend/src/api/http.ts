@@ -117,6 +117,7 @@ export interface ModelSettings {
   browserExtendedEnabled?: boolean
   memoryEnabled?: boolean
   searchEnabled?: boolean
+  imageGenerationEnabled?: boolean
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
   showTokenStats?: boolean
@@ -203,6 +204,9 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     browserExtendedEnabled: prev.browserExtendedEnabled ?? legacyBrowserToolEnabled ?? false,
     memoryEnabled: prev.memoryEnabled ?? true,
     searchEnabled: prev.searchEnabled ?? true,
+    // Opt-in (unlike the other tools above) — costs money per call, so carry the user's
+    // choice forward rather than defaulting it on.
+    ...(prev.imageGenerationEnabled !== undefined ? { imageGenerationEnabled: prev.imageGenerationEnabled } : {}),
     ...(prev.showTokenStats !== undefined ? { showTokenStats: prev.showTokenStats } : {}),
   }
 }
