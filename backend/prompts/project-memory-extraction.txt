@@ -14,6 +14,7 @@ Capture (only when stated or chosen by the user):
 - constraint: requirements or limits the user imposed
 - fact: details of the user's own environment, customer, accounts, or data
 - glossary: project-specific terms the user introduces (NOT definitions of public products)
+- corrections: user corrected or overrode the AI choice or decision, record if it's likely that a similar mismatch may happen again in the future
 
 Never capture:
 - definitions or descriptions of public products, tools, services, or concepts
