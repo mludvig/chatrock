@@ -2,6 +2,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL } from '../config/models'
+import FILE_SUMMARY_SYSTEM from '../../prompts/file-summary.txt'
 
 const BUCKET = process.env.ATTACHMENTS_BUCKET ?? ''
 const s3 = new S3Client({})
@@ -11,12 +12,6 @@ export interface FileSummary {
   summary: string
   extractedTextKey?: string   // S3 key of .extracted.txt (PDF/text only)
 }
-
-const FILE_SUMMARY_SYSTEM = `You analyze files and produce a JSON object with exactly two fields:
-- "microLabel": ≤10 words describing what this file IS (e.g. "Q3 sales report", "Python utility script", "Architecture diagram")
-- "summary": a detailed-but-concise description (~150 words max) of the file's contents and structure — enough for a reader to decide whether to open the full file. Do NOT include conclusions or answers derived from the content; describe what IS in the file.
-
-Output ONLY valid JSON, no markdown, no explanation.`
 
 /**
  * Summarize a project file using Bedrock.

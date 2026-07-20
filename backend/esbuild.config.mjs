@@ -46,6 +46,7 @@ for (const { name, entry } of handlers) {
     minify: false,
     sourcemap: false,
     external: PLAYWRIGHT_EXTERNAL,
+    loader: { '.txt': 'text' },
   })
 
   await new Promise((resolve, reject) => {

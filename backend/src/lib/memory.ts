@@ -6,6 +6,7 @@ import {
   listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey,
 } from './dynamo'
 import { newId } from './ids'
+import EXTRACTION_SYSTEM_PROMPT from '../../prompts/user-fact-extraction-legacy.txt'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,18 +41,6 @@ export type FullMemOp =
   | { op: 'NOOP'; memId: string }
 
 // ── Extraction ────────────────────────────────────────────────────────────────
-
-const EXTRACTION_SYSTEM_PROMPT = `You extract durable personal facts about the user from conversation transcripts.
-
-Output ONLY a JSON array of objects. Each object must have:
-- "category": one of "identity", "preference", "style", "other"
-- "text": the fact as a concise statement
-
-Rules:
-- Extract ONLY lasting personal facts about the user (e.g. name, location, language, profession, stated preferences, communication style preferences).
-- IGNORE: task-specific content, questions the user asked, temporary context, system instructions, bot responses, anything that is not a durable personal fact about the user.
-- If there are no durable facts, return an empty array: []
-- Return ONLY the JSON array, no explanation, no markdown.`
 
 /**
  * Call Bedrock with the extraction prompt and return structured facts.

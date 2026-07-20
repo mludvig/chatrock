@@ -3,6 +3,7 @@ import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL } from '../config/models'
 import { safeParse } from './enrichment'
 import { listChats, listProjectFiles, listProjects } from './dynamo'
+import SEARCH_HISTORY_SYSTEM_PROMPT from '../../prompts/search-history-ranker.txt'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,20 +28,6 @@ export interface SearchHistoryResult {
 // (FILE_MANIFEST_CAP/CHAT_MANIFEST_CAP). Corpus is assumed pre-ordered most-recent-first
 // (ULID desc / sortByRecent), so slicing keeps the most recent items.
 export const SEARCH_HISTORY_CORPUS_CAP = 200
-
-const SEARCH_HISTORY_SYSTEM_PROMPT = `You are a retrieval ranker over the user's own past chats and project files.
-
-You receive a search query and a corpus of items, one per line, formatted as:
-[<kind>:<id>] <title> :: <topics, comma-separated> :: <summary>
-
-Return ONLY a valid JSON object — no markdown, no explanation:
-{ "results": [{"id": "<kind>:<id> copied exactly from the corpus line>", "reason": "<one short sentence on why this matches>"}, ...] }
-
-Rules:
-- Only include items genuinely relevant to the query — it is fine to return few items, or none.
-- Order results most-relevant first; your order is the ranking.
-- Copy the "id" token exactly as shown in brackets, including the kind prefix.
-- If nothing matches: return { "results": [] }.`
 
 function corpusLine(item: SearchHistoryCorpusItem): string {
   const topics = (item.topics ?? []).join(', ')
