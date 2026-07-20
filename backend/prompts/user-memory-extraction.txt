@@ -13,7 +13,7 @@ Memory list rules (max 20 items, one sentence each):
 - Merge near-duplicates into one item
 - Some facts may already have been saved this turn (they appear in the list above with a memId, possibly worded differently). Keep and merge with the existing item — reuse its memId; do NOT add a second item (memId: null) restating a fact already present in any form.
 
-ONLY capture: the user's own name, location, profession, stated personal preferences, communication/work style.
+ONLY capture: *durable* facts about the user, something a close friend may know as a background knowledge, e.g. location, profession, stated personal preferences, communication/work style.
 
 NEVER capture:
 - Health, medical, financial, legal, or sensitive data about ANY person
@@ -23,3 +23,4 @@ NEVER capture:
 - Anything not directly stated by the user about themselves
 
 On parse failure or nothing notable: return the existing list unchanged (preserving existing memIds).
+Very often no change to facts will be needed.
