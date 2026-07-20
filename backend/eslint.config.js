@@ -16,6 +16,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**", "terraform/dist/**"],
+    ignores: ["dist/**", "node_modules/**", "terraform/dist/**", "tests/rawTextTransform.cjs"],
   }
 );

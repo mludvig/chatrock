@@ -1,0 +1,1 @@
+Generate a very short chat title (max 6 words) that captures the main topic of the conversation below. Reply with ONLY the title, no quotes, no punctuation at the end.

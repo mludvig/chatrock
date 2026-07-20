@@ -2,6 +2,10 @@ import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL, TITLE_MODEL } from '../config/models'
 import { listMessages, updateChatSummary } from './dynamo'
 import { buildActivePath, type TurnRow } from './tree'
+import USER_SYSTEM_PROMPT from '../../prompts/user-memory-extraction.txt'
+import TITLE_PROMPT from '../../prompts/chat-title.txt'
+import SUMMARIZE_CHAT_SYSTEM_PROMPT from '../../prompts/chat-summary.txt'
+import PROJECT_SYSTEM_PROMPT from '../../prompts/project-memory-extraction.txt'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,81 +30,6 @@ export interface ChatSummaryResult {
   summary: string
   topics: string[]
 }
-
-// ── Prompts ──────────────────────────────────────────────────────────────────
-
-const USER_SYSTEM_PROMPT = `You manage a persistent memory list about the user (the person typing the messages).
-
-You receive the current memory list as JSON and a conversation transcript.
-Return ONLY a valid JSON object — no markdown, no explanation:
-{ "memories": [{"memId": "<existing-id or null for new>", "category": "identity|preference|style|other", "text": "<one sentence>"}, ...] }
-Include "title" only when instructed.
-
-Memory list rules (max 20 items, one sentence each):
-- Retain existing items (keep their memId) that remain accurate
-- Update text/category of an existing item (keep memId) when you have better information
-- Omit items contradicted by new info or no longer relevant
-- Add new items (memId: null) for genuinely new durable facts
-- Merge near-duplicates into one item
-- Some facts may already have been saved this turn (they appear in the list above with a memId, possibly worded differently). Keep and merge with the existing item — reuse its memId; do NOT add a second item (memId: null) restating a fact already present in any form.
-
-ONLY capture: the user's own name, location, profession, stated personal preferences, communication/work style.
-
-NEVER capture:
-- Health, medical, financial, legal, or sensitive data about ANY person
-- Information about third parties (patients, clients, subjects being analyzed)
-- Content from documents the user is processing
-- Task content or temporary context
-- Anything not directly stated by the user about themselves
-
-On parse failure or nothing notable: return the existing list unchanged (preserving existing memIds).`
-
-const TITLE_PROMPT = `Generate a very short chat title (max 6 words) that captures the main topic of the conversation below. Reply with ONLY the title, no quotes, no punctuation at the end.`
-
-const SUMMARIZE_CHAT_SYSTEM_PROMPT = `You maintain a running summary and topic list for a chat conversation, updated incrementally after each turn.
-
-You receive the EXISTING summary/topics (empty if this is the first turn) and the LATEST exchange — not the full history.
-Return ONLY a valid JSON object — no markdown, no explanation:
-{ "summary": "<1-3 sentence summary of the conversation as a whole>", "topics": ["<short topic phrase>", ...] }
-
-Rules:
-- Merge the latest exchange into the existing summary/topics — don't discard prior context, but drop topics that are no longer relevant.
-- summary: 1-3 sentences describing what the conversation has covered overall, not just the latest exchange.
-- topics: 2-8 short noun phrases (2-5 words each), specific enough to be useful for search later (e.g. "S3 Athena query tuning", not "AWS").
-- If nothing substantive has been discussed yet (e.g. just a greeting), return { "summary": "", "topics": [] }.`
-
-const PROJECT_SYSTEM_PROMPT = `You manage a persistent memory list about a project. The list accumulates durable facts that are SPECIFIC TO THIS PROJECT and were established or confirmed BY THE USER — the context a new teammate would need to continue this project.
-
-You receive the current memory list as JSON and a conversation transcript with "User:" and "Assistant:" turns.
-Return ONLY a valid JSON object — no markdown, no explanation:
-{ "memories": [{"memId": "<existing-id or null for new>", "category": "decision|convention|fact|constraint|glossary|other", "text": "<one sentence>"}, ...] }
-
-PROVENANCE IS DECISIVE. A memory must come from the USER — something they decided, chose, required, named, or told you about their own project, environment, customer, or data. Do NOT record knowledge the ASSISTANT produced while explaining, teaching, comparing, or summarising a topic, even when it is accurate. When the user asks "what is X" or "explain Y", the assistant's reply is general reference material, NOT a project fact.
-
-LITMUS TEST before adding any item: "Could someone find this in public documentation without knowing this user's project?" If yes, it is general knowledge — DO NOT capture it. Only capture facts that are true *because of this specific project*.
-
-Capture (only when stated or chosen by the user):
-- decision: choices the user made for this project
-- convention: naming/structure the user adopted
-- constraint: requirements or limits the user imposed
-- fact: details of the user's own environment, customer, accounts, or data
-- glossary: project-specific terms the user introduces (NOT definitions of public products)
-
-Never capture:
-- definitions or descriptions of public products, tools, services, or concepts
-- how a technology works in general
-- tutorials, step-by-step explanations, or comparisons the assistant generated
-- temporary task context or conversational pleasantries
-
-Memory list rules (max 20 items, one sentence each):
-- Retain existing items (keep memId) that remain accurate and project-specific
-- Update text/category of an existing item (keep memId) when you have better information
-- Omit items that are not project-specific, are superseded, or are general knowledge
-- Add new items (memId: null) only for genuinely new, user-established project facts
-- Merge near-duplicates into one item
-- Some project facts may already have been saved this turn (they appear in the list above with a memId, possibly worded differently). Keep and merge with the existing item — reuse its memId; do NOT add a second item (memId: null) restating a fact already present in any form.
-
-When the turn contains nothing project-specific from the user: return the existing list unchanged (preserving existing memIds).`
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

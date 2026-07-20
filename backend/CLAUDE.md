@@ -5,6 +5,7 @@ See root `CLAUDE.md` for commands, architecture overview, DynamoDB schema, and k
 ## Backend structure
 
 ```
+backend/prompts/           — system-prompt text files for enrichment/search/summarization/title calls (imported as strings via esbuild's `.txt` loader — see below)
 backend/src/
   config/models.ts        — model registry with capabilities (temperature/topP/topK/thinking/attachments)
   lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8); coalesceMessages + healDanglingToolUse sanitize replayed history before every call
@@ -35,6 +36,8 @@ backend/src/
 ```
 
 Each Lambda is bundled independently by esbuild into `terraform/dist/<name>.zip`.
+
+**Prompt files**: the system prompts for `enrichUserFacts`/`generateChatTitle`/`summarizeChat`/`enrichProjectFacts` (`lib/enrichment.ts`), `extractUserFacts` (`lib/memory.ts`, legacy/unused-in-prod path kept for its tests), `summarizeFile` (`lib/projectFiles.ts`), and `searchHistory` (`lib/search.ts`) live as plain `.txt` files under `backend/prompts/`, not as inline template-literal constants — makes them easy to find and edit without touching TS logic. `esbuild.config.mjs` sets `loader: { '.txt': 'text' }` so `import X from '../../prompts/foo.txt'` inlines the file's contents as a string at build time (a normal rebuild/deploy picks up edits — no runtime file read). `src/types/text-modules.d.ts` declares the `*.txt` module type for `tsc`; `tests/rawTextTransform.cjs` + the `transform` entry in `package.json`'s `jest` config give Jest the same import behavior. Tool-use *descriptions* (`lib/tools.ts`) and `promptAssembly.ts`'s per-fragment directive strings are NOT extracted — they're short, tightly interleaved with conditional/interpolation logic, and easy to find in their one file already.
 
 ## Model capabilities
 
