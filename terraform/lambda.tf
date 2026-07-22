@@ -58,6 +58,25 @@ resource "aws_lambda_permission" "http_messages_apigw" {
   source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
 }
 
+resource "aws_lambda_function" "http_share" {
+  function_name    = "chatrock-http-share-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/http-share.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/http-share.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 15
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "http_share_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.http_share.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.http.execution_arn}/*/*"
+}
+
 resource "aws_lambda_function" "http_models" {
   function_name    = "chatrock-http-models-${var.env}"
   role             = aws_iam_role.lambda.arn

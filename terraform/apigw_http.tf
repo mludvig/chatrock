@@ -66,6 +66,13 @@ resource "aws_apigatewayv2_integration" "http_messages" {
   payload_format_version = "2.0"
 }
 
+resource "aws_apigatewayv2_integration" "http_share" {
+  api_id                 = aws_apigatewayv2_api.http.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.http_share.invoke_arn
+  payload_format_version = "2.0"
+}
+
 resource "aws_apigatewayv2_integration" "http_models" {
   api_id                 = aws_apigatewayv2_api.http.id
   integration_type       = "AWS_PROXY"
@@ -175,6 +182,18 @@ resource "aws_apigatewayv2_route" "messages_list" {
   target             = "integrations/${aws_apigatewayv2_integration.http_messages.id}"
   authorization_type = "JWT"
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+# Public, unauthenticated share renderer — the unguessable ULID shareId is itself the
+# capability (see backend/CLAUDE.md "Chat sharing"), so this route deliberately has NO
+# authorizer, unlike every other /api/* route above. Matches /s/{shareId} including a
+# ".md" suffix (e.g. /s/01abc.md) — a dot doesn't start a new path segment, so the plain
+# (non-greedy) {shareId} param already captures it whole; http/share.ts strips the suffix.
+resource "aws_apigatewayv2_route" "share_get" {
+  api_id    = aws_apigatewayv2_api.http.id
+  route_key = "GET /s/{shareId}"
+  target    = "integrations/${aws_apigatewayv2_integration.http_share.id}"
+  # authorization_type defaults to NONE when omitted
 }
 
 resource "aws_apigatewayv2_route" "models" {
