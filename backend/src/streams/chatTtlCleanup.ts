@@ -1,5 +1,5 @@
 import type { DynamoDBStreamEvent } from 'aws-lambda'
-import { deleteChatMessages } from '../lib/dynamo'
+import { deleteChatMessages, deleteChatShares } from '../lib/dynamo'
 import { deleteChatObjects } from '../lib/attachments'
 
 // Cascade-delete cleanup for chats. Triggered by the DynamoDB Stream (event source mapping's
@@ -20,6 +20,7 @@ export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
     try {
       await deleteChatMessages(chatId)
       await deleteChatObjects(sub, chatId)
+      await deleteChatShares(chatId)
       console.log(JSON.stringify({ event: 'chat_cleanup_cascaded', sub, chatId }))
     } catch (err) {
       console.error(JSON.stringify({ event: 'chat_cleanup_error', sub, chatId, error: String(err) }))

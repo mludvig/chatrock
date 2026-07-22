@@ -1,7 +1,7 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
-import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, updateChatSensitive, updateChatEphemeral, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, updateChatSensitive, updateChatEphemeral, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary, putSharePair, listChatShares, deleteSharePair, buildShareLookupKey, buildShareIndexKey } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
@@ -9,6 +9,7 @@ import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, sub
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { summarizeChatById } from '../lib/enrichment'
+import { groupTurnsToBubbles, filterSteps, renderMarkdown } from '../lib/transcript'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -443,6 +444,112 @@ export const handler = async (
 
     console.log(JSON.stringify({ event: 'branch_deleted', sub, chatId, msgId, deletedCount: toDelete.length }))
     return { statusCode: 204, body: '' }
+  }
+
+  // ── Chat sharing (read-only public links) ──────────────────────────────────
+  // See "Chat sharing" in backend/CLAUDE.md. Public rendering itself lives in http/share.ts
+  // (unauthenticated /s/{shareId}) — everything here is authenticated create/list/revoke, gated
+  // by the same getChat(sub, chatId) ownership check every other chat route uses.
+
+  if (route === 'POST /api/chats/{chatId}/shares') {
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+
+    let body: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(event.body ?? '{}')
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>
+      }
+    } catch {
+      return err(400, 'Invalid JSON body')
+    }
+    const mode = body.mode as string | undefined
+    if (mode !== 'live' && mode !== 'snapshot') return err(400, "mode must be 'live' or 'snapshot'")
+    if (body.includeThinking !== undefined && typeof body.includeThinking !== 'boolean') {
+      return err(400, 'includeThinking must be a boolean')
+    }
+    if (body.includeTools !== undefined && typeof body.includeTools !== 'boolean') {
+      return err(400, 'includeTools must be a boolean')
+    }
+    const includeThinking = body.includeThinking === true
+    const includeTools = body.includeTools === true
+
+    // Snapshot freezes the CURRENT active path's msgIds at creation time. Rendering later
+    // filters listMessages(chatId) down to this set — deletions drop out naturally, additions
+    // never appear, and it's robust even if the original leaf itself later gets deleted.
+    let snapshotMsgIds: string[] | undefined
+    if (mode === 'snapshot') {
+      const rows = (await listMessages(chatId)) as unknown as TurnRow[]
+      const activeLeafId = (chat.activeLeafId as string | undefined) ?? null
+      snapshotMsgIds = buildActivePath(rows, activeLeafId).map(r => r.msgId)
+    }
+
+    const shareId = newId()
+    const now = new Date().toISOString()
+    const lookupItem = {
+      ...buildShareLookupKey(shareId),
+      shareId, sub, chatId, mode, includeThinking, includeTools,
+      ...(snapshotMsgIds ? { snapshotMsgIds } : {}),
+      createdAt: now,
+    }
+    const indexItem = {
+      ...buildShareIndexKey(chatId, shareId),
+      shareId, mode, includeThinking, includeTools, createdAt: now,
+    }
+    await putSharePair(lookupItem, indexItem)
+    console.log(JSON.stringify({ event: 'share_created', sub, chatId, shareId, mode }))
+    return ok({ shareId, mode, includeThinking, includeTools, createdAt: now }, 201)
+  }
+
+  if (route === 'GET /api/chats/{chatId}/shares') {
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+    const items = await listChatShares(chatId)
+    const shares = items.map(i => ({
+      shareId: i.shareId as string,
+      mode: i.mode as 'live' | 'snapshot',
+      includeThinking: i.includeThinking === true,
+      includeTools: i.includeTools === true,
+      createdAt: i.createdAt as string,
+    }))
+    return ok({ shares })
+  }
+
+  if (route === 'DELETE /api/chats/{chatId}/shares/{shareId}') {
+    const shareId = event.pathParameters?.shareId
+    if (!shareId) return err(400, 'Missing shareId')
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+    await deleteSharePair(chatId, shareId)
+    console.log(JSON.stringify({ event: 'share_revoked', sub, chatId, shareId }))
+    return { statusCode: 204, body: '' }
+  }
+
+  if (route === 'GET /api/chats/{chatId}/export') {
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+
+    const includeThinking = event.queryStringParameters?.includeThinking === 'true'
+    const includeTools = event.queryStringParameters?.includeTools === 'true'
+
+    const rows = (await listMessages(chatId)) as unknown as TurnRow[]
+    const activeLeafId = (chat.activeLeafId as string | undefined) ?? null
+    const activePath = buildActivePath(rows, activeLeafId)
+    const { bubbles } = await groupTurnsToBubbles(activePath)
+    const filtered = filterSteps(bubbles, { includeThinking, includeTools })
+    const markdown = renderMarkdown(filtered, { title: (chat.title as string | undefined) ?? 'Chat' })
+
+    console.log(JSON.stringify({ event: 'chat_exported', sub, chatId, includeThinking, includeTools }))
+    const safeTitle = ((chat.title as string | undefined) ?? 'chat').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'chat'
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${safeTitle}.md"`,
+      },
+      body: markdown,
+    }
   }
 
   return err(404, 'Not found')

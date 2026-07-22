@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const handlers = [
 { name: 'http-chats',       entry: 'src/http/chats.ts' },
   { name: 'http-messages',    entry: 'src/http/messages.ts' },
+  { name: 'http-share',       entry: 'src/http/share.ts' },
   { name: 'http-models',      entry: 'src/http/models.ts' },
   { name: 'http-preferences', entry: 'src/http/preferences.ts' },
   { name: 'http-memory',      entry: 'src/http/memory.ts' },
