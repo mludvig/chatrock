@@ -117,6 +117,27 @@ resource "aws_cloudfront_distribution" "chatrock" {
     compress    = true
   }
 
+  # /s/* → HTTP API (public share renderer, no cache, forward Accept for content negotiation).
+  # Deliberately NOT behind the spa_router function (that's attached only to the default
+  # behavior) — a request here must reach the http_share Lambda, never be rewritten to
+  # /index.html, so the share page is self-contained HTML/Markdown straight from the API.
+  ordered_cache_behavior {
+    path_pattern           = "/s/*"
+    target_origin_id       = local.http_api_origin_id
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    forwarded_values {
+      query_string = true
+      headers      = ["Accept"]
+      cookies { forward = "none" }
+    }
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+    compress    = true
+  }
+
   # /attachments/* → S3 attachments (signed URLs only)
   ordered_cache_behavior {
     path_pattern               = "/attachments/*"
