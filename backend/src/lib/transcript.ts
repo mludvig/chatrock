@@ -292,7 +292,10 @@ export function filterSteps(bubbles: RawBubble[], opts: IncludeOpts): RawBubble[
   return bubbles.map(b => ({
     ...b,
     steps: b.steps.filter(s => {
-      if (s.kind === 'thinking') return opts.includeThinking
+      // A redacted/empty thinking block has nothing to show — the live app's ThinkingBlock
+      // already suppresses this case, but the share/export renderers didn't, leaving a
+      // clickable disclosure that reveals nothing.
+      if (s.kind === 'thinking') return opts.includeThinking && s.text.trim().length > 0
       if (s.kind === 'tool') return opts.includeTools
       return true
     }),

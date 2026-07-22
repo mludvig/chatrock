@@ -19,6 +19,22 @@ describe('filterSteps', () => {
     expect(out[0].steps.map(s => s.kind)).toEqual(['text', 'attachment'])
   })
 
+  test('drops an empty/whitespace-only thinking step even when includeThinking is true', () => {
+    const bubbles = [bubble({
+      steps: [
+        { kind: 'thinking', text: '' },
+        { kind: 'thinking', text: '   \n  ' },
+        { kind: 'thinking', text: 'real reasoning' },
+        { kind: 'text', text: 'answer' },
+      ],
+    })]
+    const out = filterSteps(bubbles, { includeThinking: true, includeTools: false })
+    expect(out[0].steps).toEqual([
+      { kind: 'thinking', text: 'real reasoning' },
+      { kind: 'text', text: 'answer' },
+    ])
+  })
+
   test('includeThinking:true, includeTools:false keeps thinking but drops tool', () => {
     const bubbles = [bubble({
       steps: [
