@@ -579,3 +579,72 @@ export async function deleteProjectMemory(projectId: string, memId: string): Pro
 export async function batchDeleteKeys(keys: { PK: string; SK: string }[]): Promise<void> {
   return batchDeleteMessages(keys)
 }
+
+// ── Chat shares (read-only public links) ───────────────────────────────────────
+//
+// Two items per share, written/deleted together (never one without the other):
+//   - Lookup item: PK=SHARE#<shareId> / SK=SHARE#<shareId> — the ONLY key the public,
+//     unauthenticated /s/{shareId} renderer has available (no sub, no chatId to key off).
+//     Carries `sub` + `chatId` so the renderer can call getChat(sub, chatId) as its ownership
+//     gate; a deleted chat then 404s with no content leak.
+//   - Owner index item: PK=CHAT#<chatId> / SK=SHARE#<shareId> — lets the authenticated owner
+//     list/revoke shares for one chat without a table scan or GSI.
+export const buildShareLookupKey = (shareId: string) => ({
+  PK: `SHARE#${shareId}`,
+  SK: `SHARE#${shareId}`,
+})
+
+export const buildShareIndexKey = (chatId: string, shareId: string) => ({
+  PK: `CHAT#${chatId}`,
+  SK: `SHARE#${shareId}`,
+})
+
+export async function putSharePair(lookupItem: Record<string, unknown>, indexItem: Record<string, unknown>) {
+  await ddb.send(new TransactWriteCommand({
+    TransactItems: [
+      { Put: { TableName: TABLE, Item: lookupItem } },
+      { Put: { TableName: TABLE, Item: indexItem } },
+    ],
+  }))
+}
+
+export async function getShare(shareId: string) {
+  const res = await ddb.send(new GetCommand({
+    TableName: TABLE,
+    Key: buildShareLookupKey(shareId),
+  }))
+  return res.Item
+}
+
+export async function listChatShares(chatId: string) {
+  const res = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `CHAT#${chatId}`, ':prefix': 'SHARE#' },
+    ScanIndexForward: false,
+  }))
+  return res.Items ?? []
+}
+
+export async function deleteSharePair(chatId: string, shareId: string) {
+  await ddb.send(new TransactWriteCommand({
+    TransactItems: [
+      { Delete: { TableName: TABLE, Key: buildShareLookupKey(shareId) } },
+      { Delete: { TableName: TABLE, Key: buildShareIndexKey(chatId, shareId) } },
+    ],
+  }))
+}
+
+// Cascade cleanup for a deleted chat's shares (streams/chatTtlCleanup.ts): removes both the
+// CHAT#<chatId>/SHARE# index items and their SHARE#<shareId> lookup partners. Without this,
+// a deleted chat's stale lookup items would linger — harmlessly 404ing forever (getChat gate
+// in http/share.ts), but never actually freed — so this keeps the table from accumulating them.
+export async function deleteChatShares(chatId: string): Promise<void> {
+  const shares = await listChatShares(chatId)
+  if (shares.length === 0) return
+  const keys = shares.flatMap(s => [
+    { PK: s.PK as string, SK: s.SK as string },
+    buildShareLookupKey(s.shareId as string),
+  ])
+  await batchDeleteMessages(keys)
+}

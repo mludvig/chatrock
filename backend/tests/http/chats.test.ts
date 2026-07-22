@@ -1094,3 +1094,167 @@ test('fork resolves a stale source model onto the new chat and self-heals the so
     expect.objectContaining({ model: 'global.anthropic.claude-sonnet-5' })
   )
 })
+
+// ── Chat sharing ───────────────────────────────────────────────────────────────
+
+test('POST /api/chats/{chatId}/shares creates a live share', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', activeLeafId: 'a1' })
+  mockDynamo.putSharePair.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/shares', { mode: 'live', includeThinking: true }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(201)
+  const body = JSON.parse(res.body ?? '{}')
+  expect(typeof body.shareId).toBe('string')
+  expect(body.mode).toBe('live')
+  expect(body.includeThinking).toBe(true)
+  expect(body.includeTools).toBe(false)
+
+  expect(mockDynamo.putSharePair).toHaveBeenCalledWith(
+    expect.objectContaining({ shareId: body.shareId, sub: 'user-1', chatId: 'c1', mode: 'live' }),
+    expect.objectContaining({ shareId: body.shareId, mode: 'live' }),
+  )
+  // Live shares don't need a frozen msgId list
+  expect(mockDynamo.listMessages).not.toHaveBeenCalled()
+})
+
+test('POST /api/chats/{chatId}/shares snapshot freezes the current active path msgIds', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    makeRow('u1', null),
+    { ...makeRow('a1', 'u1'), role: 'assistant' },
+  ])
+  mockDynamo.putSharePair.mockResolvedValue(undefined)
+
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/shares', { mode: 'snapshot' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(201)
+  expect(mockDynamo.putSharePair).toHaveBeenCalledWith(
+    expect.objectContaining({ mode: 'snapshot', snapshotMsgIds: ['u1', 'a1'] }),
+    expect.anything(),
+  )
+})
+
+test('POST /api/chats/{chatId}/shares returns 400 for an invalid mode', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/shares', { mode: 'bogus' }, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(400)
+})
+
+test('POST /api/chats/{chatId}/shares returns 404 if not owned', async () => {
+  mockDynamo.getChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats/{chatId}/shares', { mode: 'live' }, { chatId: 'other' }) as any))
+  expect(res.statusCode).toBe(404)
+})
+
+test('GET /api/chats/{chatId}/shares lists shares for the chat', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.listChatShares.mockResolvedValue([
+    { PK: 'CHAT#c1', SK: 'SHARE#s1', shareId: 's1', mode: 'live', includeThinking: false, includeTools: true, createdAt: 't1' },
+  ])
+  const res = result(await handler(makeEvent('GET', '/api/chats/{chatId}/shares', undefined, { chatId: 'c1' }) as any))
+  expect(res.statusCode).toBe(200)
+  const body = JSON.parse(res.body ?? '{}')
+  expect(body.shares).toEqual([
+    { shareId: 's1', mode: 'live', includeThinking: false, includeTools: true, createdAt: 't1' },
+  ])
+})
+
+test('DELETE /api/chats/{chatId}/shares/{shareId} revokes a share', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
+  mockDynamo.deleteSharePair.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/shares/{shareId}', undefined, { chatId: 'c1', shareId: 's1' }) as any))
+  expect(res.statusCode).toBe(204)
+  expect(mockDynamo.deleteSharePair).toHaveBeenCalledWith('c1', 's1')
+})
+
+test('DELETE /api/chats/{chatId}/shares/{shareId} returns 404 if chat not owned', async () => {
+  mockDynamo.getChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('DELETE', '/api/chats/{chatId}/shares/{shareId}', undefined, { chatId: 'c1', shareId: 's1' }) as any))
+  expect(res.statusCode).toBe(404)
+  expect(mockDynamo.deleteSharePair).not.toHaveBeenCalled()
+})
+
+// ── Markdown export ──────────────────────────────────────────────────────────
+
+test('GET /api/chats/{chatId}/export renders the active path to Markdown with a download header', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat!', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    makeRow('u1', null),
+    { ...makeRow('a1', 'u1'), role: 'assistant', blocks: [{ text: 'hello there' }] },
+  ])
+
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'GET /api/chats/{chatId}/export',
+    pathParameters: { chatId: 'c1' },
+    queryStringParameters: {},
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(200)
+  expect((res.headers as Record<string, string>)['Content-Type']).toBe('text/markdown; charset=utf-8')
+  expect((res.headers as Record<string, string>)['Content-Disposition']).toBe('attachment; filename="my-chat.md"')
+  expect(res.body).toContain('## User')
+  expect(res.body).toContain('## Assistant')
+  expect(res.body).toContain('hello there')
+})
+
+test('GET /api/chats/{chatId}/export excludes thinking/tools by default (clean export)', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    makeRow('u1', null),
+    {
+      ...makeRow('a1', 'u1'), role: 'assistant',
+      blocks: [
+        { reasoningContent: { reasoningText: { text: 'secret reasoning' } } },
+        { toolUse: { toolUseId: 't1', name: 'web_search', input: {} } },
+        { text: 'final answer' },
+      ],
+    },
+  ])
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'GET /api/chats/{chatId}/export',
+    pathParameters: { chatId: 'c1' },
+    queryStringParameters: {},
+  }
+  const res = result(await handler(event as any))
+  expect(res.body).not.toContain('secret reasoning')
+  expect(res.body).not.toContain('web_search')
+  expect(res.body).toContain('final answer')
+})
+
+test('GET /api/chats/{chatId}/export?includeThinking=true&includeTools=true includes them', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    makeRow('u1', null),
+    {
+      ...makeRow('a1', 'u1'), role: 'assistant',
+      blocks: [
+        { reasoningContent: { reasoningText: { text: 'visible reasoning' } } },
+        { toolUse: { toolUseId: 't1', name: 'web_search', input: {} } },
+        { text: 'final answer' },
+      ],
+    },
+  ])
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'GET /api/chats/{chatId}/export',
+    pathParameters: { chatId: 'c1' },
+    queryStringParameters: { includeThinking: 'true', includeTools: 'true' },
+  }
+  const res = result(await handler(event as any))
+  expect(res.body).toContain('visible reasoning')
+  expect(res.body).toContain('web_search')
+  expect(res.body).toContain('final answer')
+})
+
+test('GET /api/chats/{chatId}/export returns 404 if not owned', async () => {
+  mockDynamo.getChat.mockResolvedValue(undefined)
+  const event = {
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+    routeKey: 'GET /api/chats/{chatId}/export',
+    pathParameters: { chatId: 'other' },
+    queryStringParameters: {},
+  }
+  const res = result(await handler(event as any))
+  expect(res.statusCode).toBe(404)
+})
