@@ -184,6 +184,41 @@ resource "aws_apigatewayv2_route" "messages_list" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
+# Authenticated share management (create/list/revoke) — handled by http_chats alongside the
+# rest of the /api/chats/{chatId}/* family. Distinct from the public GET /s/{shareId} renderer
+# below, which deliberately has no authorizer.
+resource "aws_apigatewayv2_route" "shares_create" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/chats/{chatId}/shares"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "shares_list" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/chats/{chatId}/shares"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "shares_delete" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "DELETE /api/chats/{chatId}/shares/{shareId}"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
+resource "aws_apigatewayv2_route" "chat_export" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "GET /api/chats/{chatId}/export"
+  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+}
+
 # Public, unauthenticated share renderer — the unguessable ULID shareId is itself the
 # capability (see backend/CLAUDE.md "Chat sharing"), so this route deliberately has NO
 # authorizer, unlike every other /api/* route above. Matches /s/{shareId} including a
