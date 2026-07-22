@@ -26,6 +26,7 @@
     "@smithy/protocol-http": "^4",
     "@smithy/signature-v4": "^5",
     "aws-jwt-verify": "^4",
+    "marked": "^9.1.6",
     "ulid": "^3.0.2",
     "uuid": "^9"
   },
