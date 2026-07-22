@@ -1970,6 +1970,51 @@ $mobile: 720px;
     line-height: 1.4;
   }
 
+  // Chat details dialog's Share tab: existing share-link list (ShareTab.tsx)
+  .share-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .share-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    background: $surface2;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 6px 8px;
+  }
+
+  .share-list-main {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .share-list-url {
+    font-size: 12px;
+    color: $text;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    &:hover { color: $accent; text-decoration: underline; }
+  }
+
+  .share-list-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
   .saved-indicator {
     font-size: 11px;
     color: $accent;

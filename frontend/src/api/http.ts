@@ -48,6 +48,14 @@ export interface Chat {
   modelMigratedFrom?: string
 }
 
+export interface Share {
+  shareId: string
+  mode: 'live' | 'snapshot'
+  includeThinking: boolean
+  includeTools: boolean
+  createdAt: string
+}
+
 export interface Project {
   projectId: string
   name: string
@@ -273,6 +281,28 @@ export const api = {
     req<void>('DELETE', `/api/projects/${projectId}/files/${fileId}`),
   updateChatSummary: (chatId: string, fields: Partial<Pick<Chat, 'summary' | 'topics'>>) =>
     req<void>('PATCH', `/api/chats/${chatId}`, fields),
+  createShare: (chatId: string, opts: { mode: 'live' | 'snapshot'; includeThinking: boolean; includeTools: boolean }) =>
+    req<Share>('POST', `/api/chats/${chatId}/shares`, opts),
+  listShares: (chatId: string) => req<{ shares: Share[] }>('GET', `/api/chats/${chatId}/shares`),
+  deleteShare: (chatId: string, shareId: string) =>
+    req<void>('DELETE', `/api/chats/${chatId}/shares/${shareId}`),
+}
+
+// Not part of the `api` object above since it returns raw Markdown text (Content-Disposition
+// download), not a JSON body — req() always calls res.json(). Authenticated like every other
+// /api/* call (bearer header); this is the OWNER's private export and is intentionally distinct
+// from the public /s/{shareId} link, where the ULID itself is the credential (see
+// backend/CLAUDE.md "Chat sharing" for why the two must not share an auth model).
+export async function exportChat(chatId: string, opts: { includeThinking: boolean; includeTools: boolean }): Promise<string> {
+  const params = new URLSearchParams({
+    includeThinking: String(opts.includeThinking),
+    includeTools: String(opts.includeTools),
+  })
+  const res = await fetch(`${ENV.apiBaseUrl}/api/chats/${chatId}/export?${params}`, {
+    headers: { Authorization: `Bearer ${_accessToken}` },
+  })
+  if (!res.ok) throw new Error(await res.text().catch(() => String(res.status)))
+  return res.text()
 }
 
 export interface UploadRequest {

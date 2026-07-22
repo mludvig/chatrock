@@ -5,6 +5,7 @@ import type { Chat, ModelCapabilities, ModelSettings } from '../api/http'
 import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
 import ModelTuningPanel from './ModelTuningPanel'
+import ShareTab from './ShareTab'
 
 interface Props {
   open: boolean
@@ -26,7 +27,7 @@ interface Props {
   onSystemPromptChange: (v: string) => void
 }
 
-type Tab = 'settings' | 'info'
+type Tab = 'settings' | 'info' | 'share'
 
 export default function ChatDetailsDialog({
   open, onClose, isNew, chat, onRename,
@@ -43,6 +44,9 @@ export default function ChatDetailsDialog({
   useEffect(() => { if (open) setTitleDraft(chat?.title ?? '') }, [open, chat?.title])
 
   const hasInfo = !isNew
+  // Sharing/export need a persisted chatId to hang share records and messages off of — a
+  // not-yet-saved /c/new draft has nothing to share yet, same reasoning as the Info tab above.
+  const hasShare = !isNew && !!chat?.chatId
 
   return (
     <Dialog open={open} onClose={onClose} title="Chat details">
@@ -54,10 +58,19 @@ export default function ChatDetailsDialog({
           <button className={`prefs-tab${tab === 'info' ? ' active' : ''}`} onClick={() => setTab('info')}>
             Info
           </button>
+          {hasShare && (
+            <button className={`prefs-tab${tab === 'share' ? ' active' : ''}`} onClick={() => setTab('share')}>
+              Share
+            </button>
+          )}
         </div>
       )}
 
-      {hasInfo && tab === 'info' ? (
+      {hasShare && tab === 'share' ? (
+        <div className="prefs-tab-content">
+          <ShareTab chatId={chat!.chatId} chatTitle={chat!.title} />
+        </div>
+      ) : hasInfo && tab === 'info' ? (
         <div className="prefs-tab-content">
           <div className="pref-section">
             <div className="pref-label">Title</div>
