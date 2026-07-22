@@ -27,7 +27,11 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
   useEffect(() => {
     let cancelled = false
     api.listShares(chatId).then(res => { if (!cancelled) setShares(res.shares) })
-      .catch(err => pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) }))
+      .catch(err => {
+        if (cancelled) return
+        pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+        setShares([]) // don't get stuck on "Loading…" forever after a failed fetch
+      })
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId])
