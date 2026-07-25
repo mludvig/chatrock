@@ -43,8 +43,8 @@ export const MODELS: Model[] = [
     capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
   },
   {
-    id: 'global.anthropic.claude-opus-4-8',
-    name: 'Claude Opus 4.8',
+    id: 'global.anthropic.claude-opus-5',
+    name: 'Claude Opus 5',
     capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
   },
   {
