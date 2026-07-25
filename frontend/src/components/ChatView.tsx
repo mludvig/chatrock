@@ -1046,12 +1046,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <FontAwesomeIcon icon={faFolderOpen} /> {chatProject.name}
           </span>
         )}
-        {/* State indicator, distinct wording from the "Private" action button beside it —
-            reads "Sensitive" unless auto-delete is also on, in which case it matches the
-            button's own label so the two don't look like they disagree. */}
-        {sensitive && (
+        {/* Only shown for sensitive-without-ephemeral — once ephemeral is also on, the
+            active "Private" toggle button below already says the same thing, so a
+            second chip here would just repeat it. */}
+        {sensitive && !ephemeral && (
           <span className="private-chip" title="Sensitive chat — excluded from memory & search, masked in the chat list unless revealed">
-            <FontAwesomeIcon icon={faEyeSlash} /> {ephemeral ? 'Private' : 'Sensitive'}
+            <FontAwesomeIcon icon={faEyeSlash} /> Sensitive
           </span>
         )}
         <div className="header-controls">
@@ -1257,7 +1257,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               el.style.height = `${Math.min(el.scrollHeight, 160)}px`
             }}
             onKeyDown={e => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && e.shiftKey) {
                 e.preventDefault()
                 handleSend()
               }
@@ -1299,6 +1299,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               className="btn-send"
               onClick={() => handleSend()}
               disabled={creatingChat || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
+              title="Send (Shift+Enter also submits)"
             >
               <FontAwesomeIcon icon={faPaperPlane} />
             </button>
