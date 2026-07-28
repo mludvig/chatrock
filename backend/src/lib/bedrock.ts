@@ -13,9 +13,10 @@ import { executeTool, WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_P
 import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from './blocks'
 import { getCapabilities, type ModelSettings } from '../config/models'
 import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from './attachments'
+import { ensureBedrockAuth, bedrockRegion } from './bedrockAuth'
 
 export const bedrockClient = new BedrockRuntimeClient({
-  region: process.env.AWS_REGION ?? 'ap-southeast-2',
+  region: bedrockRegion(),
 })
 
 // ── Stream chunk types sent back over WebSocket ───────────────────────────────
@@ -256,6 +257,7 @@ async function* streamOneTurn(
       : {}),
   })
 
+  await ensureBedrockAuth()
   const res = await bedrockClient.send(cmd, ...(abortSignal ? [{ abortSignal }] : []))
   if (!res.stream) throw new Error('No stream in Bedrock response')
 
@@ -626,6 +628,7 @@ export async function converseOnce(
     messages,
     inferenceConfig: { maxTokens: options?.maxTokens ?? 64 },
   })
+  await ensureBedrockAuth()
   const res = await bedrockClient.send(cmd)
   const block = res.output?.message?.content?.[0]
   if (block && 'text' in block) return (block.text ?? '').trim()

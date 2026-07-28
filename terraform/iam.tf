@@ -109,8 +109,11 @@ data "aws_iam_policy_document" "lambda_policy" {
   }
 
   statement {
-    actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.cloudfront_attachments_private_key.arn]
+    actions = ["ssm:GetParameter"]
+    resources = [
+      aws_ssm_parameter.cloudfront_attachments_private_key.arn,
+      aws_ssm_parameter.bedrock_bearer_token.arn,
+    ]
   }
 
   # Caller-side permission for the AgentCore Web Search MCP gateway (see agentcore.tf).
