@@ -35,6 +35,12 @@ variable "bedrock_region" {
   default     = ""
 }
 
+variable "alarm_email" {
+  description = "Email address to subscribe to the chatrock-alerts SNS topic (alarms.tf). Leave empty to create the topic without a subscription — alarms still fire, just nowhere to see them until something is subscribed."
+  type        = string
+  default     = ""
+}
+
 variable "ephemeral_chat_ttl_seconds" {
   description = "TTL applied to ephemeral chats at creation (fixed, not sliding). Set low (e.g. 1 day) while testing the expiry/cleanup path."
   type        = number

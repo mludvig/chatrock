@@ -42,3 +42,8 @@ output "agentcore_gateway_id" {
 output "agentcore_gateway_url" {
   value = aws_bedrockagentcore_gateway.web_search.gateway_url
 }
+
+output "alerts_sns_topic_arn" {
+  description = "Subscribe additional endpoints (SMS, Lambda, Slack via chatbot, etc.) beyond var.alarm_email here — see alarms.tf"
+  value       = aws_sns_topic.alerts.arn
+}
