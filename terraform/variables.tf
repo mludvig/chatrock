@@ -29,6 +29,12 @@ variable "jina_api_key" {
   sensitive   = true
 }
 
+variable "bedrock_region" {
+  description = "AWS region for Bedrock calls only (ConverseStream/Converse), independent of aws_region. Useful when bedrock_bearer_token (see ssm.tf) points at an account whose Bedrock access lives in a different region. Empty (default) falls back to aws_region."
+  type        = string
+  default     = ""
+}
+
 variable "ephemeral_chat_ttl_seconds" {
   description = "TTL applied to ephemeral chats at creation (fixed, not sliding). Set low (e.g. 1 day) while testing the expiry/cleanup path."
   type        = number

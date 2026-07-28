@@ -1,5 +1,6 @@
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime'
 import type { GeneratedImage, ImageGenRequest, ImageProvider } from '../registry'
+import { ensureBedrockAuth } from '../../bedrockAuth'
 
 // Stability's Stable Image models are only offered as an on-demand Bedrock foundation model
 // in us-west-2 as of July 2026 — confirmed absent from ap-southeast-2 (where this backend
@@ -41,6 +42,7 @@ export const bedrockStabilityProvider: ImageProvider = {
     if (req.negativePrompt) body.negative_prompt = req.negativePrompt
     if (req.aspectRatio && ASPECT_RATIOS.includes(req.aspectRatio)) body.aspect_ratio = req.aspectRatio
 
+    await ensureBedrockAuth()
     const res = await stabilityClient.send(new InvokeModelCommand({
       modelId: MODEL_ID,
       body: JSON.stringify(body),
