@@ -20,6 +20,11 @@ interface Props {
   onOpenSidebar: () => void
 }
 
+// Mirrors the $mobile breakpoint in app.scss — below it, the on-screen keyboard makes
+// Shift+Enter awkward to reach, so Enter always inserts a newline and the send button
+// (or its arrow) is the only way to submit.
+const isMobileViewport = () => window.matchMedia('(max-width: 720px)').matches
+
 export default function ChatView({ accessToken, models, defaultModel, onModelChange, onOpenSidebar }: Props) {
   const { chatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
@@ -1257,10 +1262,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               el.style.height = `${Math.min(el.scrollHeight, 160)}px`
             }}
             onKeyDown={e => {
-              if (e.key === 'Enter' && e.shiftKey) {
-                e.preventDefault()
-                handleSend()
-              }
+              if (e.key !== 'Enter' || isMobileViewport()) return
+              if (e.shiftKey) return // newline
+              e.preventDefault()
+              handleSend()
             }}
             onPaste={e => {
               const items = Array.from(e.clipboardData.items)
@@ -1299,7 +1304,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               className="btn-send"
               onClick={() => handleSend()}
               disabled={creatingChat || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
-              title="Send (Shift+Enter also submits)"
+              title={isMobileViewport() ? 'Send' : 'Send (Enter to submit, Shift+Enter for a new line)'}
             >
               <FontAwesomeIcon icon={faPaperPlane} />
             </button>
