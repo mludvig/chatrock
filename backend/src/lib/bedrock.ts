@@ -600,15 +600,28 @@ export async function* converseStream(
       break
     }
     const chunk = value as StreamChunk
-    if (chunk.type !== 'turn' && chunk.type !== 'usage') {
+    // Only forward text — tool_call_start/tool_call chunks are swallowed: nothing this
+    // round ever executes (see below), so showing the client a tool card with no
+    // matching result would leave it spinning forever.
+    if (chunk.type === 'delta' || chunk.type === 'thinking_delta') {
       yield chunk
     }
   }
 
   if (finalResult) {
     if (finalResult.usage) yield { type: 'usage', usage: finalResult.usage }
-    yield { type: 'turn', role: 'assistant', content: finalResult.content, turnIndex }
-    yield { type: 'stop', stopReason: finalResult.stopReason }
+    // The model may still request a tool here even though nothing will run it. A turn
+    // with a toolUse block gets held as "pending" by sendMessage.ts until it's paired
+    // with a tool-result turn — which will never come — so it's silently dropped when
+    // 'stop' fires right after, ending the chat with no visible or persisted answer.
+    // Strip any toolUse blocks and guarantee there's always visible text to persist.
+    const finalContent = finalResult.content.filter(b => !('toolUse' in b))
+    const hasText = finalContent.some(b => 'text' in b && (b as { text?: string }).text)
+    if (!hasText) {
+      finalContent.push({ text: "I've reached my research step limit for this turn. Here's what I found before stopping — let me know if you'd like me to continue." })
+    }
+    yield { type: 'turn', role: 'assistant', content: finalContent, turnIndex }
+    yield { type: 'stop', stopReason: finalResult.stopReason === 'tool_use' ? 'max_rounds' : finalResult.stopReason }
   } else {
     yield { type: 'stop', stopReason: 'max_rounds' }
   }
