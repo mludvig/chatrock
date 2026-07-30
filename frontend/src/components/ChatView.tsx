@@ -1074,7 +1074,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             className="model-select"
             value={currentModelId}
             onChange={e => handleModelChange(e.target.value)}
-            disabled={sending}
           >
             {models.map(m => (
               <option key={m.id} value={m.id}>{m.name}</option>
@@ -1278,7 +1277,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
                 addFiles(files)
               }
             }}
-            disabled={sending || creatingChat}
+            disabled={creatingChat}
             autoFocus
           />
           {currentCaps?.attachments && (
