@@ -385,6 +385,70 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
   expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
 })
 
+// ── Option 2 fix: final call still requests tool_use with no text ────────────
+//
+// If the forced-final call itself returns another tool_use (no text at all), the loop
+// must not leave the model's dangling toolUse block in the persisted turn — that turn
+// would then be held "pending" by sendMessage.ts forever (paired tool-result never
+// comes), silently dropping the whole answer. converseStream must strip the toolUse
+// block and guarantee a visible/persisted text turn instead.
+
+test('final forced call itself returns tool_use with no text: toolUse stripped, fallback text synthesized, no tool_call chunks forwarded', async () => {
+  const MAX = 8
+
+  for (let i = 0; i < MAX; i++) {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: `tu-${i}`, name: 'web_search' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"x"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({
+      toolUseId: `tu-${i}`,
+      content: [{ text: 'result' }],
+      status: 'success',
+    })
+  }
+
+  // Forced-answer round: model still wants a tool, no text at all
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-final', name: 'web_search' } } } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"y"}' } } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'tool_use' } },
+    { metadata: { usage: { inputTokens: 50, outputTokens: 10 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {})) {
+    chunks.push(chunk)
+  }
+
+  // No tool_call/tool_call_start chunks forwarded for the un-executed final round
+  // (the MAX prior rounds legitimately forward their own, real, executed tool calls)
+  const finalRoundToolCallChunks = chunks.filter(c => {
+    const rec = c as { type: string; toolUseId?: string }
+    return (rec.type === 'tool_call' || rec.type === 'tool_call_start') && rec.toolUseId === 'tu-final'
+  })
+  expect(finalRoundToolCallChunks).toHaveLength(0)
+
+  // The final persisted turn has no toolUse block and does have fallback text
+  const turnChunks = chunks.filter(c => (c as { type: string }).type === 'turn') as
+    Array<{ type: string; role: string; content: Array<Record<string, unknown>> }>
+  const finalTurn = turnChunks[turnChunks.length - 1]
+  expect(finalTurn.content.some(b => 'toolUse' in b)).toBe(false)
+  expect(finalTurn.content.some(b => 'text' in b && b.text)).toBe(true)
+
+  // Stop reason reflects round exhaustion, not a raw 'tool_use' that nothing will act on
+  const stopChunk = chunks.find(c => (c as { type: string }).type === 'stop') as
+    { type: string; stopReason: string } | undefined
+  expect(stopChunk).toBeDefined()
+  expect(stopChunk!.stopReason).toBe('max_rounds')
+
+  expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
+})
+
 // ── F2: webSearchEnabled:false passes no toolConfig to Bedrock ──────────────────────
 
 test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the Bedrock request', async () => {
