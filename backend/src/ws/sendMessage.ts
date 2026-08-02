@@ -2,7 +2,7 @@ import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
-import type { Message, ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Block, NeutralMessage } from '../lib/llm/blocks'
 import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
@@ -15,11 +15,11 @@ import { reconcileMemoryList } from '../lib/memory'
 import { enrichUserFacts, enrichProjectFacts, generateChatTitle, summarizeChat } from '../lib/enrichment'
 import { fetchS3Text } from '../lib/projectFiles'
 
-function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: ContentBlock): ContentBlock[] {
-  const attachBlocks: ContentBlock[] = attachments.map(a => attachmentBlock(a))
-  const prefix: ContentBlock[] = tsBlock ? [tsBlock] : []
-  if (content) return [...prefix, { text: content }, ...attachBlocks]
-  // No text — attachment-only send: Bedrock rejects blank/whitespace text blocks
+function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: Block): Block[] {
+  const attachBlocks: Block[] = attachments.map(a => attachmentBlock(a))
+  const prefix: Block[] = tsBlock ? [tsBlock] : []
+  if (content) return [...prefix, { kind: 'text', text: content }, ...attachBlocks]
+  // No text — attachment-only send: providers reject blank/whitespace text blocks
   return [...prefix, ...attachBlocks]
 }
 
@@ -272,8 +272,8 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Timestamp block: prepended to new user turns when injectCurrentDate is enabled.
   // Stored permanently in DDB; the model reads the actual send time for each turn.
-  const makeTsBlock = (): ContentBlock | undefined =>
-    effectivePrefs.injectCurrentDate ? { text: `Current timestamp: ${new Date().toISOString()}` } : undefined
+  const makeTsBlock = (): Block | undefined =>
+    effectivePrefs.injectCurrentDate ? { kind: 'text', text: `Current timestamp: ${new Date().toISOString()}` } : undefined
 
   // Capture the response start time once — all turns of this response share it
   // so their SKs (MSG#<ts>#<seq>#<id>) sort together in order.
@@ -289,7 +289,7 @@ export const buildHandler = (postFn: PostFn) => async (
   const priorRows = await listMessages(chatId)
 
   let lastTurnMsgId: string
-  let bedrockMessages: Message[]
+  let bedrockMessages: NeutralMessage[]
 
   if (isContinue) {
     // ── Continue path: resume generation from an errored/incomplete leaf ────────
@@ -311,7 +311,7 @@ export const buildHandler = (postFn: PostFn) => async (
     bedrockMessages = await Promise.all(
       replayPath.map(async m => ({
         role: m.role as 'user' | 'assistant',
-        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+        content: await hydrateBlocks((m.blocks ?? []) as Block[]),
       }))
     )
     // New turns chain as CHILD of the leaf
@@ -330,7 +330,7 @@ export const buildHandler = (postFn: PostFn) => async (
     bedrockMessages = await Promise.all(
       replayPath.map(async m => ({
         role: m.role as 'user' | 'assistant',
-        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+        content: await hydrateBlocks((m.blocks ?? []) as Block[]),
       }))
     )
     // New assistant turns chain from the re-run parent
@@ -366,7 +366,7 @@ export const buildHandler = (postFn: PostFn) => async (
     bedrockMessages = await Promise.all(
       buildActivePath(allRows, userMsgId).map(async m => ({
         role: m.role as 'user' | 'assistant',
-        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+        content: await hydrateBlocks((m.blocks ?? []) as Block[]),
       }))
     )
     lastTurnMsgId = userMsgId
@@ -402,7 +402,7 @@ export const buildHandler = (postFn: PostFn) => async (
     bedrockMessages = await Promise.all(
       activePath.map(async m => ({
         role: m.role as 'user' | 'assistant',
-        content: await hydrateBlocks((m.blocks ?? []) as ContentBlock[]),
+        content: await hydrateBlocks((m.blocks ?? []) as Block[]),
       }))
     )
     lastTurnMsgId = userMsgId
@@ -462,7 +462,7 @@ export const buildHandler = (postFn: PostFn) => async (
       msgId: turnMsgId,
       parentId: lastTurnMsgId,
       role: 'assistant',
-      blocks: [{ text: partialText }],
+      blocks: [{ kind: 'text', text: partialText }],
       model,
       createdAt: turnTs,
       turnIndex: partialTurnIndex,
@@ -543,7 +543,7 @@ export const buildHandler = (postFn: PostFn) => async (
               ? { webSearchEnabled: effectiveModelSettings.webSearchEnabled } : {}),
           }
 
-          const hasToolUse = chunk.role === 'assistant' && chunk.content.some(b => 'toolUse' in b)
+          const hasToolUse = chunk.role === 'assistant' && chunk.content.some(b => b.kind === 'tool_call')
 
           if (hasToolUse) {
             // Hold this turn until its tool-result turn arrives — do NOT advance

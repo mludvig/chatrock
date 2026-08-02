@@ -1,5 +1,5 @@
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
-import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Block } from './llm/blocks'
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL } from '../config/models'
 import FILE_SUMMARY_SYSTEM from '../../prompts/file-summary.txt'
@@ -71,7 +71,7 @@ export async function fetchS3Bytes(s3Key: string): Promise<Uint8Array> {
   return (res.Body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray()
 }
 
-async function callSummaryModel(messages: Array<{ role: 'user'; content: ContentBlock[] }>): Promise<FileSummary> {
+async function callSummaryModel(messages: Array<{ role: 'user'; content: Block[] }>): Promise<FileSummary> {
   const raw = await converseOnce(MEMORY_EXTRACTION_MODEL, FILE_SUMMARY_SYSTEM, messages, { maxTokens: 512 })
   const cleaned = (raw ?? '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
   try {
@@ -97,13 +97,14 @@ async function summarizeTextFile(s3Key: string, contentType: string, filename: s
     role: 'user',
     content: [
       {
+        kind: 'document',
         document: {
           format: contentType === 'text/csv' ? 'csv' : 'txt',
           name: filename.replace(/\.[^.]+$/, '').slice(0, 200) || 'file',
           source: { bytes: new TextEncoder().encode(text) },
         },
-      } as unknown as ContentBlock,
-      { text: 'Analyze this file and produce the JSON summary.' } as ContentBlock,
+      },
+      { kind: 'text', text: 'Analyze this file and produce the JSON summary.' },
     ],
   }])
 
@@ -130,8 +131,8 @@ async function summarizeImageFile(s3Key: string, contentType: string, filename: 
   return callSummaryModel([{
     role: 'user',
     content: [
-      { image: { format, source: { bytes } } } as unknown as ContentBlock,
-      { text: `Filename: ${filename}` } as ContentBlock,
+      { kind: 'image', image: { format, source: { bytes } } },
+      { kind: 'text', text: `Filename: ${filename}` },
     ],
   }])
 }
@@ -144,13 +145,14 @@ async function summarizePdfFile(s3Key: string, filename: string): Promise<FileSu
     role: 'user',
     content: [
       {
+        kind: 'document',
         document: {
           format: 'pdf',
           name: docName,
           source: { bytes },
         },
-      } as unknown as ContentBlock,
-      { text: 'Analyze this file and produce the JSON summary.' } as ContentBlock,
+      },
+      { kind: 'text', text: 'Analyze this file and produce the JSON summary.' },
     ],
   }])
 

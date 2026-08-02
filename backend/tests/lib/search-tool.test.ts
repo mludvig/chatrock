@@ -108,13 +108,13 @@ describe('buildSearchHistoryCorpus', () => {
 describe('executeSearchHistoryTool', () => {
   test('returns an error without touching dynamo when query is missing', async () => {
     const result = await executeSearchHistoryTool({}, { sub: 'user-1' })
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.listChats).not.toHaveBeenCalled()
   })
 
   test('returns an error without touching dynamo when query is blank', async () => {
     const result = await executeSearchHistoryTool({ query: '   ' }, { sub: 'user-1' })
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.listChats).not.toHaveBeenCalled()
   })
 
@@ -168,8 +168,8 @@ describe('executeSearchHistoryTool', () => {
     }))
 
     const result = await executeSearchHistoryTool({ query: 'athena' }, { sub: 'user-1' })
-    expect(result.status).toBe('success')
-    const payload = JSON.parse((result.content?.[0] as { text: string }).text) as { results: unknown[]; text: string }
+    expect(result.isError).toBe(false)
+    const payload = JSON.parse((result.entries[0] as { text: string }).text) as { results: unknown[]; text: string }
     expect(payload.results).toEqual([{ kind: 'chat', id: 'chat-1', title: 'Athena tuning', reason: 'Matches query' }])
     expect(payload.text).toContain('Athena tuning')
     expect(payload.text).toContain('Matches query')
@@ -180,7 +180,7 @@ describe('executeSearchHistoryTool', () => {
     mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ results: [] }))
 
     const result = await executeSearchHistoryTool({ query: 'athena' }, { sub: 'user-1' })
-    const payload = JSON.parse((result.content?.[0] as { text: string }).text) as { results: unknown[]; text: string }
+    const payload = JSON.parse((result.entries[0] as { text: string }).text) as { results: unknown[]; text: string }
     expect(payload.results).toEqual([])
     expect(payload.text).toBe('No relevant past chats or files found.')
   })

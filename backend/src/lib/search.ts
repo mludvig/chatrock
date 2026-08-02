@@ -1,4 +1,4 @@
-import type { ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { ToolResult } from './llm/toolSpec'
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL } from '../config/models'
 import { safeParse } from './enrichment'
@@ -72,7 +72,7 @@ export async function searchHistory(
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
       SEARCH_HISTORY_SYSTEM_PROMPT,
-      [{ role: 'user', content: [{ text: userMsg }] }],
+      [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
       { maxTokens: 1024 },
     )
 
@@ -198,10 +198,10 @@ export async function buildSearchHistoryCorpus(
 export async function executeSearchHistoryTool(
   input: Record<string, unknown>,
   ctx: SearchHistoryContext,
-): Promise<ToolResultBlock> {
+): Promise<ToolResult> {
   const query = typeof input.query === 'string' ? input.query.trim() : ''
   if (!query) {
-    return { toolUseId: '', content: [{ text: 'Missing query' }], status: 'error' }
+    return { entries: [{ kind: 'text', text: 'Missing query' }], isError: true }
   }
 
   const requestedScope = input.scope === 'project' || input.scope === 'global' ? input.scope : undefined
@@ -216,5 +216,5 @@ export async function executeSearchHistoryTool(
     ? results.map(r => `[${r.kind}:${r.id}] ${r.title} — ${r.reason}`).join('\n')
     : 'No relevant past chats or files found.'
 
-  return { toolUseId: '', content: [{ text: JSON.stringify({ results, text }) }], status: 'success' }
+  return { entries: [{ kind: 'text', text: JSON.stringify({ results, text }) }], isError: false }
 }

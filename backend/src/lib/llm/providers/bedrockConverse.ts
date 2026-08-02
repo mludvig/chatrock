@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
 import { WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, SEARCH_HISTORY_TOOL, GENERATE_IMAGE_TOOL, type ToolContext } from '../../tools'
+import type { ToolSpec } from '../toolSpec'
 import { getCapabilities, type ModelSettings } from '../../../config/models'
 import { ensureBedrockAuth, bedrockRegion } from '../../bedrockAuth'
 import type { StreamChunk, TurnResult } from '../types'
@@ -48,13 +49,25 @@ const CACHE_POINT_TOOL    = { cachePoint: { type: 'default' as const } } as unkn
 const CACHE_POINT_SYSTEM  = { cachePoint: { type: 'default' as const } } as unknown as SystemContentBlock
 const CACHE_POINT_CONTENT = { cachePoint: { type: 'default' as const } } as unknown as ContentBlock
 
+function toBedrockTool(spec: ToolSpec): Tool {
+  return { toolSpec: { name: spec.name, description: spec.description, inputSchema: { json: spec.inputSchema as DocumentType } } }
+}
+
+// Converse-specific requirement: it rejects tool blocks in history without a non-empty
+// toolConfig. When the loop has no organic tools to offer but the replayed history
+// contains tool_use/tool_result blocks, this re-offers a minimal default set so
+// toolConfig is present and valid. (Not needed for a provider without that constraint.)
+export function buildDefaultToolSet(): Tool[] {
+  return [...WEB_TOOLS, MEMORY_TOOL].map(toBedrockTool)
+}
+
 /**
  * Build the tools list with a trailing cachePoint so the tool definitions
  * (which are stable across all turns) get cached on first use.
  * Gate web tools and memory tool independently.
  */
 export function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[] {
-  const list: Tool[] = []
+  const list: ToolSpec[] = []
   if (settings.webSearchEnabled !== false) list.push(...WEB_TOOLS)
   if (settings.browserCoreEnabled !== false) list.push(TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL)
   if (settings.browserExtendedEnabled === true) list.push(BROWSER_TOOL)
@@ -67,7 +80,7 @@ export function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext):
   if (settings.searchEnabled !== false || ctx?.searchScope) list.push(SEARCH_HISTORY_TOOL)
   if (settings.imageGenerationEnabled === true) list.push(GENERATE_IMAGE_TOOL)
   if (list.length === 0) return []
-  return [...list, CACHE_POINT_TOOL]
+  return [...list.map(toBedrockTool), CACHE_POINT_TOOL]
 }
 
 /**

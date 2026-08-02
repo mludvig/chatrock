@@ -7,7 +7,7 @@ import { TITLE_MODEL, DEFAULT_CHAT_MODEL, isValidModelId } from '../config/model
 import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
-import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Block } from '../lib/llm/blocks'
 import { summarizeChatById } from '../lib/enrichment'
 import { groupTurnsToBubbles, filterSteps, renderMarkdown } from '../lib/transcript'
 
@@ -283,17 +283,16 @@ export const handler = async (
     // itself and masked by the sidebar eye, unlike memory/summary which resurface elsewhere.
     const messages = await listMessages(chatId)
     if (messages.length === 0) return err(400, 'No messages to generate title from')
-    const transcript = messages
+    const transcript = (messages as unknown as TurnRow[])
       .slice(-10)
       .map(m => {
-        const blocks = (m.blocks as Array<{ text?: string }> | undefined) ?? []
-        const text = blocks.map(b => b.text ?? '').join(' ').slice(0, 300)
+        const text = m.blocks.filter(b => b.kind === 'text').map(b => b.text).join(' ').slice(0, 300)
         return `${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`
       })
       .join('\n')
     const titlePrompt = `Generate a very short chat title (max 6 words) that captures the main topic of this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\n${transcript}`
     const title = await converseOnce(TITLE_MODEL, '', [
-      { role: 'user', content: [{ text: titlePrompt }] },
+      { role: 'user', content: [{ kind: 'text', text: titlePrompt }] },
     ])
     if (!title) return err(500, 'Title generation failed')
     await updateChatTitle(sub, chatId, title)
@@ -388,7 +387,7 @@ export const handler = async (
     if (keyMap.size > 0) {
       const rewritten = cloned.map(r => ({
         ...r,
-        blocks: (r.blocks as ContentBlock[]).map(b => rewriteBlockUri(b, keyMap)),
+        blocks: (r.blocks as Block[]).map(b => rewriteBlockUri(b, keyMap)),
       }))
       await batchPutMessages(rewritten)
     }

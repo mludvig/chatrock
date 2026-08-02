@@ -1,6 +1,6 @@
 import { marked } from 'marked'
 import { signCloudFrontUrl } from './attachments'
-import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Block } from './llm/blocks'
 import type { TokenUsage } from './bedrock'
 
 // ── Display types (safe to send to clients / render publicly — no signatures / redactedContent) ──
@@ -65,7 +65,7 @@ export interface TurnRow {
   msgId: string
   parentId: string | null
   role: 'user' | 'assistant'
-  blocks: ContentBlock[]
+  blocks: Block[]
   model: string
   createdAt: string
   turnIndex: number
@@ -113,7 +113,7 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
     const isToolResultRow =
       row.role === 'user' &&
       row.blocks.length > 0 &&
-      row.blocks.every(b => 'toolResult' in b)
+      row.blocks.every(b => b.kind === 'tool_result')
 
     if (row.role === 'assistant') {
       // Start or continue an assistant bubble
@@ -138,26 +138,24 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
         currentBubble.errored = true
       }
 
-      // Map blocks → ordered steps (never expose signature/redactedContent)
+      // Map blocks → ordered steps (never expose `opaque`)
       for (const block of row.blocks) {
-        if ('reasoningContent' in block && block.reasoningContent) {
-          const rc = block.reasoningContent
-          const text = 'reasoningText' in rc && rc.reasoningText ? (rc.reasoningText.text ?? '') : ''
-          currentBubble!.steps.push({ kind: 'thinking', text })
-        } else if ('text' in block && block.text !== undefined) {
+        if (block.kind === 'thinking') {
+          currentBubble!.steps.push({ kind: 'thinking', text: block.text })
+        } else if (block.kind === 'text') {
           currentBubble!.steps.push({ kind: 'text', text: block.text })
-        } else if ('toolUse' in block && block.toolUse) {
-          const tu = block.toolUse
+        } else if (block.kind === 'tool_call') {
           const step: ToolStep = {
             kind: 'tool',
-            toolUseId: tu.toolUseId ?? '',
-            name: tu.name ?? '',
-            input: JSON.stringify(tu.input ?? {}),
+            toolUseId: block.callId,
+            name: block.name,
+            input: JSON.stringify(block.input ?? {}),
           }
           currentBubble!.steps.push(step)
           currentToolSteps!.set(step.toolUseId, step)
         }
-        // cachePoint and unknown blocks are silently skipped
+        // image/document/tool_result and any other kind are silently skipped here
+        // (assistant turns don't carry attachments; tool_result is handled below)
       }
 
       // Accumulate usage into bubble and conversation total
@@ -187,13 +185,11 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
     } else if (isToolResultRow && currentBubble && currentToolSteps) {
       // Fold tool results into the current assistant bubble's matching tool steps
       for (const block of row.blocks) {
-        if (!('toolResult' in block) || !block.toolResult) continue
-        const tr = block.toolResult
-        const step = currentToolSteps.get(tr.toolUseId ?? '')
+        if (block.kind !== 'tool_result') continue
+        const step = currentToolSteps.get(block.callId)
         if (step) {
-          const contentBlocks = tr.content ?? []
-          const textEntries = contentBlocks.filter(c => 'text' in c) as Array<{ text?: string }>
-          const imageEntries = contentBlocks.filter(c => 'image' in c) as Array<{ image?: { source?: { s3Location?: { uri: string } } } }>
+          const textEntries = block.entries.filter(e => e.kind === 'text')
+          const imageEntries = block.entries.filter(e => e.kind === 'image')
 
           if (imageEntries.length > 0) {
             // Image-bearing tool result (e.g. browser screenshots): screenshotUrls is a
@@ -201,17 +197,16 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
             // smuggled inside `result`, so the client never has to re-parse it.
             const screenshotUrls: string[] = []
             for (const img of imageEntries) {
-              const uri = img.image?.source?.s3Location?.uri
-              if (!uri) continue
-              const key = uri.replace(/^s3:\/\/[^/]+\//, '')
+              if (!('s3Uri' in img.image.source)) continue // defensive; should not be stored
+              const key = img.image.source.s3Uri.replace(/^s3:\/\/[^/]+\//, '')
               screenshotUrls.push(await signCloudFrontUrl(key))
             }
-            step.result = textEntries.map(t => t.text ?? '').join('\n\n')
+            step.result = textEntries.map(t => t.text).join('\n\n')
             step.screenshotUrls = screenshotUrls
           } else {
             step.result = textEntries[0]?.text ?? ''
           }
-          step.isError = tr.status === 'error'
+          step.isError = block.isError
         }
       }
     } else {
@@ -219,43 +214,42 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
       flushAssistantBubble()
       const steps: Step[] = []
       for (const block of row.blocks) {
-        if ('text' in block && block.text !== undefined) {
+        if (block.kind === 'text') {
           steps.push({ kind: 'text', text: block.text })
-        } else if ('image' in block && block.image) {
-          const src = block.image.source as { s3Location?: { uri: string }; bytes?: unknown }
-          if (src?.s3Location) {
-            const key = src.s3Location.uri.replace(/^s3:\/\/[^/]+\//, '')
+        } else if (block.kind === 'image') {
+          const src = block.image.source
+          if ('s3Uri' in src) {
+            const key = src.s3Uri.replace(/^s3:\/\/[^/]+\//, '')
             const filename = key.split('/').pop() || 'image'
             const url = await signCloudFrontUrl(key)
             steps.push({
               kind: 'attachment',
               attachmentKind: 'image',
               filename,
-              contentType: `image/${block.image.format ?? 'png'}`,
+              contentType: `image/${block.image.format}`,
               url,
               s3Key: key,
             })
           }
-          // blocks with bytes are silently skipped (defensive; should not be stored)
-        } else if ('document' in block && block.document) {
-          const src = block.document.source as { s3Location?: { uri: string }; bytes?: unknown }
-          if (src?.s3Location) {
-            const key = src.s3Location.uri.replace(/^s3:\/\/[^/]+\//, '')
+          // blocks with inline bytes are silently skipped (defensive; should not be stored)
+        } else if (block.kind === 'document') {
+          const src = block.document.source
+          if ('s3Uri' in src) {
+            const key = src.s3Uri.replace(/^s3:\/\/[^/]+\//, '')
             const filename = key.split('/').pop() || 'document'
             const url = await signCloudFrontUrl(key)
             const formatToMime: Record<string, string> = {
               pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
             }
-            const citations = block.document.citations as { enabled: boolean } | undefined
             steps.push({
               kind: 'attachment',
               attachmentKind: 'document',
-              filename: block.document.name ?? filename,
-              contentType: formatToMime[block.document.format ?? 'txt'] ?? 'application/octet-stream',
+              filename: block.document.name || filename,
+              contentType: formatToMime[block.document.format] ?? 'application/octet-stream',
               url,
               s3Key: key,
-              ...(citations?.enabled !== undefined
-                ? { mode: citations.enabled ? 'rich' as const : 'standard' as const }
+              ...(block.document.citations !== undefined
+                ? { mode: block.document.citations ? 'rich' as const : 'standard' as const }
                 : {}),
             })
           }

@@ -2,7 +2,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand, Cop
 import { getSignedUrl as s3GetSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { getSignedUrl as cfGetSignedUrl } from '@aws-sdk/cloudfront-signer'
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
-import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Block, DocumentFormat, ImageFormat } from './llm/blocks'
 
 // ── Allowlist ─────────────────────────────────────────────────────────────────
 
@@ -163,7 +163,7 @@ export async function signCloudFrontUrl(s3Key: string, privateKeyPem?: string): 
   return cfGetSignedUrl({ url, keyPairId: CF_KEY_ID, dateLessThan, privateKey: pem })
 }
 
-// ── attachmentBlock: ContentBlock for Bedrock ─────────────────────────────────
+// ── attachmentBlock: neutral Block for a user-uploaded attachment ─────────────
 
 export interface AttachmentMeta {
   s3Key: string
@@ -172,73 +172,65 @@ export interface AttachmentMeta {
   mode?: 'standard' | 'rich'
 }
 
-export function attachmentBlock(meta: AttachmentMeta): ContentBlock {
+export function attachmentBlock(meta: AttachmentMeta): Block {
   const spec = resolveAttachmentType(meta.contentType, meta.filename) ?? { kind: 'document', format: 'txt', maxBytes: DOCUMENT_MAX_BYTES }
   const uri = `s3://${BUCKET}/${meta.s3Key}`
 
   if (spec.kind === 'image') {
     return {
+      kind: 'image',
       image: {
-        format: meta.contentType.split('/')[1] as 'png' | 'jpeg' | 'gif' | 'webp',
-        source: { s3Location: { uri } },
+        format: meta.contentType.split('/')[1] as ImageFormat,
+        source: { s3Uri: uri },
       },
-    } as ContentBlock
+    }
   }
 
   return {
+    kind: 'document',
     document: {
-      format: spec.format as 'pdf' | 'txt' | 'md' | 'csv',
+      format: spec.format as DocumentFormat,
       name: sanitizeDocName(meta.filename),
-      source: { s3Location: { uri } },
-      citations: { enabled: meta.mode === 'rich' },
+      source: { s3Uri: uri },
+      citations: meta.mode === 'rich',
     },
-  } as ContentBlock
+  }
 }
 
-// ── hydrateBlocks: replace s3Location with bytes for Bedrock API call ─────────
+// ── hydrateBlocks: replace s3Uri with bytes for the provider call ─────────────
 
-// Rehydrate a single image/document entry from s3Location → bytes.
-// Used by both the top-level block path and the nested toolResult.content[] path.
-async function hydrateEntry<T extends { image?: { source?: unknown }; document?: { source?: unknown } }>(
-  entry: T,
-  client: S3Client,
-): Promise<T> {
-  if ('image' in entry && entry.image) {
-    const src = (entry.image as { source?: { s3Location?: { uri: string } } }).source
-    if (src?.s3Location) {
-      const bytes = await fetchBytes(src.s3Location.uri, client)
-      return { ...entry, image: { ...(entry.image as object), source: { bytes } } }
-    }
-  }
-  if ('document' in entry && entry.document) {
-    const src = (entry.document as { source?: { s3Location?: { uri: string } } }).source
-    if (src?.s3Location) {
-      const bytes = await fetchBytes(src.s3Location.uri, client)
-      return { ...entry, document: { ...(entry.document as object), source: { bytes } } }
-    }
-  }
-  return entry
+// Rehydrate a single image/document entry's MediaSource from s3Uri → bytes.
+// Used by both the top-level block path and the nested tool_result.entries[] path.
+async function hydrateSource(source: { s3Uri: string } | { bytes: Uint8Array }, client: S3Client): Promise<{ bytes: Uint8Array }> {
+  if ('bytes' in source) return source
+  return { bytes: await fetchBytes(source.s3Uri, client) }
 }
 
 export async function hydrateBlocks(
-  blocks: ContentBlock[],
+  blocks: Block[],
   client: S3Client = s3,
-): Promise<ContentBlock[]> {
+): Promise<Block[]> {
   return Promise.all(
     blocks.map(async block => {
       // Top-level image / document blocks (user attachments)
-      if ('image' in block || 'document' in block) {
-        return hydrateEntry(block, client) as Promise<ContentBlock>
+      if (block.kind === 'image') {
+        return { ...block, image: { ...block.image, source: await hydrateSource(block.image.source, client) } }
       }
-      // Tool-result blocks: image / document entries can be nested inside content[]
-      // (browser screenshots are persisted as s3Location inside toolResult.content[]).
-      // Without this branch the raw s3Uri reaches Bedrock on follow-up sends, causing
-      // "ValidationException: This model doesn't support the s3Uri field."
-      if ('toolResult' in block && block.toolResult?.content) {
-        const hydratedContent = await Promise.all(
-          block.toolResult.content.map(entry => hydrateEntry(entry as { image?: { source?: unknown }; document?: { source?: unknown } }, client))
+      if (block.kind === 'document') {
+        return { ...block, document: { ...block.document, source: await hydrateSource(block.document.source, client) } }
+      }
+      // Tool-result blocks: image entries can be nested inside entries[]
+      // (browser screenshots are persisted as s3Uri inside tool_result.entries[]).
+      // Without this branch the raw s3Uri reaches the provider on follow-up sends.
+      if (block.kind === 'tool_result') {
+        const hydratedEntries = await Promise.all(
+          block.entries.map(async entry =>
+            entry.kind === 'image'
+              ? { ...entry, image: { ...entry.image, source: await hydrateSource(entry.image.source, client) } }
+              : entry
+          )
         )
-        return { toolResult: { ...block.toolResult, content: hydratedContent } } as ContentBlock
+        return { ...block, entries: hydratedEntries }
       }
       return block
     }),
@@ -285,41 +277,27 @@ export async function copyChatObjects(
   return keyMap
 }
 
-// Remap a single image/document entry's s3Location URI via keyMap.
-function rewriteEntry<T extends { image?: { source?: unknown }; document?: { source?: unknown } }>(
-  entry: T,
-  keyMap: Map<string, string>,
-): T {
-  if ('image' in entry && entry.image) {
-    const src = (entry.image as { source?: { s3Location?: { uri: string } } }).source
-    if (src?.s3Location) {
-      const oldKey = src.s3Location.uri.replace(`s3://${BUCKET}/`, '')
-      const newKey = keyMap.get(oldKey)
-      if (newKey) return { ...entry, image: { ...(entry.image as object), source: { s3Location: { uri: `s3://${BUCKET}/${newKey}` } } } }
-    }
-  }
-  if ('document' in entry && entry.document) {
-    const src = (entry.document as { source?: { s3Location?: { uri: string } } }).source
-    if (src?.s3Location) {
-      const oldKey = src.s3Location.uri.replace(`s3://${BUCKET}/`, '')
-      const newKey = keyMap.get(oldKey)
-      if (newKey) return { ...entry, document: { ...(entry.document as object), source: { s3Location: { uri: `s3://${BUCKET}/${newKey}` } } } }
-    }
-  }
-  return entry
+// Remap a single s3Uri MediaSource via keyMap; bytes sources pass through unchanged.
+function rewriteSource(source: { s3Uri: string } | { bytes: Uint8Array }, keyMap: Map<string, string>): { s3Uri: string } | { bytes: Uint8Array } {
+  if (!('s3Uri' in source)) return source
+  const oldKey = source.s3Uri.replace(`s3://${BUCKET}/`, '')
+  const newKey = keyMap.get(oldKey)
+  return newKey ? { s3Uri: `s3://${BUCKET}/${newKey}` } : source
 }
 
-export function rewriteBlockUri(block: ContentBlock, keyMap: Map<string, string>): ContentBlock {
-  // Top-level image / document blocks (user attachments)
-  if ('image' in block || 'document' in block) {
-    return rewriteEntry(block, keyMap) as ContentBlock
+export function rewriteBlockUri(block: Block, keyMap: Map<string, string>): Block {
+  if (block.kind === 'image') {
+    return { ...block, image: { ...block.image, source: rewriteSource(block.image.source, keyMap) } }
+  }
+  if (block.kind === 'document') {
+    return { ...block, document: { ...block.document, source: rewriteSource(block.document.source, keyMap) } }
   }
   // Nested tool-result images (browser screenshots) — remap to the forked chat's S3 keys
-  if ('toolResult' in block && block.toolResult?.content) {
-    const remappedContent = block.toolResult.content.map(entry =>
-      rewriteEntry(entry as { image?: { source?: unknown }; document?: { source?: unknown } }, keyMap)
+  if (block.kind === 'tool_result') {
+    const remapped = block.entries.map(entry =>
+      entry.kind === 'image' ? { ...entry, image: { ...entry.image, source: rewriteSource(entry.image.source, keyMap) } } : entry
     )
-    return { toolResult: { ...block.toolResult, content: remappedContent } } as ContentBlock
+    return { ...block, entries: remapped }
   }
   return block
 }

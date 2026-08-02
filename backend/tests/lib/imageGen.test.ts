@@ -101,25 +101,25 @@ describe('bedrockStabilityProvider.generate', () => {
 describe('executeGenerateImageTool', () => {
   test('returns an error result when prompt is missing', async () => {
     const result = await executeGenerateImageTool({}, {})
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toMatch(/Missing required field: prompt/)
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toMatch(/Missing required field: prompt/)
   })
 
   test('returns an error result when prompt is blank', async () => {
     const result = await executeGenerateImageTool({ prompt: '   ' }, {})
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
-  test('returns a success result with an image content block', async () => {
+  test('returns a success result with an image entry', async () => {
     const imageB64 = Buffer.from('fake-bytes').toString('base64')
     getMockSend().mockResolvedValueOnce(fakeInvokeResponse({ images: [imageB64], finish_reasons: [null] }))
 
     const result = await executeGenerateImageTool({ prompt: 'a red panda skateboarding' }, { chatId: 'chat-1' })
 
-    expect(result.status).toBe('success')
-    expect(result.content).toEqual([
-      { text: 'a red panda skateboarding' },
-      { image: { format: 'png', source: { bytes: expect.any(Uint8Array) } } },
+    expect(result.isError).toBe(false)
+    expect(result.entries).toEqual([
+      { kind: 'text', text: 'a red panda skateboarding' },
+      { kind: 'image', format: 'png', bytes: expect.any(Uint8Array) },
     ])
   })
 
@@ -128,16 +128,16 @@ describe('executeGenerateImageTool', () => {
 
     const result = await executeGenerateImageTool({ prompt: 'a cat' }, {})
 
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toMatch(/Image generation failed/)
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toMatch(/Image generation failed/)
   })
 })
 
 // ── GENERATE_IMAGE_TOOL spec ──────────────────────────────────────────────────
 
 test('GENERATE_IMAGE_TOOL spec requires prompt and exposes the provider aspect ratios', () => {
-  expect(GENERATE_IMAGE_TOOL.toolSpec?.name).toBe('generate_image')
-  const schema = GENERATE_IMAGE_TOOL.toolSpec?.inputSchema?.json as { required: string[]; properties: { aspectRatio: { enum: string[] } } }
+  expect(GENERATE_IMAGE_TOOL.name).toBe('generate_image')
+  const schema = GENERATE_IMAGE_TOOL.inputSchema as { required: string[]; properties: { aspectRatio: { enum: string[] } } }
   expect(schema.required).toEqual(['prompt'])
   expect(schema.properties.aspectRatio.enum).toEqual(bedrockStabilityProvider.aspectRatios)
 })

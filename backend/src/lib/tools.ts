@@ -1,4 +1,4 @@
-import type { Tool, ToolResultBlock, ToolResultContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { ToolSpec, ToolResult, ToolResultEntry } from './llm/toolSpec'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
 import { executeSearchHistoryTool } from './search'
@@ -7,6 +7,13 @@ import type { BrowserStep } from './agentcore/browser'
 import { GENERATE_IMAGE_TOOL, executeGenerateImageTool } from './imageGen/tool'
 
 export { GENERATE_IMAGE_TOOL }
+
+function textResult(text: string, isError = false): ToolResult {
+  return { entries: [{ kind: 'text', text }], isError }
+}
+function errorResult(text: string): ToolResult {
+  return textResult(text, true)
+}
 
 // ── Tool execution context ────────────────────────────────────────────────────
 
@@ -22,35 +29,27 @@ export interface ToolContext {
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
 
-export const WEB_TOOLS: Tool[] = [
+export const WEB_TOOLS: ToolSpec[] = [
   {
-    toolSpec: {
-      name: 'web_search',
-      description: 'Search the web for current information. Returns titles, URLs and snippets of the top results. Use this when you need up-to-date information or facts you are not sure about.',
-      inputSchema: {
-        json: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: 'The search query' },
-          },
-          required: ['query'],
-        },
+    name: 'web_search',
+    description: 'Search the web for current information. Returns titles, URLs and snippets of the top results. Use this when you need up-to-date information or facts you are not sure about.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The search query' },
       },
+      required: ['query'],
     },
   },
   {
-    toolSpec: {
-      name: 'web_fetch',
-      description: 'Fetch and read the full content of a web page. Returns the page as clean readable text. Use this to read a specific URL.',
-      inputSchema: {
-        json: {
-          type: 'object',
-          properties: {
-            url: { type: 'string', description: 'The URL to fetch' },
-          },
-          required: ['url'],
-        },
+    name: 'web_fetch',
+    description: 'Fetch and read the full content of a web page. Returns the page as clean readable text. Use this to read a specific URL.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'The URL to fetch' },
       },
+      required: ['url'],
     },
   },
 ]
@@ -94,48 +93,39 @@ export const MAX_BROWSER_SCREENSHOTS = 4
 // having to construct a `steps` array. Both lower to a fixed BrowserStep[] and reuse
 // runBrowserSteps; no new session machinery.
 
-export const TAKE_SCREENSHOT_TOOL: Tool = {
-  toolSpec: {
-    name: 'take_screenshot',
-    description: "Take a screenshot of a web page in a real, isolated browser — including pages that need JavaScript to render (dynamic single-page apps). Returns one image. Use this for 'show me what X looks like' / 'screenshot this page'. For multi-step interactions (click, type, navigate between pages) or more than one screenshot, use browse_web instead.",
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'The page URL to screenshot.' },
-          fullPage: { type: 'boolean', description: 'Capture the full scrollable page, not just the visible viewport. Default true.' },
-          width: { type: 'number', description: 'Viewport width in pixels (optional; defaults to a standard desktop size).' },
-          height: { type: 'number', description: 'Viewport height in pixels (optional).' },
-          format: { type: 'string', enum: ['png', 'jpeg'], description: "Image format. Default 'png'." },
-        },
-        required: ['url'],
-      },
+export const TAKE_SCREENSHOT_TOOL: ToolSpec = {
+  name: 'take_screenshot',
+  description: "Take a screenshot of a web page in a real, isolated browser — including pages that need JavaScript to render (dynamic single-page apps). Returns one image. Use this for 'show me what X looks like' / 'screenshot this page'. For multi-step interactions (click, type, navigate between pages) or more than one screenshot, use browse_web instead.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'The page URL to screenshot.' },
+      fullPage: { type: 'boolean', description: 'Capture the full scrollable page, not just the visible viewport. Default true.' },
+      width: { type: 'number', description: 'Viewport width in pixels (optional; defaults to a standard desktop size).' },
+      height: { type: 'number', description: 'Viewport height in pixels (optional).' },
+      format: { type: 'string', enum: ['png', 'jpeg'], description: "Image format. Default 'png'." },
     },
+    required: ['url'],
   },
 }
 
-export const GET_RENDERED_PAGE_TOOL: Tool = {
-  toolSpec: {
-    name: 'get_rendered_page',
-    description: "Load a web page in a real browser (runs JavaScript) and return its rendered content as a structured accessibility-tree snapshot — text only, no image. Use this for JavaScript-heavy / single-page-app pages where web_fetch's static HTML fetch would miss content (the word 'rendered' is the cue: this tool executes the page's JS, web_fetch does not). For plain/static pages, prefer the faster web_fetch. If you also need a visual, use take_screenshot.",
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          url: { type: 'string', description: 'The page URL to load.' },
-          width: { type: 'number', description: 'Viewport width in pixels (optional).' },
-          height: { type: 'number', description: 'Viewport height in pixels (optional).' },
-        },
-        required: ['url'],
-      },
+export const GET_RENDERED_PAGE_TOOL: ToolSpec = {
+  name: 'get_rendered_page',
+  description: "Load a web page in a real browser (runs JavaScript) and return its rendered content as a structured accessibility-tree snapshot — text only, no image. Use this for JavaScript-heavy / single-page-app pages where web_fetch's static HTML fetch would miss content (the word 'rendered' is the cue: this tool executes the page's JS, web_fetch does not). For plain/static pages, prefer the faster web_fetch. If you also need a visual, use take_screenshot.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'The page URL to load.' },
+      width: { type: 'number', description: 'Viewport width in pixels (optional).' },
+      height: { type: 'number', description: 'Viewport height in pixels (optional).' },
     },
+    required: ['url'],
   },
 }
 
-export const BROWSER_TOOL: Tool = {
-  toolSpec: {
-    name: 'browse_web',
-    description: `Run a sequence of browser actions in one isolated session — the session opens, runs every step in order, and closes automatically when this call returns. browse_web is the ONLY tool here: browser_navigate, browser_click, etc. below are NOT separate top-level tools, they only exist as entries inside this call's "steps" array.
+export const BROWSER_TOOL: ToolSpec = {
+  name: 'browse_web',
+  description: `Run a sequence of browser actions in one isolated session — the session opens, runs every step in order, and closes automatically when this call returns. browse_web is the ONLY tool here: browser_navigate, browser_click, etc. below are NOT separate top-level tools, they only exist as entries inside this call's "steps" array.
 
 For the common case of just grabbing a screenshot or a JS-rendered page's content, prefer the simpler take_screenshot / get_rendered_page tools instead. Use browse_web only when you need multiple actions in sequence — click, type, navigate between pages, wait for something, fill a form — or more than one screenshot in one session.
 
@@ -166,138 +156,119 @@ Allowed step "tool" values and their params:
 - browser_resize { width, height }
 - browser_console_messages { level: 'error'|'warning'|'info'|'debug', all? } — browser console/JS logs
 - browser_tabs { action: 'list'|'new'|'close'|'select', index?, url? }`,
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          steps: {
-            type: 'array',
-            description: 'Ordered list of browser actions to run in one session.',
-            items: {
-              type: 'object',
-              properties: {
-                tool: { type: 'string', enum: [...ALLOWED_BROWSER_TOOLS] },
-                params: { type: 'object', description: 'Params for this tool — see the tool description for the shape per tool name.' },
-              },
-              required: ['tool'],
-            },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      steps: {
+        type: 'array',
+        description: 'Ordered list of browser actions to run in one session.',
+        items: {
+          type: 'object',
+          properties: {
+            tool: { type: 'string', enum: [...ALLOWED_BROWSER_TOOLS] },
+            params: { type: 'object', description: 'Params for this tool — see the tool description for the shape per tool name.' },
           },
+          required: ['tool'],
         },
-        required: ['steps'],
       },
     },
+    required: ['steps'],
   },
 }
 
 // ── Memory tool spec ──────────────────────────────────────────────────────────
 
-export const MEMORY_TOOL: Tool = {
-  toolSpec: {
-    name: 'manage_memory',
-    description: "Manage your long-term memory of the user. Use operation 'remember' to save a new durable personal fact (name, location, profession, stated preferences, communication style). Use 'update' with a memId to correct an existing fact. Use 'forget' with a memId to remove a fact. The memId values are shown in brackets next to each memory in your memory list. Do NOT store task-specific or temporary details. Save facts the user would expect you to recall in future conversations.",
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          operation: {
-            type: 'string',
-            enum: ['remember', 'update', 'forget'],
-            description: "remember = save a new durable fact; update = correct an existing fact by id; forget = delete a fact by id",
-          },
-          text: {
-            type: 'string',
-            description: 'The durable fact about the user, concise. Required for remember and update.',
-          },
-          category: {
-            type: 'string',
-            enum: ['identity', 'preference', 'style', 'other'],
-            description: 'Category of the fact. Required for remember; optional for update.',
-          },
-          memId: {
-            type: 'string',
-            description: 'Id of an existing memory (from the [memId] markers in the memory list). Required for update and forget.',
-          },
-        },
-        required: ['operation'],
+export const MEMORY_TOOL: ToolSpec = {
+  name: 'manage_memory',
+  description: "Manage your long-term memory of the user. Use operation 'remember' to save a new durable personal fact (name, location, profession, stated preferences, communication style). Use 'update' with a memId to correct an existing fact. Use 'forget' with a memId to remove a fact. The memId values are shown in brackets next to each memory in your memory list. Do NOT store task-specific or temporary details. Save facts the user would expect you to recall in future conversations.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['remember', 'update', 'forget'],
+        description: "remember = save a new durable fact; update = correct an existing fact by id; forget = delete a fact by id",
+      },
+      text: {
+        type: 'string',
+        description: 'The durable fact about the user, concise. Required for remember and update.',
+      },
+      category: {
+        type: 'string',
+        enum: ['identity', 'preference', 'style', 'other'],
+        description: 'Category of the fact. Required for remember; optional for update.',
+      },
+      memId: {
+        type: 'string',
+        description: 'Id of an existing memory (from the [memId] markers in the memory list). Required for update and forget.',
       },
     },
+    required: ['operation'],
   },
 }
 
 // ── Project memory tool spec ──────────────────────────────────────────────────
 
-export const MANAGE_PROJECT_MEMORY_TOOL: Tool = {
-  toolSpec: {
-    name: 'manage_project_memory',
-    description: "Manage your long-term memory of this project. Use operation 'remember' to save a new durable project fact (architectural decisions, naming conventions, stable domain facts, constraints, glossary terms). Use 'update' with a memId to correct an existing fact. Use 'forget' with a memId to remove a fact. The memId values are shown in brackets next to each memory in your project memory list. Do NOT store personal user facts here — those belong in manage_memory.",
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          operation: {
-            type: 'string',
-            enum: ['remember', 'update', 'forget'],
-          },
-          text: {
-            type: 'string',
-            description: 'The durable project fact, concise. Required for remember and update.',
-          },
-          category: {
-            type: 'string',
-            enum: ['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'],
-          },
-          memId: {
-            type: 'string',
-            description: 'Id of an existing project memory. Required for update and forget.',
-          },
-        },
-        required: ['operation'],
+export const MANAGE_PROJECT_MEMORY_TOOL: ToolSpec = {
+  name: 'manage_project_memory',
+  description: "Manage your long-term memory of this project. Use operation 'remember' to save a new durable project fact (architectural decisions, naming conventions, stable domain facts, constraints, glossary terms). Use 'update' with a memId to correct an existing fact. Use 'forget' with a memId to remove a fact. The memId values are shown in brackets next to each memory in your project memory list. Do NOT store personal user facts here — those belong in manage_memory.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      operation: {
+        type: 'string',
+        enum: ['remember', 'update', 'forget'],
+      },
+      text: {
+        type: 'string',
+        description: 'The durable project fact, concise. Required for remember and update.',
+      },
+      category: {
+        type: 'string',
+        enum: ['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'],
+      },
+      memId: {
+        type: 'string',
+        description: 'Id of an existing project memory. Required for update and forget.',
       },
     },
+    required: ['operation'],
   },
 }
 
 // ── Project read tool specs ───────────────────────────────────────────────────
 
-export const READ_PROJECT_FILE_TOOL: Tool = {
-  toolSpec: {
-    name: 'read_project_file',
-    description: "Read a file from the current project. Use detail:'summary' first to get the detailed summary — use this to decide if the full file is needed. Use detail:'full' to get the complete file content. Always prefer 'summary' before 'full'. The fileId values are shown in brackets in the project file manifest.",
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          fileId: { type: 'string', description: 'The file id from the project manifest (in [brackets]).' },
-          detail: {
-            type: 'string',
-            enum: ['summary', 'full'],
-            description: "'summary' = detailed description (decide if you need more). 'full' = complete content.",
-          },
-        },
-        required: ['fileId', 'detail'],
+export const READ_PROJECT_FILE_TOOL: ToolSpec = {
+  name: 'read_project_file',
+  description: "Read a file from the current project. Use detail:'summary' first to get the detailed summary — use this to decide if the full file is needed. Use detail:'full' to get the complete file content. Always prefer 'summary' before 'full'. The fileId values are shown in brackets in the project file manifest.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      fileId: { type: 'string', description: 'The file id from the project manifest (in [brackets]).' },
+      detail: {
+        type: 'string',
+        enum: ['summary', 'full'],
+        description: "'summary' = detailed description (decide if you need more). 'full' = complete content.",
       },
     },
+    required: ['fileId', 'detail'],
   },
 }
 
-export const READ_PROJECT_CHAT_TOOL: Tool = {
-  toolSpec: {
-    name: 'read_project_chat',
-    description: "Read another chat from the current project. Use detail:'summary' first to get the chat summary — use this to decide if the full transcript is needed. Use detail:'full' to get the complete chat transcript. Always prefer 'summary' before 'full'. The chatId values are shown in brackets in the project chat manifest.",
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          chatId: { type: 'string', description: 'The chat id from the project manifest (in [brackets]).' },
-          detail: {
-            type: 'string',
-            enum: ['summary', 'full'],
-            description: "'summary' = 1-3 sentence overview (decide if you need more). 'full' = complete transcript.",
-          },
-        },
-        required: ['chatId', 'detail'],
+export const READ_PROJECT_CHAT_TOOL: ToolSpec = {
+  name: 'read_project_chat',
+  description: "Read another chat from the current project. Use detail:'summary' first to get the chat summary — use this to decide if the full transcript is needed. Use detail:'full' to get the complete chat transcript. Always prefer 'summary' before 'full'. The chatId values are shown in brackets in the project chat manifest.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      chatId: { type: 'string', description: 'The chat id from the project manifest (in [brackets]).' },
+      detail: {
+        type: 'string',
+        enum: ['summary', 'full'],
+        description: "'summary' = 1-3 sentence overview (decide if you need more). 'full' = complete transcript.",
       },
     },
+    required: ['chatId', 'detail'],
   },
 }
 
@@ -308,24 +279,20 @@ export const READ_PROJECT_CHAT_TOOL: Tool = {
 // with web_search above. User-facing feature/UI is "Search"; this tool name spells out exactly
 // what's searched. Executor (executeSearchHistoryTool) + corpus assembly live in lib/search.ts,
 // co-located with the ranking call — see the "retrieval seam" framing there.
-export const SEARCH_HISTORY_TOOL: Tool = {
-  toolSpec: {
-    name: 'search_history',
-    description: "Search the user's own past chats and project files by topic, to find relevant prior context (e.g. \"did we discuss X before?\"). Returns ranked matches — chats and project files — each with a short reason. Use scope:'project' to search only the current project, or scope:'global' to search across all of the user's chats.",
-    inputSchema: {
-      json: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'What to search for, in the user\'s own words.' },
-          scope: {
-            type: 'string',
-            enum: ['project', 'global'],
-            description: "'project' = only this project's chats/files (only valid when currently in a project). 'global' = all of the user's chats. Defaults to 'project' when in a project, else 'global'.",
-          },
-        },
-        required: ['query'],
+export const SEARCH_HISTORY_TOOL: ToolSpec = {
+  name: 'search_history',
+  description: "Search the user's own past chats and project files by topic, to find relevant prior context (e.g. \"did we discuss X before?\"). Returns ranked matches — chats and project files — each with a short reason. Use scope:'project' to search only the current project, or scope:'global' to search across all of the user's chats.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'What to search for, in the user\'s own words.' },
+      scope: {
+        type: 'string',
+        enum: ['project', 'global'],
+        description: "'project' = only this project's chats/files (only valid when currently in a project). 'global' = all of the user's chats. Defaults to 'project' when in a project, else 'global'.",
       },
     },
+    required: ['query'],
   },
 }
 
@@ -333,21 +300,21 @@ export const SEARCH_HISTORY_TOOL: Tool = {
 
 const JINA_KEY = process.env.JINA_API_KEY ?? ''
 
-export async function executeTool(name: string, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+export async function executeTool(name: string, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   try {
     if (name === 'manage_memory') {
       return await executeMemoryTool(input as Record<string, string>, ctx)
     }
     if (name === 'manage_project_memory') {
-      if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
+      if (!ctx.projectId) return errorResult('No project context')
       return await executeProjectMemoryTool(input as Record<string, string>, { projectId: ctx.projectId })
     }
     if (name === 'read_project_file') {
-      if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
+      if (!ctx.projectId) return errorResult('No project context')
       return await executeProjectReadFileTool(input as Record<string, string>, ctx)
     }
     if (name === 'read_project_chat') {
-      if (!ctx.projectId) return { toolUseId: '', content: [{ text: 'No project context' }], status: 'error' }
+      if (!ctx.projectId) return errorResult('No project context')
       return await executeProjectReadChatTool(input as Record<string, string>, ctx)
     }
     if (name === 'search_history') {
@@ -358,11 +325,11 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
       const query = input.query as string
       const result = provider === 'agentcore' ? await agentcoreSearch(query) : await jinaSearch(query)
       console.log(JSON.stringify({ event: 'web_search', provider, result: 'success' }))
-      return { toolUseId: '', content: [{ text: result }], status: 'success' }
+      return textResult(result)
     }
     if (name === 'web_fetch') {
       const result = await jinaFetch(input.url as string)
-      return { toolUseId: '', content: [{ text: result }], status: 'success' }
+      return textResult(result)
     }
     if (name === 'browse_web') {
       return await executeBrowserTool(input, ctx)
@@ -380,15 +347,11 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     // as if it were its own top-level tool — give it a self-correcting hint instead of a bare
     // "unknown tool" (these are exactly the step names browse_web's description documents).
     if ((ALLOWED_BROWSER_TOOLS as readonly string[]).includes(name)) {
-      return {
-        toolUseId: '',
-        content: [{ text: `"${name}" is not a standalone tool. Either call browse_web with steps: [{ "tool": "${name}", "params": {...} }, ...], or — if you just need one screenshot or one page's rendered content — use take_screenshot / get_rendered_page instead.` }],
-        status: 'error',
-      }
+      return errorResult(`"${name}" is not a standalone tool. Either call browse_web with steps: [{ "tool": "${name}", "params": {...} }, ...], or — if you just need one screenshot or one page's rendered content — use take_screenshot / get_rendered_page instead.`)
     }
-    return { toolUseId: '', content: [{ text: `Unknown tool: ${name}` }], status: 'error' }
+    return errorResult(`Unknown tool: ${name}`)
   } catch (err) {
-    return { toolUseId: '', content: [{ text: `Tool error: ${String(err)}` }], status: 'error' }
+    return errorResult(`Tool error: ${String(err)}`)
   }
 }
 
@@ -409,20 +372,20 @@ async function getRunBrowserSteps() {
 }
 
 // Shared by browse_web / take_screenshot / get_rendered_page: turns the mechanical
-// per-step results from runBrowserSteps into Bedrock ToolResultContentBlock[].
-function browserResultsToContent(results: Array<{ tool: string; text: string[]; images: Array<{ format: string; bytes: Uint8Array }>; error?: string }>): { content: ToolResultContentBlock[]; screenshotsFound: number } {
-  const content: ToolResultContentBlock[] = []
+// per-step results from runBrowserSteps into neutral ToolResultEntry[].
+function browserResultsToEntries(results: Array<{ tool: string; text: string[]; images: Array<{ format: string; bytes: Uint8Array }>; error?: string }>): { entries: ToolResultEntry[]; screenshotsFound: number } {
+  const entries: ToolResultEntry[] = []
   let screenshotsFound = 0
   for (const r of results) {
-    for (const t of r.text) content.push({ text: `### ${r.tool}\n${t}` })
+    for (const t of r.text) entries.push({ kind: 'text', text: `### ${r.tool}\n${t}` })
     for (const img of r.images) {
-      content.push({ image: { format: img.format as 'png' | 'jpeg', source: { bytes: img.bytes } } } as ToolResultContentBlock)
+      entries.push({ kind: 'image', format: img.format as 'png' | 'jpeg', bytes: img.bytes })
       screenshotsFound++
     }
-    if (r.error) content.push({ text: `### ${r.tool} (error)\n${r.error}` })
+    if (r.error) entries.push({ kind: 'text', text: `### ${r.tool} (error)\n${r.error}` })
   }
-  if (content.length === 0) content.push({ text: 'No output' })
-  return { content, screenshotsFound }
+  if (entries.length === 0) entries.push({ kind: 'text', text: 'No output' })
+  return { entries, screenshotsFound }
 }
 
 // Optional width/height -> a leading browser_resize step, omitted when neither is given.
@@ -431,41 +394,33 @@ function resizeSteps(width: unknown, height: unknown): BrowserStep[] {
   return [{ tool: 'browser_resize', params: { width, height } }]
 }
 
-async function executeBrowserTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+async function executeBrowserTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const rawSteps = Array.isArray(input.steps) ? input.steps as RawBrowserStep[] : []
 
   if (rawSteps.length === 0) {
-    return {
-      toolUseId: '',
-      content: [{ text: 'browse_web requires a non-empty "steps" array — e.g. {"steps":[{"tool":"browser_navigate","params":{"url":"https://example.com"}},{"tool":"browser_take_screenshot","params":{"fullPage":true}}]}. browser_navigate, browser_take_screenshot, etc. are not separate top-level tools; they only exist as entries inside this "steps" array. For a single screenshot or page read, take_screenshot / get_rendered_page are simpler.' }],
-      status: 'error',
-    }
+    return errorResult('browse_web requires a non-empty "steps" array — e.g. {"steps":[{"tool":"browser_navigate","params":{"url":"https://example.com"}},{"tool":"browser_take_screenshot","params":{"fullPage":true}}]}. browser_navigate, browser_take_screenshot, etc. are not separate top-level tools; they only exist as entries inside this "steps" array. For a single screenshot or page read, take_screenshot / get_rendered_page are simpler.')
   }
   if (rawSteps.length > MAX_BROWSER_STEPS) {
-    return { toolUseId: '', content: [{ text: `Too many steps: ${rawSteps.length} > ${MAX_BROWSER_STEPS}` }], status: 'error' }
+    return errorResult(`Too many steps: ${rawSteps.length} > ${MAX_BROWSER_STEPS}`)
   }
 
   const allowed = new Set<string>(ALLOWED_BROWSER_TOOLS)
   const steps: BrowserStep[] = []
   for (const s of rawSteps) {
     if (typeof s.tool !== 'string' || !allowed.has(s.tool)) {
-      return {
-        toolUseId: '',
-        content: [{ text: `Unknown step tool "${String(s.tool)}". Valid step tools: ${ALLOWED_BROWSER_TOOLS.join(', ')}. These are entries inside browse_web's "steps" array — call browse_web, not the step name directly.` }],
-        status: 'error',
-      }
+      return errorResult(`Unknown step tool "${String(s.tool)}". Valid step tools: ${ALLOWED_BROWSER_TOOLS.join(', ')}. These are entries inside browse_web's "steps" array — call browse_web, not the step name directly.`)
     }
     steps.push({ tool: s.tool, params: (s.params ?? {}) as Record<string, unknown> })
   }
 
   const screenshotCount = steps.filter(s => s.tool === 'browser_take_screenshot').length
   if (screenshotCount > MAX_BROWSER_SCREENSHOTS) {
-    return { toolUseId: '', content: [{ text: `Too many screenshots: ${screenshotCount} > ${MAX_BROWSER_SCREENSHOTS}` }], status: 'error' }
+    return errorResult(`Too many screenshots: ${screenshotCount} > ${MAX_BROWSER_SCREENSHOTS}`)
   }
 
   const runBrowserSteps = await getRunBrowserSteps()
   const { results, isError } = await runBrowserSteps(steps)
-  const { content, screenshotsFound } = browserResultsToContent(results)
+  const { entries, screenshotsFound } = browserResultsToEntries(results)
 
   console.log(JSON.stringify({
     event: 'browser_tool',
@@ -476,12 +431,12 @@ async function executeBrowserTool(input: Record<string, unknown>, ctx: ToolConte
     chatId: ctx.chatId,
   }))
 
-  return { toolUseId: '', content, status: isError ? 'error' : 'success' }
+  return { entries, isError }
 }
 
-async function executeTakeScreenshotTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+async function executeTakeScreenshotTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const url = typeof input.url === 'string' ? input.url : ''
-  if (!url) return { toolUseId: '', content: [{ text: 'Missing required field: url' }], status: 'error' }
+  if (!url) return errorResult('Missing required field: url')
   const format = input.format === 'jpeg' ? 'jpeg' : 'png'
   const fullPage = input.fullPage !== false
 
@@ -493,19 +448,19 @@ async function executeTakeScreenshotTool(input: Record<string, unknown>, ctx: To
 
   const runBrowserSteps = await getRunBrowserSteps()
   const { results, isError } = await runBrowserSteps(steps)
-  const { content, screenshotsFound } = browserResultsToContent(results)
+  const { entries, screenshotsFound } = browserResultsToEntries(results)
 
   console.log(JSON.stringify({
     event: 'browser_tool', tool: 'take_screenshot', result: isError ? 'error' : 'success',
     screenshotCount: screenshotsFound, chatId: ctx.chatId,
   }))
 
-  return { toolUseId: '', content, status: isError ? 'error' : 'success' }
+  return { entries, isError }
 }
 
-async function executeGetRenderedPageTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResultBlock> {
+async function executeGetRenderedPageTool(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   const url = typeof input.url === 'string' ? input.url : ''
-  if (!url) return { toolUseId: '', content: [{ text: 'Missing required field: url' }], status: 'error' }
+  if (!url) return errorResult('Missing required field: url')
 
   const steps: BrowserStep[] = [
     ...resizeSteps(input.width, input.height),
@@ -517,9 +472,9 @@ async function executeGetRenderedPageTool(input: Record<string, unknown>, ctx: T
   const { results, isError } = await runBrowserSteps(steps)
 
   if (isError) {
-    const { content, screenshotsFound } = browserResultsToContent(results)
+    const { entries, screenshotsFound } = browserResultsToEntries(results)
     console.log(JSON.stringify({ event: 'browser_tool', tool: 'get_rendered_page', result: 'error', screenshotCount: screenshotsFound, chatId: ctx.chatId }))
-    return { toolUseId: '', content, status: 'error' }
+    return { entries, isError: true }
   }
 
   // The navigate step's own response is pure noise here: a code echo, a console-error count,
@@ -544,7 +499,7 @@ async function executeGetRenderedPageTool(input: Record<string, unknown>, ctx: T
     },
     text: snapshotText,
   }
-  return { toolUseId: '', content: [{ text: JSON.stringify(envelope) }], status: 'success' }
+  return textResult(JSON.stringify(envelope))
 }
 
 export interface SearchResult {

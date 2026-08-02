@@ -50,15 +50,15 @@ test('groups assistant reasoning+toolUse turn + toolResult user turn + text turn
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
   mockDynamo.listMessages.mockResolvedValue([
     // User prompt
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'question' }], responseId: 'user-r', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'question' }], responseId: 'user-r', turnIndex: 0 }),
     // Assistant turn 0: reasoning + toolUse
     row({
       SK: `MSG#${TS}#0001#a0`,
       msgId: 'a0', parentId: 'u1',
       role: 'assistant',
       blocks: [
-        { reasoningContent: { reasoningText: { text: 'I think', signature: 'SIG' } } },
-        { toolUse: { toolUseId: 'tu-1', name: 'web_search', input: { query: 'foo' } } },
+        { kind: 'thinking', text: 'I think' },
+        { kind: 'tool_call', callId: 'tu-1', name: 'web_search', input: { query: 'foo' } },
       ],
       responseId,
       turnIndex: 0,
@@ -69,7 +69,7 @@ test('groups assistant reasoning+toolUse turn + toolResult user turn + text turn
       SK: `MSG#${TS}#0002#tr1`,
       msgId: 'tr1', parentId: 'a0',
       role: 'user',
-      blocks: [{ toolResult: { toolUseId: 'tu-1', content: [{ text: '{"results":[{"title":"T","url":"https://x.com","description":"D"}]}' }], status: 'success' } }],
+      blocks: [{ kind: 'tool_result', callId: 'tu-1', entries: [{ kind: 'text', text: '{"results":[{"title":"T","url":"https://x.com","description":"D"}]}' }], isError: false }],
       responseId,
       turnIndex: 1,
     }),
@@ -78,7 +78,7 @@ test('groups assistant reasoning+toolUse turn + toolResult user turn + text turn
       SK: `MSG#${TS}#0003#a2`,
       msgId: 'a2', parentId: 'tr1',
       role: 'assistant',
-      blocks: [{ text: 'final answer' }],
+      blocks: [{ kind: 'text', text: 'final answer' }],
       responseId,
       turnIndex: 2,
       usage: { inputTokens: 20, outputTokens: 8, cacheReadInputTokens: 5 },
@@ -121,7 +121,7 @@ test('groups assistant reasoning+toolUse turn + toolResult user turn + text turn
 test('plain user turn becomes a bubble with a text step', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, role: 'user', blocks: [{ text: 'hello' }], responseId: 'r-user', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0000#u1`, role: 'user', blocks: [{ kind: 'text', text: 'hello' }], responseId: 'r-user', turnIndex: 0 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -140,8 +140,8 @@ test('redacted thinking block becomes a thinking step with empty text', async ()
       SK: `MSG#${TS}#0000#a1`,
       role: 'assistant',
       blocks: [
-        { reasoningContent: { redactedContent: new Uint8Array([1, 2, 3]) } },
-        { text: 'answer' },
+        { kind: 'thinking', text: '', redacted: true, opaque: { provider: 'bedrock-converse', v: 1, data: 'redacted-data' } },
+        { kind: 'text', text: 'answer' },
       ],
       responseId: 'r1',
       turnIndex: 0,
@@ -162,8 +162,8 @@ test('raw blocks, signatures, and redactedContent are NOT in the response', asyn
       SK: `MSG#${TS}#0000#a1`,
       role: 'assistant',
       blocks: [
-        { reasoningContent: { reasoningText: { text: 'secret', signature: 'TOP_SECRET_SIG' } } },
-        { text: 'ok' },
+        { kind: 'thinking', text: 'secret', opaque: { provider: 'bedrock-converse', v: 1, data: 'VE9QX1NFQ1JFVF9TSUc=' } },
+        { kind: 'text', text: 'ok' },
       ],
       responseId: 'r1',
       turnIndex: 0,
@@ -185,7 +185,7 @@ test('conversationUsage sums all assistant turn usages', async () => {
       SK: `MSG#${TS}#0000#a1`,
       msgId: 'a1', parentId: null,
       role: 'assistant',
-      blocks: [{ text: 'a1' }],
+      blocks: [{ kind: 'text', text: 'a1' }],
       responseId: 'r1',
       turnIndex: 0,
       usage: { inputTokens: 10, outputTokens: 4 },
@@ -194,7 +194,7 @@ test('conversationUsage sums all assistant turn usages', async () => {
       SK: `MSG#${TS}#0001#a2`,
       msgId: 'a2', parentId: 'a1',
       role: 'assistant',
-      blocks: [{ text: 'a2' }],
+      blocks: [{ kind: 'text', text: 'a2' }],
       responseId: 'r2',
       turnIndex: 0,
       usage: { inputTokens: 20, outputTokens: 6, cacheReadInputTokens: 8 },
@@ -230,8 +230,8 @@ test('inc2: linear chat (no siblings) renders the same bubbles as before', async
   // Single branch: user → assistant, activeLeafId points to assistant turn
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-1' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#user-1`, msgId: 'user-1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r1', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'user-1', role: 'assistant', blocks: [{ text: 'a' }], responseId: 'r1', turnIndex: 1 }),
+    row({ SK: `MSG#${TS}#0000#user-1`, msgId: 'user-1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'r1', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'user-1', role: 'assistant', blocks: [{ kind: 'text', text: 'a' }], responseId: 'r1', turnIndex: 1 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -244,9 +244,9 @@ test('inc2: only the active branch renders when siblings exist', async () => {
   //             → asst-B (active, pointed to by activeLeafId)
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-B' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#user-1`, msgId: 'user-1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0001#asst-A`, msgId: 'asst-A', parentId: 'user-1', role: 'assistant', blocks: [{ text: 'answer A' }], responseId: 'r1', turnIndex: 0, usage: { inputTokens: 5, outputTokens: 2 } }),
-    row({ SK: `MSG#${TS}#0002#asst-B`, msgId: 'asst-B', parentId: 'user-1', role: 'assistant', blocks: [{ text: 'answer B' }], responseId: 'r2', turnIndex: 0, usage: { inputTokens: 5, outputTokens: 3 } }),
+    row({ SK: `MSG#${TS}#0000#user-1`, msgId: 'user-1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-A`, msgId: 'asst-A', parentId: 'user-1', role: 'assistant', blocks: [{ kind: 'text', text: 'answer A' }], responseId: 'r1', turnIndex: 0, usage: { inputTokens: 5, outputTokens: 2 } }),
+    row({ SK: `MSG#${TS}#0002#asst-B`, msgId: 'asst-B', parentId: 'user-1', role: 'assistant', blocks: [{ kind: 'text', text: 'answer B' }], responseId: 'r2', turnIndex: 0, usage: { inputTokens: 5, outputTokens: 3 } }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -266,8 +266,8 @@ test('inc2: only the active branch renders when siblings exist', async () => {
 test('inc3: user bubble carries its row msgId and parentId', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-1' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'a' }], responseId: 'r1', turnIndex: 1 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'a' }], responseId: 'r1', turnIndex: 1 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -282,13 +282,13 @@ test('inc3: assistant bubble carries first-turn msgId and parentId', async () =>
   const responseId = 'resp-1'
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'r0', turnIndex: 0 }),
     row({ SK: `MSG#${TS}#0001#a0`, msgId: 'a0', parentId: 'u1', role: 'assistant',
-      blocks: [{ toolUse: { toolUseId: 'tu1', name: 'web_search', input: {} } }], responseId, turnIndex: 0 }),
+      blocks: [{ kind: 'tool_call', callId: 'tu1', name: 'web_search', input: {} }], responseId, turnIndex: 0 }),
     row({ SK: `MSG#${TS}#0002#tr1`, msgId: 'tr1', parentId: 'a0', role: 'user',
-      blocks: [{ toolResult: { toolUseId: 'tu1', content: [{ text: 'res' }], status: 'success' } }], responseId, turnIndex: 1 }),
+      blocks: [{ kind: 'tool_result', callId: 'tu1', entries: [{ kind: 'text', text: 'res' }], isError: false }], responseId, turnIndex: 1 }),
     row({ SK: `MSG#${TS}#0003#a2`, msgId: 'a2', parentId: 'tr1', role: 'assistant',
-      blocks: [{ text: 'done' }], responseId, turnIndex: 2 }),
+      blocks: [{ kind: 'text', text: 'done' }], responseId, turnIndex: 2 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -306,8 +306,8 @@ test('inc4: single-child bubble has siblingCount 1 and siblingIndex 1', async ()
   // Linear chat: no siblings anywhere
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-1' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'a' }], responseId: 'r1', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-1`, msgId: 'asst-1', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'a' }], responseId: 'r1', turnIndex: 0 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -323,10 +323,10 @@ test('inc4: three sibling assistant bubbles get correct siblingIndex and sibling
   // Tree: user-1 → asst-A (1st), asst-B (2nd), asst-C (3rd, active)
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'asst-C' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0001#asst-A`, msgId: 'asst-A', parentId: 'u1', role: 'assistant', blocks: [{ text: 'answer A' }], responseId: 'rA', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0002#asst-B`, msgId: 'asst-B', parentId: 'u1', role: 'assistant', blocks: [{ text: 'answer B' }], responseId: 'rB', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0003#asst-C`, msgId: 'asst-C', parentId: 'u1', role: 'assistant', blocks: [{ text: 'answer C' }], responseId: 'rC', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#asst-A`, msgId: 'asst-A', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'answer A' }], responseId: 'rA', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0002#asst-B`, msgId: 'asst-B', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'answer B' }], responseId: 'rB', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0003#asst-C`, msgId: 'asst-C', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'answer C' }], responseId: 'rC', turnIndex: 0 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -347,13 +347,13 @@ test('inc4: multi-turn tool response does not inflate sibling count', async () =
   const responseId = 'resp-1'
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'q' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'r0', turnIndex: 0 }),
     row({ SK: `MSG#${TS}#0001#a0`, msgId: 'a0', parentId: 'u1', role: 'assistant',
-      blocks: [{ toolUse: { toolUseId: 'tu1', name: 'web_search', input: {} } }], responseId, turnIndex: 0 }),
+      blocks: [{ kind: 'tool_call', callId: 'tu1', name: 'web_search', input: {} }], responseId, turnIndex: 0 }),
     row({ SK: `MSG#${TS}#0002#tr1`, msgId: 'tr1', parentId: 'a0', role: 'user',
-      blocks: [{ toolResult: { toolUseId: 'tu1', content: [{ text: 'res' }], status: 'success' } }], responseId, turnIndex: 1 }),
+      blocks: [{ kind: 'tool_result', callId: 'tu1', entries: [{ kind: 'text', text: 'res' }], isError: false }], responseId, turnIndex: 1 }),
     row({ SK: `MSG#${TS}#0003#a2`, msgId: 'a2', parentId: 'tr1', role: 'assistant',
-      blocks: [{ text: 'done' }], responseId, turnIndex: 2 }),
+      blocks: [{ kind: 'text', text: 'done' }], responseId, turnIndex: 2 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -378,8 +378,8 @@ describe('attachment steps in messages', () => {
         role: 'user',
         responseId: 'r1',
         blocks: [
-          { text: 'Look at this' },
-          { image: { format: 'png', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/shot.png' } } } },
+          { kind: 'text', text: 'Look at this' },
+          { kind: 'image', image: { format: 'png', source: { s3Uri: 's3://bucket/attachments/sub/chat/fid/shot.png' } } },
         ],
       }),
     ])
@@ -407,7 +407,7 @@ describe('attachment steps in messages', () => {
         role: 'user',
         responseId: 'r1',
         blocks: [
-          { image: { format: 'png', source: { bytes: Buffer.from('PNG') } } },
+          { kind: 'image', image: { format: 'png', source: { bytes: Buffer.from('PNG') } } },
         ],
       }),
     ])
@@ -428,7 +428,7 @@ describe('attachment steps in messages', () => {
         role: 'user',
         responseId: 'r1',
         blocks: [
-          { document: { format: 'pdf', name: 'Report', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/report.pdf' } }, citations: { enabled: false } } },
+          { kind: 'document', document: { format: 'pdf', name: 'Report', source: { s3Uri: 's3://bucket/attachments/sub/chat/fid/report.pdf' }, citations: false } },
         ],
       }),
     ])
@@ -451,8 +451,8 @@ describe('attachment steps in messages', () => {
         role: 'user',
         responseId: 'r1',
         blocks: [
-          { image: { format: 'png', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/shot.png' } } } },
-          { document: { format: 'pdf', name: 'Report', source: { s3Location: { uri: 's3://bucket/attachments/sub/chat/fid/report.pdf' } }, citations: { enabled: false } } },
+          { kind: 'image', image: { format: 'png', source: { s3Uri: 's3://bucket/attachments/sub/chat/fid/shot.png' } } },
+          { kind: 'document', document: { format: 'pdf', name: 'Report', source: { s3Uri: 's3://bucket/attachments/sub/chat/fid/report.pdf' }, citations: false } },
         ],
       }),
     ])
@@ -483,8 +483,8 @@ describe('attachment steps in messages', () => {
 test('part4: assistant bubble has errored:true when any of its turns has incomplete:true', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'question' }], responseId: 'r0', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'partial answer' }], responseId: 'r0', turnIndex: 1, incomplete: true }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'question' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'partial answer' }], responseId: 'r0', turnIndex: 1, incomplete: true }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -497,8 +497,8 @@ test('part4: assistant bubble has errored:true when any of its turns has incompl
 test('part4b: assistant bubble has no errored field when no turns have incomplete:true', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue([
-    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'question' }], responseId: 'r0', turnIndex: 0 }),
-    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ text: 'complete answer' }], responseId: 'r0', turnIndex: 1 }),
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'question' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'complete answer' }], responseId: 'r0', turnIndex: 1 }),
   ])
 
   const res = result(await handler(makeEvent('c1')))
@@ -513,12 +513,12 @@ describe('browse_web screenshot steps in tool results', () => {
     const responseId = 'resp-browse'
     mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a2' })
     mockDynamo.listMessages.mockResolvedValue([
-      row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'screenshot example.com' }], responseId: 'user-r', turnIndex: 0 }),
+      row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'screenshot example.com' }], responseId: 'user-r', turnIndex: 0 }),
       row({
         SK: `MSG#${TS}#0001#a0`,
         msgId: 'a0', parentId: 'u1',
         role: 'assistant',
-        blocks: [{ toolUse: { toolUseId: 'tu-browse', name: 'browse_web', input: { steps: [{ tool: 'browser_take_screenshot' }] } } }],
+        blocks: [{ kind: 'tool_call', callId: 'tu-browse', name: 'browse_web', input: { steps: [{ tool: 'browser_take_screenshot' }] } }],
         responseId,
         turnIndex: 0,
       }),
@@ -527,14 +527,13 @@ describe('browse_web screenshot steps in tool results', () => {
         msgId: 'tr1', parentId: 'a0',
         role: 'user',
         blocks: [{
-          toolResult: {
-            toolUseId: 'tu-browse',
-            content: [
-              { text: '### browser_take_screenshot\ndone' },
-              { image: { format: 'png', source: { s3Location: { uri: 's3://bucket/attachments/user-1/chat-c1/browser-tu-browse-0.png' } } } },
-            ],
-            status: 'success',
-          },
+          kind: 'tool_result',
+          callId: 'tu-browse',
+          entries: [
+            { kind: 'text', text: '### browser_take_screenshot\ndone' },
+            { kind: 'image', image: { format: 'png', source: { s3Uri: 's3://bucket/attachments/user-1/chat-c1/browser-tu-browse-0.png' } } },
+          ],
+          isError: false,
         }],
         responseId,
         turnIndex: 1,
@@ -543,7 +542,7 @@ describe('browse_web screenshot steps in tool results', () => {
         SK: `MSG#${TS}#0003#a2`,
         msgId: 'a2', parentId: 'tr1',
         role: 'assistant',
-        blocks: [{ text: 'Here it is.' }],
+        blocks: [{ kind: 'text', text: 'Here it is.' }],
         responseId,
         turnIndex: 2,
       }),

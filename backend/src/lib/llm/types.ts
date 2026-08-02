@@ -1,4 +1,5 @@
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Block } from './blocks'
 
 // ── Stream chunk types sent back over WebSocket ───────────────────────────────
 //
@@ -18,8 +19,9 @@ export type StreamChunk =
   // otherwise-silent gap — observed empirically to reduce the WS connection going stale.
   | { type: 'heartbeat' }
   | { type: 'stop'; stopReason: string }
-  // Backend-only: drives per-turn persistence; never sent raw over WS
-  | { type: 'turn'; role: 'user' | 'assistant'; content: ContentBlock[]; turnIndex: number }
+  // Backend-only: drives per-turn persistence; never sent raw over WS.
+  // `content` is the neutral format — this is what lands in DynamoDB verbatim.
+  | { type: 'turn'; role: 'user' | 'assistant'; content: Block[]; turnIndex: number }
   // Forwarded as a compact WS event for live display
   | { type: 'usage'; usage: TokenUsage }
   // Emitted when manage_memory tool succeeds — triggers memoryUpdated WS event
