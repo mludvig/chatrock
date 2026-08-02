@@ -51,7 +51,7 @@ export default function ModelTuningPanel({ caps, settings, onChange }: Props) {
             <span>Thinking effort</span>
           </label>
           <select className="model-select" value={effort} onChange={e => set({ thinkingEffort: e.target.value as typeof effort })}>
-            {THINKING_EFFORTS.map(e => (
+            {(caps.thinkingLevels ?? THINKING_EFFORTS).map(e => (
               <option key={e} value={e}>{e === 'off' ? 'Off' : capitalize(e)}</option>
             ))}
           </select>
