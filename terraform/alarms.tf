@@ -190,6 +190,15 @@ resource "aws_cloudwatch_metric_alarm" "http_api_5xx" {
 # WebSocket APIs have no `5xx` metric — `ExecutionError` (confirmed the same way) is the closest
 # equivalent: failures executing the route (integration/backend errors), as opposed to
 # `ClientError` (bad requests/auth failures, expected background noise from e.g. expired tokens).
+#
+# `sendMessage`'s WS route uses AWS_PROXY, which is always a synchronous Lambda invoke capped at
+# API Gateway's fixed (non-configurable) 29s integration timeout. A single slow agentic turn
+# (e.g. several sequential web_search tool calls) can exceed that and trip one ExecutionError even
+# though the Lambda keeps running and finishes streaming the answer over postToConnection — the
+# request the client cares about did not fail, only APIGW's synchronous wrapper around it timed
+# out. Threshold/period below require a sustained burst (5+ in 5min) rather than one-off timeouts,
+# so this still catches a genuine integration break (bad deploy, auth failure, systemic Bedrock
+# outage) without paging on a normal long tool-use turn.
 resource "aws_cloudwatch_metric_alarm" "ws_api_execution_error" {
   alarm_name          = "chatrock-ws-api-execution-error-${var.env}"
   alarm_description   = "WebSocket API route execution is failing (backend/integration errors)"
@@ -199,7 +208,7 @@ resource "aws_cloudwatch_metric_alarm" "ws_api_execution_error" {
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 1
-  threshold           = 1
+  threshold           = 5
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.alerts.arn]
