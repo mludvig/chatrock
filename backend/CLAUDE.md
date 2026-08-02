@@ -7,9 +7,10 @@ See root `CLAUDE.md` for commands, architecture overview, DynamoDB schema, and k
 ```
 backend/prompts/           — system-prompt text files for enrichment/search/summarization/title calls (imported as strings via esbuild's `.txt` loader — see below)
 backend/src/
-  config/models.ts        — model registry with capabilities (temperature/topP/topK/thinking/attachments)
-  lib/bedrock.ts          — ConverseStream wrapper + agentic tool-use loop (MAX_TOOL_ROUNDS=8); coalesceMessages + healDanglingToolUse sanitize replayed history before every call
-  lib/blocks.ts           — block-level helpers: capToolResultText (byte-accurate, default 30 KB cap, accepts a custom budget); TOOL_RESULTS_ROUND_CAP (300 KB aggregate per round)
+  config/models.ts        — model registry with capabilities (provider/temperature/topP/topK/thinking/thinkingLevels/attachments/documents/promptCaching/region/maxOutputTokens)
+  lib/bedrock.ts          — thin re-export façade over lib/llm/ (kept for `tests/lib/bedrock.test.ts`'s `jest.mock('../../src/lib/bedrock')` and other call sites) — see "LLM providers" below for where the real implementation lives
+  lib/llm/                — provider-neutral chat abstraction — see "LLM providers" below
+  lib/blocks.ts           — DELETED; capToolResultText/TOOL_RESULT_CAP/TOOL_RESULTS_ROUND_CAP moved into lib/llm/blocks.ts alongside the neutral Block shape
   lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, putMessagePair (TransactWriteCommand, atomic 2-item write), batchPutMessages/batchDeleteMessages (retry UnprocessedItems), setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
   lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, BROWSER_TOOL, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, SEARCH_HISTORY_TOOL, GENERATE_IMAGE_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider; search_history dispatches to lib/search.ts; generate_image dispatches to lib/imageGen/tool.ts); ToolContext type (incl. searchScope)
   lib/imageGen/           — generate_image tool: registry.ts (ImageProvider interface + provider list — the seam for adding OpenAI/Google/BFL later), tool.ts (GENERATE_IMAGE_TOOL spec + executor), providers/bedrockStability.ts (the only provider today, Bedrock InvokeModel against Stability's Stable Image Ultra)
@@ -41,15 +42,49 @@ Each Lambda is bundled independently by esbuild into `terraform/dist/<name>.zip`
 
 ## Model capabilities
 
-`backend/src/config/models.ts` is the single source of truth. Each `Model` entry declares `capabilities: { temperature, topP, topK, thinking }`. The `thinking` field is `'adaptive'` (Opus 4.8, Sonnet 4.6 — uses `thinking.type=adaptive` + `output_config.effort`) or `'none'` (Haiku 4.5). Adding a new model is one entry in the `MODELS` array.
+`backend/src/config/models.ts` is the single source of truth. Each `Model` entry declares `capabilities: { provider, temperature, topP, topK, thinking, thinkingLevels?, attachments, documents, promptCaching, region?, maxOutputTokens? }`. `provider` is a `ProviderId` (`'bedrock-converse'|'bedrock-mantle'`, see "LLM providers" below) — it's what `lib/llm/registry.ts`'s `getProvider(modelId)` dispatches on. `thinking` is `'adaptive'` (Anthropic on Converse — `thinking.type=adaptive` + `output_config.effort`), `'effort'` (OpenAI on Mantle — a plain `reasoning.effort` dial), or `'none'` (Haiku 4.5). `thinkingLevels` restricts which of `ThinkingEffort`'s five levels (`off|low|medium|high|max`) a model accepts — omit for all five; GPT-5.6 omits `'off'` since it always reasons. `promptCaching` (`'auto'|'explicit'|'none'`) and `region` (per-model pin; undefined → the provider's own default) are descriptive capability metadata, not yet load-bearing for every provider. Adding a new model is one entry in the `MODELS` array; adding a new *provider* is one new file under `lib/llm/providers/` + one line in `registry.ts`.
 
-`bedrock.ts` calls `getCapabilities(modelId)` to build `inferenceConfig` + `additionalModelRequestFields` — temperature/topP are suppressed when thinking is active (Bedrock API requirement).
+Each adapter's `streamTurn` reads `getCapabilities(modelId)` to build its own inference params — e.g. Converse suppresses temperature/topP when thinking is active (API requirement) and uses `caps.maxOutputTokens` for `inferenceConfig.maxTokens`.
 
 **Stale model self-healing**: when a model id is retired/renamed from `MODELS` (e.g. the Sonnet 4.6 → 5 rename), no alias table is kept — a chat's stored `model` just goes stale. `http/chats.ts`'s `resolveChatModel()` self-heals it lazily the next time the chat is read (`GET /api/chats`, `GET /api/chats/{chatId}`, and fork's read of the source chat): swaps in `DEFAULT_CHAT_MODEL`, persists it via `updateChatModel`, and returns `modelMigratedFrom: <oldId>` in that one response so the frontend can show a one-time notice (`ChatView.tsx`, cleared via `clearModelMigrationNotice`). Only affects the *next* message — each `Message` row's own `model` field is a historical record of what actually generated that turn and is never rewritten, so past turns still show what was really used.
 
+## LLM providers
+
+Chatrock speaks two inference APIs behind one provider-neutral abstraction — `lib/llm/`:
+
+```
+lib/llm/
+  blocks.ts                      — the neutral Block/NeutralMessage format (kind-discriminated: text/thinking/
+                                    tool_call/tool_result/image/document); Opaque{provider,v,data} for provider-
+                                    private continuation material (Anthropic signature/redactedContent, OpenAI
+                                    reasoning id/encrypted_content); capToolResultText + tool-result caps
+  toolSpec.ts                    — neutral ToolSpec (plain JSON Schema) + ToolResult/ToolResultEntry
+  types.ts                       — StreamChunk, TokenUsage, TurnRequest/TurnResult/OnceRequest, ChatProvider
+  toolGating.ts                  — buildToolList(settings, ctx): ToolSpec[], shared/provider-agnostic
+  sanitize.ts                    — coalesceMessages/healDanglingToolUse/historyHasToolBlocks — Bedrock-Converse-
+                                    wire-shaped helpers used internally by bedrockConverse's sanitizeHistory
+  registry.ts                    — CHAT_PROVIDERS[], getProvider(modelId)
+  loop.ts                        — converseStream()/converseOnce(), 100% provider-agnostic (dispatches via
+                                    getProvider, no branch on provider anywhere in this file)
+  providers/bedrockConverse.ts   — Anthropic (and any future Converse-served vendor) via Bedrock ConverseStream
+  providers/converseTranslate.ts — pure Block[] <-> Bedrock ContentBlock[] translation, no I/O
+  providers/bedrockMantle.ts     — OpenAI GPT-5.6 via Bedrock Mantle's Responses API
+  providers/mantleTranslate.ts   — pure Block[]/NeutralMessage[] <-> Responses API item[] translation, no I/O
+```
+
+**The `ChatProvider` interface** (`types.ts`) is the whole seam: `id`, `sanitizeHistory(messages)`, `streamTurn(req): AsyncGenerator<StreamChunk, TurnResult>`, `once(req)`. `loop.ts`'s `converseStream()` calls `sanitizeHistory` once per invocation, then `streamTurn` once per agentic round — everything vendor-specific (cachePoint placement, inference params, toolChoice quirks, the tool-history-reoffer requirement) lives inside the adapter, never in `loop.ts`. `TurnRequest.cacheBoundaryIndex` is the index of the last stable-prior message in that round's `messages` array — the adapter places its one cache marker there; it's fixed for the whole invocation since only new-this-round messages grow the array. `TurnResult.replayContent`, when set, is what's carried into *this invocation's next round only* — never persisted — letting an adapter keep oversized live-only material (Mantle's full reasoning `encrypted_content` before `REASONING_OPAQUE_CAP` trims what's stored) out of DynamoDB.
+
+**Provider ids are named by API surface, not vendor** (`bedrock-converse`, `bedrock-mantle`) — Converse also serves Meta/Mistral, so a vendor-named id would be misleading the moment a second Converse-served vendor is added. The id is persisted inside `Opaque.provider`, so getting this right avoids a future data migration.
+
+**Cross-provider correctness** (mid-chat model switching): each adapter's `sanitizeHistory` drops any `ThinkingBlock` whose `opaque.provider` isn't its own — a foreign or absent signature is a hard `ValidationException` on Converse and meaningless on Mantle. Mantle does **not** re-emit a foreign thinking block as visible assistant text (that would misattribute another provider's internal reasoning as this model's own output) — silent drop is correct on both sides. Tool call ids round-trip **verbatim, never rewritten**, in both directions (Converse's `toolUseId` ↔ Mantle's `call_id` are just the same opaque string under different field names) — confirmed empirically, no id-rewriting fallback needed. Covered by `tests/lib/llm/crossProvider.test.ts`.
+
+**Statelessness**: every Mantle request sends `store:false` and never `previous_response_id` — full history is replayed each call, required both for cross-provider switching (no server-side state to reconcile) and independently by the sensitive-chats posture (`Chat.sensitive`).
+
+**Bedrock Mantle specifics** (`bedrockMantle.ts`): OpenAI's Responses API `input` is a **flat item array**, unlike Converse's per-message `ContentBlock[]` nesting — a `tool_call`/`tool_result`/`thinking` block becomes its own top-level item, not content inside a role message. `mantleTranslate.fromNeutralMessages` reflects that by operating on the whole history at once rather than per-message. Auth mirrors `bedrockAuth.ts`'s SigV4-primary/bearer-secondary precedence via the `bedrock()` provider from `openai/providers/bedrock/aws` (plain `OpenAI` client, **not** the bearer-only `BedrockOpenAI` class from `openai/bedrock` — that class's `apiKey` option is typed to reject AWS credentials entirely). All GPT-5.6 models are pinned to `us-east-1` (no `global.*` cross-region inference profile exists for Mantle, no `ap-southeast-2` availability as of Aug 2026). **IAM**: Mantle signs as a distinct service (`bedrock-mantle`, not `bedrock`) with its own action/resource shape — `bedrock-mantle:CreateInference` on a fixed per-account `arn:aws:bedrock-mantle:us-east-1:<account>:project/default`, **not** a per-model foundation-model/inference-profile ARN like Converse. This was derived from a real `AccessDeniedException` against the deployed Lambda, not guessed — AWS doesn't publish a clean signing-service-to-action mapping (see `terraform/iam.tf`'s `InvokeBedrockMantle` statement). Usage normalization: Responses' `input_tokens` is *inclusive* of cached tokens where Converse's *excludes* `cacheReadInputTokens` — `bedrockMantle.ts`'s `mapUsage` subtracts `input_tokens_details.cached_tokens` so a mixed-provider chat's transcript totals don't double-count.
+
 ## Conversation tree internals
 
-**Atomic tool-use round persistence**: `ws/sendMessage.ts` defers writing an assistant turn that contains `toolUse` blocks until its paired tool-result turn is also ready, then writes both via `dynamo.ts`'s `putMessagePair` (`TransactWriteCommand`, 2 items). This guarantees the durable tree never ends on a dangling `tool_use`. `lastTurnMsgId` only ever reflects the latest **durable** turn; a pending (not-yet-paired) turn's msgId is used solely to chain the next turn's `parentId` in memory. As defense-in-depth, `bedrock.ts`'s `healDanglingToolUse` synthesizes a placeholder error `toolResult` for a tail assistant message with unresolved `toolUse` blocks, right alongside `coalesceMessages` (which handles two consecutive same-role turns from an interrupted loop) — both run unconditionally before every Bedrock call.
+**Atomic tool-use round persistence**: `ws/sendMessage.ts` defers writing an assistant turn that contains `tool_call` blocks until its paired tool-result turn is also ready, then writes both via `dynamo.ts`'s `putMessagePair` (`TransactWriteCommand`, 2 items). This guarantees the durable tree never ends on a dangling tool call. `lastTurnMsgId` only ever reflects the latest **durable** turn; a pending (not-yet-paired) turn's msgId is used solely to chain the next turn's `parentId` in memory. As defense-in-depth, each `ChatProvider`'s `sanitizeHistory` synthesizes a placeholder error tool-result for a tail assistant message with unresolved tool calls (Converse's `healDanglingToolUse` in `lib/llm/sanitize.ts`; Mantle's own `healDanglingToolCall` in `bedrockMantle.ts`, written directly against the neutral shape), right alongside role-coalescing (which handles two consecutive same-role turns from an interrupted loop) — both run unconditionally before every call, per-provider.
 
 `batchPutMessages`/`batchDeleteMessages` (fork-copy, subtree-delete) retry `BatchWriteCommand`'s `UnprocessedItems` and throw if items remain unprocessed after retries, rather than silently leaving a partial result.
 
@@ -104,7 +139,7 @@ Two writers, two stores (user and project):
 
 `assembleSystemPrompt` (`lib/promptAssembly.ts`) injects user memory as `- [memId] text` lines, project memory in a separate "About this project:" block, and a project manifest (files + sibling chats) for project chats.
 
-`bedrock.ts` builds the tool list via `buildToolsWithCache(settings, ctx?)`: web tools when `webSearchEnabled !== false`; Core browser tools when `browserCoreEnabled !== false`; `browse_web` when `browserExtendedEnabled === true`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`; cachePoint always last.
+`lib/llm/toolGating.ts`'s `buildToolList(settings, ctx?)` builds the neutral tool list (shared across providers): web tools when `webSearchEnabled !== false`; Core browser tools when `browserCoreEnabled !== false`; `browse_web` when `browserExtendedEnabled === true`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`. Each adapter lowers this to its own wire format and appends its own cache marker (Converse: trailing `cachePoint` on the tool list).
 
 ## User preferences
 
