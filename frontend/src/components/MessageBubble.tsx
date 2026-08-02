@@ -441,6 +441,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
   const idle = isStreaming && 'idle' in message && !!(message as StreamingMsg).idle
   const steps: Step[] = message.steps ?? []
   const [copied, setCopied] = useState(false)
+  const { models } = useChatStore()
 
   // For a streaming message, the last step is "open" (still accumulating).
   // A thinking step is done when the next non-thinking step exists after it.
@@ -542,7 +543,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
       {/* Per-message metadata line — assistant bubbles only, not streaming */}
       {isAssistant && !isStreaming && 'model' in message && (message as Message).createdAt && (() => {
         const msg = message as Message
-        const modelShort = msg.model.replace(/^global\.anthropic\./, '').replace(/-\d{8,}.*$/, '')
+        const modelShort = models.find(m => m.id === msg.model)?.name ?? msg.model
         const ts = new Date(msg.createdAt)
         const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })

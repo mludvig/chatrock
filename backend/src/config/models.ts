@@ -73,8 +73,28 @@ export const MODELS: Model[] = [
   // ap-southeast-2 availability as of Aug 2026: pinned to us-east-1 (see backend/CLAUDE.md's
   // "LLM providers" section). Always reasons (no 'off' level) — thinkingLevels omits it.
   {
+    id: 'openai.gpt-5.6-sol',
+    name: 'GPT-5.6 Sol',
+    capabilities: {
+      provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
+      thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
+      attachments: true, documents: true, promptCaching: 'explicit',
+      region: 'us-east-1', maxOutputTokens: 16000,
+    },
+  },
+  {
     id: 'openai.gpt-5.6-terra',
     name: 'GPT-5.6 Terra',
+    capabilities: {
+      provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
+      thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
+      attachments: true, documents: true, promptCaching: 'explicit',
+      region: 'us-east-1', maxOutputTokens: 16000,
+    },
+  },
+  {
+    id: 'openai.gpt-5.6-luna',
+    name: 'GPT-5.6 Luna',
     capabilities: {
       provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
