@@ -115,7 +115,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
-    ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
+    ?? { provider: 'bedrock-converse', temperature: true, topP: true, topK: false, thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
 
   // Per-chat override wins when set; otherwise fall back to the global default. Usage is
   // always recorded either way — this only gates whether it's rendered.
@@ -1280,7 +1280,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             disabled={creatingChat}
             autoFocus
           />
-          {currentCaps?.attachments && (
+          {(currentCaps?.attachments || currentCaps?.documents) && (
             <button
               className="btn-attach"
               title="Attach file"

@@ -106,19 +106,27 @@ export interface Message {
   errored?: boolean
 }
 
+export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
+
 export interface ModelCapabilities {
+  provider: 'bedrock-converse' | 'bedrock-mantle'
   temperature: boolean
   topP: boolean
   topK: boolean
-  thinking: 'adaptive' | 'none'
+  thinking: 'adaptive' | 'effort' | 'none'
+  thinkingLevels?: ThinkingEffort[]
   attachments: boolean
+  documents: boolean
+  promptCaching: 'auto' | 'explicit' | 'none'
+  region?: string
+  maxOutputTokens?: number
 }
 
 export interface ModelSettings {
   temperature?: number
   topP?: number
   topK?: number
-  thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
+  thinkingEffort?: ThinkingEffort
   webSearchEnabled?: boolean
   webSearchProvider?: 'jina' | 'agentcore'
   browserCoreEnabled?: boolean
@@ -187,8 +195,11 @@ export interface Model {
 export const THINKING_EFFORTS = ['off', 'low', 'medium', 'high', 'max'] as const
 
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {
+  const defaultEffort: ThinkingEffort = (!caps.thinkingLevels || caps.thinkingLevels.includes('low'))
+    ? 'low'
+    : (caps.thinkingLevels[0] ?? 'low')
   return {
-    ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
+    ...(caps.thinking !== 'none' ? { thinkingEffort: defaultEffort } : {}),
     webSearchEnabled: true,
     browserCoreEnabled: true,
     browserExtendedEnabled: false,
@@ -206,7 +217,13 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     ...(caps.temperature && prev.temperature !== undefined ? { temperature: prev.temperature } : {}),
     ...(caps.topP && prev.topP !== undefined ? { topP: prev.topP } : {}),
     ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
-    ...(caps.thinking !== 'none' ? { thinkingEffort: prev.thinkingEffort ?? defaults.thinkingEffort } : {}),
+    ...(caps.thinking !== 'none'
+      ? {
+          thinkingEffort: (prev.thinkingEffort && (!caps.thinkingLevels || caps.thinkingLevels.includes(prev.thinkingEffort)))
+            ? prev.thinkingEffort
+            : defaults.thinkingEffort,
+        }
+      : {}),
     webSearchEnabled: prev.webSearchEnabled ?? true,
     browserCoreEnabled: prev.browserCoreEnabled ?? true,
     browserExtendedEnabled: prev.browserExtendedEnabled ?? legacyBrowserToolEnabled ?? false,

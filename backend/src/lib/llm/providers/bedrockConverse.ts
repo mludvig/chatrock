@@ -23,7 +23,7 @@ function buildInferenceParams(modelId: string, settings: ModelSettings) {
   const thinkingActive = caps.thinking !== 'none' && settings.thinkingEffort && settings.thinkingEffort !== 'off'
 
   // Temperature and topP must be omitted when thinking is active (API requirement)
-  const inferenceConfig: Record<string, unknown> = { maxTokens: 16000 }
+  const inferenceConfig: Record<string, unknown> = { maxTokens: caps.maxOutputTokens ?? 16000 }
   if (!thinkingActive) {
     if (caps.temperature && settings.temperature !== undefined) inferenceConfig.temperature = settings.temperature
     if (caps.topP && settings.topP !== undefined) inferenceConfig.topP = settings.topP
