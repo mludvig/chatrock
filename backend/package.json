@@ -23,10 +23,12 @@
     "@aws-sdk/s3-request-presigner": "^3.1067.0",
     "@modelcontextprotocol/sdk": "^1",
     "@playwright/mcp": "^0.0.76",
+    "@smithy/hash-node": "^4.4.16",
     "@smithy/protocol-http": "^4",
     "@smithy/signature-v4": "^5",
     "aws-jwt-verify": "^4",
     "marked": "^9.1.6",
+    "openai": "^7.3.0",
     "ulid": "^3.0.2",
     "uuid": "^9"
   },
