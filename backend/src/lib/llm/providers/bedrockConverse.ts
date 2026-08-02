@@ -8,11 +8,14 @@ import {
   type SystemContentBlock,
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
-import { WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, SEARCH_HISTORY_TOOL, GENERATE_IMAGE_TOOL, type ToolContext } from '../../tools'
-import type { ToolSpec } from '../toolSpec'
 import { getCapabilities, type ModelSettings } from '../../../config/models'
 import { ensureBedrockAuth, bedrockRegion } from '../../bedrockAuth'
-import type { StreamChunk, TurnResult } from '../types'
+import type { StreamChunk, TurnResult, TurnRequest, OnceRequest, ChatProvider, TokenUsage } from '../types'
+import type { ToolSpec } from '../toolSpec'
+import type { NeutralMessage } from '../blocks'
+import { toNeutral, fromNeutralMessage, toNeutralMessage } from './converseTranslate'
+import { coalesceMessages, healDanglingToolUse, historyHasToolBlocks } from '../sanitize'
+import { buildDefaultToolList } from '../toolGating'
 
 export const bedrockClient = new BedrockRuntimeClient({
   region: bedrockRegion(),
@@ -53,34 +56,19 @@ function toBedrockTool(spec: ToolSpec): Tool {
   return { toolSpec: { name: spec.name, description: spec.description, inputSchema: { json: spec.inputSchema as DocumentType } } }
 }
 
-// Converse-specific requirement: it rejects tool blocks in history without a non-empty
-// toolConfig. When the loop has no organic tools to offer but the replayed history
-// contains tool_use/tool_result blocks, this re-offers a minimal default set so
-// toolConfig is present and valid. (Not needed for a provider without that constraint.)
-export function buildDefaultToolSet(): Tool[] {
-  return [...WEB_TOOLS, MEMORY_TOOL].map(toBedrockTool)
+/** Trailing cachePoint so the tool definitions (stable across all turns) get cached
+ *  on first use. Empty input -> empty output (no dangling cachePoint-only list). */
+function toBedrockToolsWithCache(tools: ToolSpec[]): Tool[] {
+  if (tools.length === 0) return []
+  return [...tools.map(toBedrockTool), CACHE_POINT_TOOL]
 }
 
-/**
- * Build the tools list with a trailing cachePoint so the tool definitions
- * (which are stable across all turns) get cached on first use.
- * Gate web tools and memory tool independently.
- */
-export function buildToolsWithCache(settings: ModelSettings, ctx?: ToolContext): Tool[] {
-  const list: ToolSpec[] = []
-  if (settings.webSearchEnabled !== false) list.push(...WEB_TOOLS)
-  if (settings.browserCoreEnabled !== false) list.push(TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL)
-  if (settings.browserExtendedEnabled === true) list.push(BROWSER_TOOL)
-  if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
-  if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
-  if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
-  // ctx.searchScope is set only for a forced/explicit Search turn (ws/sendMessage.ts) — force
-  // the tool into the list even if searchEnabled:false, since Bedrock's toolChoice requires the
-  // named tool to be present in `tools`.
-  if (settings.searchEnabled !== false || ctx?.searchScope) list.push(SEARCH_HISTORY_TOOL)
-  if (settings.imageGenerationEnabled === true) list.push(GENERATE_IMAGE_TOOL)
-  if (list.length === 0) return []
-  return [...list.map(toBedrockTool), CACHE_POINT_TOOL]
+// Converse-specific requirement: it rejects tool blocks in history without a non-empty
+// toolConfig. When the caller has no organic tools to offer but the replayed history
+// contains tool_call/tool_result blocks, this re-offers a minimal default set so
+// toolConfig is present and valid. (Not needed for a provider without that constraint.)
+function buildDefaultToolSet(): Tool[] {
+  return toBedrockToolsWithCache(buildDefaultToolList())
 }
 
 /**
@@ -96,45 +84,27 @@ function buildSystemWithCache(systemPrompt: string): SystemContentBlock[] | unde
 }
 
 /**
- * Derive the messages array for a given round, injecting ONE trailing
- * cachePoint on the last stable prior message (everything before the
- * messages added in this round).  Re-derived each round so the cachePoint
- * REPLACES (not accumulates) as the conversation grows.
- *
- * @param baseMessages  — the full conversation history (prior turns only;
- *                        does NOT include the turn currently being generated)
- * @param newMessages   — turns added in this round (assistant + toolResult);
- *                        empty on the first round
+ * Return a copy of `messages` with a cachePoint injected after the last block of
+ * the message at `boundaryIndex` — the ONE cache marker for this request, placed
+ * at the end of the "stable prior" prefix so it replaces (not accumulates) as the
+ * conversation grows. boundaryIndex < 0 (nothing stable yet) is a no-op.
  */
-export function buildMessagesWithCache(baseMessages: Message[], newMessages: Message[]): Message[] {
-  if (baseMessages.length === 0 && newMessages.length === 0) return []
-
-  if (newMessages.length === 0) {
-    // First round: inject a cachePoint on the last block of the last prior message
-    return injectTrailingCachePoint(baseMessages)
-  }
-
-  // Subsequent rounds: prior stable messages keep their cachePoint; new turns
-  // appended without one (they become the "stable prior" next round)
-  return [...injectTrailingCachePoint(baseMessages), ...newMessages]
+function injectCachePointAt(messages: Message[], boundaryIndex: number): Message[] {
+  if (boundaryIndex < 0 || boundaryIndex >= messages.length) return messages
+  return messages.map((m, i) => i === boundaryIndex ? { ...m, content: [...(m.content ?? []), CACHE_POINT_CONTENT] } : m)
 }
 
-/**
- * Return a copy of messages with a cachePoint injected after the last block
- * of the last message.  The original array is never mutated.
- */
-function injectTrailingCachePoint(messages: Message[]): Message[] {
-  if (messages.length === 0) return []
-  const last = messages[messages.length - 1]
-  const content = last.content ?? []
-  const withCache = [...content, CACHE_POINT_CONTENT]
-  return [
-    ...messages.slice(0, -1),
-    { ...last, content: withCache },
-  ]
+// Raw, Bedrock-content-shaped result of one streamed Converse call — distinct from
+// the neutral TurnResult (llm/types.ts) that streamTurn() converts it into below.
+interface RawTurnResult {
+  stopReason: string
+  textContent: string
+  toolUses: Array<{ toolUseId: string; name: string; inputJson: string }>
+  content: ContentBlock[]
+  usage?: TokenUsage
 }
 
-export async function* streamOneTurn(
+async function* streamOneTurn(
   modelId: string,
   systemPrompt: string,
   messages: Message[],
@@ -142,7 +112,7 @@ export async function* streamOneTurn(
   settings: ModelSettings,
   abortSignal?: AbortSignal,
   forceToolName?: string,
-): AsyncGenerator<StreamChunk, TurnResult> {
+): AsyncGenerator<StreamChunk, RawTurnResult> {
   // Only attach toolConfig when there is at least one real toolSpec — a list
   // containing only CACHE_POINT_TOOL (no toolSpec) is treated as empty.
   const hasRealTools = tools.some(t => 'toolSpec' in (t as object))
@@ -162,7 +132,7 @@ export async function* streamOneTurn(
 
   let stopReason = 'end_turn'
   let textContent = ''
-  let usage: TurnResult['usage']
+  let usage: RawTurnResult['usage']
 
   // Per-block-index accumulator for verbatim ContentBlock reconstruction
   type BlockAcc =
@@ -319,4 +289,64 @@ export async function converseOnce(
   const block = res.output?.message?.content?.[0]
   if (block && 'text' in block) return (block.text ?? '').trim()
   return ''
+}
+
+// ── ChatProvider implementation ────────────────────────────────────────────────
+
+// Drop any ThinkingBlock whose opaque isn't ours (or is missing) — a foreign or
+// absent signature is a hard Converse ValidationException — then drop any message
+// left with zero blocks as a result, before the Bedrock-shape repair passes run.
+function stripForeignThinking(messages: NeutralMessage[]): NeutralMessage[] {
+  return messages
+    .map(m => ({ ...m, content: m.content.filter(b => b.kind !== 'thinking' || b.opaque?.provider === 'bedrock-converse') }))
+    .filter(m => m.content.length > 0)
+}
+
+function sanitizeHistory(messages: NeutralMessage[]): NeutralMessage[] {
+  const filtered = stripForeignThinking(messages)
+  const bedrockMessages = filtered.map(fromNeutralMessage)
+  const healed = healDanglingToolUse(coalesceMessages(bedrockMessages))
+  return healed.map(m => toNeutralMessage(m as { role: 'user' | 'assistant'; content?: ContentBlock[] }))
+}
+
+async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult> {
+  const bedrockMessages = req.messages.map(fromNeutralMessage)
+  const withCache = injectCachePointAt(bedrockMessages, req.cacheBoundaryIndex)
+
+  let tools = toBedrockToolsWithCache(req.tools)
+  if (tools.length === 0 && historyHasToolBlocks(bedrockMessages)) {
+    tools = buildDefaultToolSet()
+  }
+
+  // Bedrock rejects toolChoice together with adaptive thinking — a forced round
+  // always runs with thinking off (a tool-choice round needs none anyway).
+  const roundSettings = req.forceToolName ? { ...req.settings, thinkingEffort: 'off' as const } : req.settings
+
+  const gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, req.abortSignal, req.forceToolName)
+  let raw: RawTurnResult | undefined
+  while (true) {
+    const { value, done } = await gen.next()
+    if (done) { raw = value; break }
+    yield value
+  }
+  if (!raw) throw new Error('bedrockConverse.streamTurn: no result from streamOneTurn')
+
+  return {
+    stopReason: raw.stopReason,
+    textContent: raw.textContent,
+    toolUses: raw.toolUses.map(tu => ({ callId: tu.toolUseId, name: tu.name, inputJson: tu.inputJson })),
+    content: toNeutral(raw.content),
+    usage: raw.usage,
+  }
+}
+
+async function once(req: OnceRequest): Promise<string> {
+  return converseOnce(req.modelId, req.systemPrompt, req.messages.map(fromNeutralMessage), { maxTokens: req.maxTokens })
+}
+
+export const bedrockConverseProvider: ChatProvider = {
+  id: 'bedrock-converse',
+  sanitizeHistory,
+  streamTurn,
+  once,
 }
