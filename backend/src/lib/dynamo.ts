@@ -9,7 +9,6 @@ import {
   BatchWriteCommand,
   TransactWriteCommand,
 } from '@aws-sdk/lib-dynamodb'
-import { normalizeStoredBlocks } from './llm/normalize'
 
 export const TABLE = process.env.DYNAMO_TABLE ?? 'chatrock'
 
@@ -191,14 +190,6 @@ export async function listMessages(chatId: string) {
     for (const item of res.Items ?? []) items.push(item as Record<string, unknown>)
     lastKey = res.LastEvaluatedKey as Record<string, unknown> | undefined
   } while (lastKey)
-
-  // Single choke point: upgrade any pre-cutover row's `blocks` (raw Bedrock Converse
-  // ContentBlock[]) to the neutral format on read, so every one of this function's many
-  // call sites gets neutral blocks with no change of their own. See llm/normalize.ts —
-  // temporary, removed once scripts/migrate-blocks.mjs has run against prod.
-  for (const item of items) {
-    if (Array.isArray(item.blocks)) item.blocks = normalizeStoredBlocks(item.blocks)
-  }
 
   return items
 }
