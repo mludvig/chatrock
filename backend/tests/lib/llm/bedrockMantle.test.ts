@@ -119,6 +119,32 @@ describe('bedrockMantle.streamTurn', () => {
     const params = mockCreate.mock.calls[0][0]
     expect(params.reasoning).toEqual({ effort: 'low', summary: 'auto' })
     expect(params.include).toEqual(['reasoning.encrypted_content'])
+
+    // replayContent carries the full (uncapped) opaque for this invocation's next round
+    expect(result.replayContent[0]).toMatchObject({ kind: 'thinking', text: '7*8=56' })
+    expect(result.replayContent[0].opaque).toBeDefined()
+  })
+
+  test('an oversized reasoning opaque is dropped from the persisted content but kept in replayContent', async () => {
+    const hugeEncrypted = 'x'.repeat(200_000) // base64 chars; encoded opaque well over the 96 KB cap
+    const response = {
+      status: 'completed',
+      output_text: 'done',
+      output: [
+        { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'deep thought' }], encrypted_content: hugeEncrypted },
+        { type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'done', annotations: [] }] },
+      ],
+      usage: undefined,
+    }
+    mockCreate.mockResolvedValue(fakeStream([{ type: 'response.completed', response }]))
+
+    const { result } = await drain(bedrockMantleProvider.streamTurn({
+      modelId: 'openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'max' }, cacheBoundaryIndex: -1,
+    }))
+
+    expect(result.content[0]).toEqual({ kind: 'thinking', text: 'deep thought' })
+    expect(result.content[0].opaque).toBeUndefined()
+    expect(result.replayContent[0].opaque).toBeDefined()
   })
 
   test('thinkingEffort:off omits reasoning params entirely', async () => {
