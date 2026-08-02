@@ -1,5 +1,6 @@
-import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
-import type { Block } from './blocks'
+import type { Block, NeutralMessage, ProviderId } from './blocks'
+import type { ToolSpec } from './toolSpec'
+import type { ModelSettings } from '../../config/models'
 
 // ── Stream chunk types sent back over WebSocket ───────────────────────────────
 //
@@ -34,13 +35,54 @@ export interface TokenUsage {
   cacheWriteInputTokens?: number
 }
 
-// ── Internal streaming result for one provider turn ────────────────────────────
+// ── The ChatProvider seam ────────────────────────────────────────────────────
+//
+// Every model dispatches through one of these (see registry.ts). loop.ts contains
+// no provider-specific reasoning at all — everything vendor-specific (cachePoints,
+// inference params, toolChoice quirks) lives inside the adapter's streamTurn.
+
+export interface TurnRequest {
+  modelId: string
+  systemPrompt: string
+  // Sanitized history + this invocation's new turns, oldest -> newest.
+  messages: NeutralMessage[]
+  tools: ToolSpec[]
+  settings: ModelSettings
+  // Index into `messages` of the last stable-prior message; the adapter places its
+  // ONE cache marker at/after it. -1 = nothing stable yet (e.g. a brand new chat).
+  cacheBoundaryIndex: number
+  abortSignal?: AbortSignal
+  // Set only on the first round of a forced/explicit Search turn — the adapter should
+  // force tool choice to this tool name for this call only.
+  forceToolName?: string
+}
+
+export interface OnceRequest {
+  modelId: string
+  systemPrompt: string
+  messages: NeutralMessage[]
+  maxTokens?: number
+}
 
 export interface TurnResult {
   stopReason: string
   textContent: string
-  toolUses: Array<{ toolUseId: string; name: string; inputJson: string }>
-  // Verbatim assembled ContentBlock[] in arrival order (for persistence)
-  content: ContentBlock[]
+  toolUses: Array<{ callId: string; name: string; inputJson: string }>
+  // The form written to DynamoDB.
+  content: Block[]
+  // Richer form replayed into the NEXT round of THIS invocation only; defaults to
+  // `content` when omitted. Lets an adapter carry oversized/live-only material
+  // (e.g. inline image bytes, an uncapped reasoning payload) without persisting it.
+  replayContent?: Block[]
   usage?: TokenUsage
+}
+
+export interface ChatProvider {
+  id: ProviderId
+  // Runs ONCE per converseStream call, on the incoming replayed history only. Owns
+  // whatever history repair (role-coalescing, dangling-tool-call healing) and
+  // foreign-opaque filtering this provider's wire format requires. Idempotent.
+  sanitizeHistory(messages: NeutralMessage[]): NeutralMessage[]
+  streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult>
+  once(req: OnceRequest): Promise<string>
 }
