@@ -65,6 +65,20 @@ data "aws_iam_policy_document" "lambda_policy" {
     ]
   }
 
+  # Bedrock Mantle (OpenAI Responses API, lib/llm/providers/bedrockMantle.ts) signs as a
+  # distinct service (`bedrock-mantle`, not `bedrock`) with its own action namespace and
+  # resource type — NOT the foundation-model/inference-profile ARNs above. Action + resource
+  # ARN confirmed empirically from a real AccessDeniedException (not guessed — the SDK gives
+  # no documented IAM reference for this as of Aug 2026): "arn:aws:bedrock-mantle:us-east-1:
+  # <account>:project/default" is a fixed per-account "default" project, not per-model.
+  # us-east-1-hardcoded since Mantle models are pinned there (see config/models.ts) regardless
+  # of var.aws_region.
+  statement {
+    sid       = "InvokeBedrockMantle"
+    actions   = ["bedrock-mantle:CreateInference"]
+    resources = ["arn:aws:bedrock-mantle:us-east-1:${data.aws_caller_identity.current.account_id}:project/default"]
+  }
+
   statement {
     actions   = ["execute-api:ManageConnections"]
     resources = ["arn:aws:execute-api:${var.aws_region}:*:${aws_apigatewayv2_api.ws.id}/*"]
