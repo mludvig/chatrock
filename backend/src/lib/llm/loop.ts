@@ -1,12 +1,12 @@
-import type { Message, ContentBlock, ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Message, ContentBlock, ToolResultContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { executeTool, type ToolContext } from '../tools'
-import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from '../blocks'
+import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP, type Block, type NeutralMessage } from './blocks'
 import type { ModelSettings } from '../../config/models'
 import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from '../attachments'
 import type { StreamChunk, TurnResult } from './types'
 import { coalesceMessages, healDanglingToolUse, historyHasToolBlocks } from './sanitize'
-import { buildToolsWithCache, buildMessagesWithCache, streamOneTurn, converseOnce as converseOnceImpl } from './providers/bedrockConverse'
-import { WEB_TOOLS, MEMORY_TOOL } from '../tools'
+import { buildToolsWithCache, buildDefaultToolSet, buildMessagesWithCache, streamOneTurn, converseOnce as converseOnceImpl } from './providers/bedrockConverse'
+import { toNeutral, fromNeutralMessage } from './providers/converseTranslate'
 
 export type { StreamChunk, TokenUsage } from './types'
 export { coalesceMessages, healDanglingToolUse } from './sanitize'
@@ -19,7 +19,7 @@ export const HEARTBEAT_INTERVAL_MS = 4000
 export async function* converseStream(
   modelId: string,
   systemPrompt: string,
-  messages: Message[],
+  messages: NeutralMessage[],
   settings: ModelSettings = {},
   ctx?: ToolContext,
   abortSignal?: AbortSignal,
@@ -30,19 +30,23 @@ export async function* converseStream(
   forceToolName?: string,
 ): AsyncGenerator<StreamChunk> {
   let tools = buildToolsWithCache(settings, ctx)
+  // Incoming history is the neutral (at-rest) format; the wire protocol below is still
+  // Bedrock Converse-only (a second provider lands in a later step), so convert once here.
+  const bedrockMessages: Message[] = messages.map(fromNeutralMessage)
   // If tools are disabled (both webSearchEnabled and memory off) but the replayed history
   // contains toolUse/toolResult blocks, Bedrock still requires a non-empty toolConfig.
   // Re-offer the full tool set so toolConfig is present and valid for the history.
-  if (tools.length === 0 && historyHasToolBlocks(messages)) {
-    tools = [...WEB_TOOLS, MEMORY_TOOL]
+  if (tools.length === 0 && historyHasToolBlocks(bedrockMessages)) {
+    tools = buildDefaultToolSet()
   }
   // Base messages are the incoming history (verbatim blocks replayed as-is).
   // Coalesce adjacent same-role turns so an interrupted agentic loop (which can
   // leave the active leaf on a tool-result user turn) never produces two
   // consecutive user messages → Bedrock ValidationException. Then heal a dangling
   // tool_use tail (the sibling failure mode) the same way.
-  const baseMessages: Message[] = healDanglingToolUse(coalesceMessages(messages))
-  // New messages added this session (grows with each tool-use round)
+  const baseMessages: Message[] = healDanglingToolUse(coalesceMessages(bedrockMessages))
+  // New messages added this session (grows with each tool-use round) — Bedrock-shape,
+  // since they're only ever replayed to Bedrock within this same invocation.
   const newMessages: Message[] = []
 
   let turnIndex = 0
@@ -77,8 +81,8 @@ export async function* converseStream(
 
     // Yield usage first (so sendMessage.ts can read lastUsage before processing turn)
     if (result.usage) yield { type: 'usage', usage: result.usage }
-    // Yield the verbatim assistant turn for persistence
-    yield { type: 'turn', role: 'assistant', content: result.content, turnIndex }
+    // Yield the verbatim assistant turn for persistence — neutral format at rest.
+    yield { type: 'turn', role: 'assistant', content: toNeutral(result.content), turnIndex }
     turnIndex++
 
     if (result.stopReason !== 'tool_use' || result.toolUses.length === 0) {
@@ -100,13 +104,14 @@ export async function* converseStream(
     // image bytes (replayed to Bedrock in the *next* round of this same invocation — nothing
     // re-hydrates `newMessages` mid-loop), `toolResultsPersist` carries S3 locations instead
     // (small, durable — matches how user attachments are stored at rest). Text-only tool
-    // results are identical in both and unaffected by this split.
+    // results are identical in both and unaffected by this split. Both stay Bedrock-shaped
+    // internally; toolResultsPersist is converted to neutral only at the point it's yielded.
     const toolResultsLive: ContentBlock[] = []
     const toolResultsPersist: ContentBlock[] = []
     for (const tu of result.toolUses) {
       const input = (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })()
       const toolPromise = executeTool(tu.name, input, ctx ?? { sub: '' })
-      let toolResult: ToolResultBlock | undefined
+      let toolResult: Awaited<ReturnType<typeof executeTool>> | undefined
       while (!toolResult) {
         const timerId = { current: undefined as ReturnType<typeof setTimeout> | undefined }
         const outcome = await Promise.race([
@@ -120,13 +125,13 @@ export async function* converseStream(
           yield { type: 'heartbeat' }
         }
       }
-      const contentBlocks = toolResult.content ?? []
-      const textEntries = contentBlocks.filter(c => 'text' in c) as Array<{ text?: string }>
-      const imageEntries = contentBlocks.filter(c => 'image' in c) as Array<{ image?: { format?: string; source?: { bytes?: Uint8Array } } }>
-      const isError = toolResult.status === 'error'
+      const entries = toolResult.entries
+      const textEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'text' }> => e.kind === 'text')
+      const imageEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'image' }> => e.kind === 'image')
+      const isError = toolResult.isError
 
       // Emit memoryChanged when manage_memory succeeds (triggers WS memoryUpdated event)
-      if (tu.name === 'manage_memory' && toolResult.status === 'success') {
+      if (tu.name === 'manage_memory' && !isError) {
         yield { type: 'memoryChanged' as const }
       }
 
@@ -136,10 +141,10 @@ export async function* converseStream(
         // get_rendered_page's navigate+snapshot, or browse_web with text-only steps) return
         // one entry per step — join them all, not just the first, or later steps' content
         // (e.g. the actual snapshot YAML) silently disappears.
-        const rawContent = textEntries.map(t => t.text ?? '').join('\n\n')
+        const rawContent = textEntries.map(t => t.text).join('\n\n')
         const cappedContent = capToolResultText(rawContent, perCallCap)
         yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedContent, isError }
-        const block: ContentBlock = { toolResult: { toolUseId: tu.toolUseId, content: [{ text: cappedContent }], status: toolResult.status } }
+        const block: ContentBlock = { toolResult: { toolUseId: tu.toolUseId, content: [{ text: cappedContent }], status: isError ? 'error' : 'success' } }
         toolResultsLive.push(block)
         toolResultsPersist.push(block)
         continue
@@ -151,40 +156,40 @@ export async function* converseStream(
       // uploaded screenshots so the live WS frame can render them with no reload needed.
       // `screenshotUrls` travels as its own StreamChunk field (not embedded in `content`) so
       // the client never has to re-parse a JSON envelope out of a text string.
-      const liveContent: NonNullable<ToolResultBlock['content']> = []
-      const persistContent: NonNullable<ToolResultBlock['content']> = []
+      const liveContent: ToolResultContentBlock[] = []
+      const persistContent: ToolResultContentBlock[] = []
       const screenshotUrls: string[] = []
-      const joinedText = textEntries.map(t => t.text ?? '').join('\n\n')
+      const joinedText = textEntries.map(t => t.text).join('\n\n')
       const cappedText = capToolResultText(joinedText, perCallCap)
       if (cappedText) {
         liveContent.push({ text: cappedText })
         persistContent.push({ text: cappedText })
       }
       for (let i = 0; i < imageEntries.length; i++) {
-        const format = imageEntries[i].image?.format ?? 'png'
-        const bytes = imageEntries[i].image?.source?.bytes
+        const format = imageEntries[i].format
+        const bytes = imageEntries[i].bytes
         if (!bytes) continue
-        liveContent.push({ image: { format: format as 'png' | 'jpeg', source: { bytes } } })
+        liveContent.push({ image: { format, source: { bytes } } })
         if (ctx?.sub && ctx?.chatId) {
           const key = `${s3KeyPrefix(ctx.sub, ctx.chatId)}${tu.name}-${tu.toolUseId}-${i}.${format}`
           const uri = await putObjectBytes(key, bytes, `image/${format}`)
-          persistContent.push({ image: { format: format as 'png' | 'jpeg', source: { s3Location: { uri } } } } as unknown as NonNullable<ToolResultBlock['content']>[number])
+          persistContent.push({ image: { format, source: { s3Location: { uri } } } })
           screenshotUrls.push(await signCloudFrontUrl(key))
         } else {
           // No durable chat context (e.g. a unit test ctx) — keep bytes in the persisted form
           // too rather than silently dropping the image.
-          persistContent.push({ image: { format: format as 'png' | 'jpeg', source: { bytes } } })
+          persistContent.push({ image: { format, source: { bytes } } })
         }
       }
 
       yield { type: 'tool_result', toolUseId: tu.toolUseId, name: tu.name, content: cappedText, isError, screenshotUrls }
 
-      toolResultsLive.push({ toolResult: { toolUseId: tu.toolUseId, content: liveContent, status: toolResult.status } })
-      toolResultsPersist.push({ toolResult: { toolUseId: tu.toolUseId, content: persistContent, status: toolResult.status } })
+      toolResultsLive.push({ toolResult: { toolUseId: tu.toolUseId, content: liveContent, status: isError ? 'error' : 'success' } })
+      toolResultsPersist.push({ toolResult: { toolUseId: tu.toolUseId, content: persistContent, status: isError ? 'error' : 'success' } })
     }
 
-    // Yield the user tool-result turn for persistence (s3Location form)
-    yield { type: 'turn', role: 'user', content: toolResultsPersist, turnIndex }
+    // Yield the user tool-result turn for persistence (s3Location form, neutral at rest)
+    yield { type: 'turn', role: 'user', content: toNeutral(toolResultsPersist), turnIndex }
     turnIndex++
 
     // Continue the loop with the bytes-inline form (this invocation's next round only)
@@ -229,7 +234,8 @@ export async function* converseStream(
     if (!hasText) {
       finalContent.push({ text: "I've reached my research step limit for this turn. Here's what I found before stopping — let me know if you'd like me to continue." })
     }
-    yield { type: 'turn', role: 'assistant', content: finalContent, turnIndex }
+    const neutralFinal: Block[] = toNeutral(finalContent)
+    yield { type: 'turn', role: 'assistant', content: neutralFinal, turnIndex }
     yield { type: 'stop', stopReason: finalResult.stopReason === 'tool_use' ? 'max_rounds' : finalResult.stopReason }
   } else {
     yield { type: 'stop', stopReason: 'max_rounds' }
@@ -241,8 +247,8 @@ export async function* converseStream(
 export async function converseOnce(
   modelId: string,
   systemPrompt: string,
-  messages: Message[],
+  messages: NeutralMessage[],
   options?: { maxTokens?: number },
 ): Promise<string> {
-  return converseOnceImpl(modelId, systemPrompt, messages, options)
+  return converseOnceImpl(modelId, systemPrompt, messages.map(fromNeutralMessage), options)
 }

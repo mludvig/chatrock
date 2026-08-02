@@ -88,7 +88,7 @@ export async function enrichUserFacts(
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
       USER_SYSTEM_PROMPT,
-      [{ role: 'user', content: [{ text: userMsg }] }],
+      [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
       { maxTokens: 1024 },
     )
 
@@ -117,7 +117,7 @@ export async function generateChatTitle(transcript: string, chatId?: string): Pr
     const response = await converseOnce(
       TITLE_MODEL,
       '',
-      [{ role: 'user', content: [{ text: `${TITLE_PROMPT}\n\n${transcript}` }] }],
+      [{ role: 'user', content: [{ kind: 'text', text: `${TITLE_PROMPT}\n\n${transcript}` }] }],
       { maxTokens: 32 },
     )
     const title = response.trim()
@@ -157,7 +157,7 @@ export async function enrichProjectFacts(
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
       PROJECT_SYSTEM_PROMPT,
-      [{ role: 'user', content: [{ text: userMsg }] }],
+      [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
       { maxTokens: 1024 },
     )
 
@@ -202,7 +202,7 @@ export async function summarizeChat(
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
       SUMMARIZE_CHAT_SYSTEM_PROMPT,
-      [{ role: 'user', content: [{ text: userMsg }] }],
+      [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
       { maxTokens: 512 },
     )
 
@@ -243,8 +243,7 @@ export async function summarizeChatById(sub: string, chatId: string): Promise<Ch
       .filter(r => r.role === 'user' || r.role === 'assistant')
       .slice(-20)
       .map(r => {
-        const blocks = r.blocks as Array<{ text?: string }> | undefined ?? []
-        const text = blocks.map(b => b.text ?? '').filter(Boolean).join(' ').slice(0, 400)
+        const text = r.blocks.filter(b => b.kind === 'text').map(b => b.text).filter(Boolean).join(' ').slice(0, 400)
         return `${r.role === 'user' ? 'User' : 'Assistant'}: ${text}`
       })
       .join('\n')

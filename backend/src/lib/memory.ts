@@ -1,6 +1,6 @@
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL } from '../config/models'
-import type { ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { ToolResult } from './llm/toolSpec'
 import {
   listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey,
   listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey,
@@ -53,7 +53,7 @@ export async function extractUserFacts(
     const response = await converseOnce(
       MEMORY_EXTRACTION_MODEL,
       EXTRACTION_SYSTEM_PROMPT,
-      [{ role: 'user', content: [{ text: transcript }] }],
+      [{ role: 'user', content: [{ kind: 'text', text: transcript }] }],
       { maxTokens: 512 },
     )
 
@@ -182,23 +182,23 @@ export function reconcileMemoryList(
 
 const VALID_CATEGORIES = new Set<string>(['identity', 'preference', 'style', 'other'])
 
-function errorResult(message: string): ToolResultBlock {
-  return { toolUseId: '', content: [{ text: message }], status: 'error' }
+function errorResult(message: string): ToolResult {
+  return { entries: [{ kind: 'text', text: message }], isError: true }
 }
 
-function successResult(message: string): ToolResultBlock {
-  return { toolUseId: '', content: [{ text: message }], status: 'success' }
+function successResult(message: string): ToolResult {
+  return { entries: [{ kind: 'text', text: message }], isError: false }
 }
 
 /**
  * Execute the manage_memory tool operation.
  * ctx: { sub: string } — user identity from authenticated context, NOT from model input.
- * Never throws — always returns a ToolResultBlock.
+ * Never throws — always returns a ToolResult.
  */
 export async function executeMemoryTool(
   input: Record<string, string>,
   ctx: { sub: string },
-): Promise<ToolResultBlock> {
+): Promise<ToolResult> {
   try {
     const { operation } = input
 
@@ -303,12 +303,12 @@ const VALID_PROJECT_CATEGORIES = new Set<string>(['decision', 'convention', 'fac
 /**
  * Execute the manage_project_memory tool operation.
  * ctx: { projectId: string } — project identity from authenticated context, NOT from model input.
- * Never throws — always returns a ToolResultBlock.
+ * Never throws — always returns a ToolResult.
  */
 export async function executeProjectMemoryTool(
   input: Record<string, string>,
   ctx: { projectId: string },
-): Promise<ToolResultBlock> {
+): Promise<ToolResult> {
   try {
     const { operation } = input
 

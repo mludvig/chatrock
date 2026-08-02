@@ -64,7 +64,7 @@ describe('web_fetch executor', () => {
     }) as unknown as typeof fetch
 
     const res = await executeTool('web_fetch', { url: 'https://example.com' }, TEST_CTX)
-    const payload = JSON.parse((res.content?.[0] as { text: string }).text)
+    const payload = JSON.parse((res.entries[0] as { text: string }).text)
     expect(payload.result).toMatchObject({ title: 'Example Domain', url: 'https://example.com', description: 'An example' })
     expect(payload.text).toContain('Hello world body')
   })
@@ -79,7 +79,7 @@ describe('web_fetch executor', () => {
     }) as unknown as typeof fetch
 
     const res = await executeTool('web_fetch', { url: 'https://example.com/long' }, TEST_CTX)
-    const payload = JSON.parse((res.content?.[0] as { text: string }).text)
+    const payload = JSON.parse((res.entries[0] as { text: string }).text)
     expect(payload.text).toContain('[... truncated ...]')
     expect(payload.text.length).toBeLessThan(9000)
   })
@@ -93,7 +93,7 @@ describe('web_fetch executor', () => {
     }) as unknown as typeof fetch
 
     const res = await executeTool('web_fetch', { url: 'https://example.com/notitle' }, TEST_CTX)
-    const payload = JSON.parse((res.content?.[0] as { text: string }).text)
+    const payload = JSON.parse((res.entries[0] as { text: string }).text)
     expect(payload.result.title).toBe('https://example.com/notitle')
     expect(payload.result.url).toBe('https://example.com/notitle')
   })
@@ -105,7 +105,7 @@ describe('web_fetch executor', () => {
     }) as unknown as typeof fetch
 
     const res = await executeTool('web_fetch', { url: 'https://example.com/fail' }, TEST_CTX)
-    expect(res.status).toBe('error')
+    expect(res.isError).toBe(true)
   })
 
   it('falls back to raw url when data is absent', async () => {
@@ -115,7 +115,7 @@ describe('web_fetch executor', () => {
     }) as unknown as typeof fetch
 
     const res = await executeTool('web_fetch', { url: 'https://example.com' }, TEST_CTX)
-    const payload = JSON.parse((res.content?.[0] as { text: string }).text)
+    const payload = JSON.parse((res.entries[0] as { text: string }).text)
     expect(payload.result.url).toBe('https://example.com')
     expect(payload.result.title).toBe('https://example.com')  // title falls back to url
     expect(payload.text).toBe('')
@@ -131,9 +131,8 @@ describe('manage_memory dispatch', () => {
 
   it('dispatches to executeMemoryTool with ctx.sub', async () => {
     mockExecuteMemoryTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: 'Saved.' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'Saved.' }],
+      isError: false,
     })
 
     const result = await executeTool(
@@ -147,14 +146,13 @@ describe('manage_memory dispatch', () => {
       { operation: 'remember', text: 'I am a developer', category: 'identity' },
       { sub: 'user-1' },
     )
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
   })
 
   it('security: input.sub is ignored — dynamo key uses ctx.sub', async () => {
     mockExecuteMemoryTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: 'Saved.' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'Saved.' }],
+      isError: false,
     })
 
     await executeTool(
@@ -178,9 +176,8 @@ describe('manage_project_memory dispatch', () => {
 
   it('dispatches to executeProjectMemoryTool with ctx.projectId', async () => {
     mockExecuteProjectMemoryTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: 'Saved.' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'Saved.' }],
+      isError: false,
     })
 
     const result = await executeTool(
@@ -194,7 +191,7 @@ describe('manage_project_memory dispatch', () => {
       { operation: 'remember', text: 'Use DynamoDB single-table design', category: 'decision' },
       { projectId: 'proj-abc' },
     )
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
   })
 
   it('returns error when ctx.projectId is missing', async () => {
@@ -204,16 +201,15 @@ describe('manage_project_memory dispatch', () => {
       { sub: 'user-1' }, // no projectId
     )
 
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toBe('No project context')
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toBe('No project context')
     expect(mockExecuteProjectMemoryTool).not.toHaveBeenCalled()
   })
 
   it('manage_memory still dispatches to executeMemoryTool (not project memory)', async () => {
     mockExecuteMemoryTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: 'Saved.' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'Saved.' }],
+      isError: false,
     })
 
     await executeTool(
@@ -236,9 +232,8 @@ describe('read_project_file dispatch', () => {
 
   it('dispatches to executeProjectReadFileTool when ctx.projectId set', async () => {
     mockExecuteProjectReadFileTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: 'File content.' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'File content.' }],
+      isError: false,
     })
 
     const result = await executeTool(
@@ -252,7 +247,7 @@ describe('read_project_file dispatch', () => {
       { fileId: 'file1', detail: 'summary' },
       { sub: 'user-1', projectId: 'proj-abc' },
     )
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
   })
 
   it('returns error when ctx.projectId is missing', async () => {
@@ -262,8 +257,8 @@ describe('read_project_file dispatch', () => {
       { sub: 'user-1' }, // no projectId
     )
 
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toBe('No project context')
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toBe('No project context')
     expect(mockExecuteProjectReadFileTool).not.toHaveBeenCalled()
   })
 })
@@ -277,9 +272,8 @@ describe('read_project_chat dispatch', () => {
 
   it('dispatches to executeProjectReadChatTool when ctx.projectId set', async () => {
     mockExecuteProjectReadChatTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: 'Chat summary.' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'Chat summary.' }],
+      isError: false,
     })
 
     const result = await executeTool(
@@ -293,7 +287,7 @@ describe('read_project_chat dispatch', () => {
       { chatId: 'chat2', detail: 'summary' },
       { sub: 'user-1', projectId: 'proj-abc' },
     )
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
   })
 
   it('returns error when ctx.projectId is missing', async () => {
@@ -303,8 +297,8 @@ describe('read_project_chat dispatch', () => {
       { sub: 'user-1' }, // no projectId
     )
 
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toBe('No project context')
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toBe('No project context')
     expect(mockExecuteProjectReadChatTool).not.toHaveBeenCalled()
   })
 })
@@ -318,9 +312,8 @@ describe('search_history dispatch', () => {
 
   it('dispatches to executeSearchHistoryTool with sub/projectId/chatId/searchScope from ctx', async () => {
     mockExecuteSearchHistoryTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
-      status: 'success',
+      entries: [{ kind: 'text', text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
+      isError: false,
     })
 
     const result = await executeTool(
@@ -334,14 +327,13 @@ describe('search_history dispatch', () => {
       { query: 'athena tuning' },
       { sub: 'user-1', projectId: 'proj-abc', chatId: 'chat-1', searchScope: 'global' },
     )
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
   })
 
   it('works without ctx.projectId/searchScope (organic global call outside a project)', async () => {
     mockExecuteSearchHistoryTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
-      status: 'success',
+      entries: [{ kind: 'text', text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
+      isError: false,
     })
 
     await executeTool('search_history', { query: 'athena tuning' }, { sub: 'user-1' })
@@ -372,7 +364,7 @@ describe('web_search provider dispatch', () => {
 
     expect(global.fetch).toHaveBeenCalled()
     expect(mockCallGatewayTool).not.toHaveBeenCalled()
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
   })
 
   it('routes to Jina when ctx.webSearchProvider is "jina"', async () => {
@@ -401,8 +393,8 @@ describe('web_search provider dispatch', () => {
     const result = await executeTool('web_search', { query: 'python release' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
 
     expect(mockCallGatewayTool).toHaveBeenCalledWith('WebSearch', { query: 'python release', maxResults: 5 })
-    expect(result.status).toBe('success')
-    const payload = JSON.parse((result.content?.[0] as { text: string }).text)
+    expect(result.isError).toBe(false)
+    const payload = JSON.parse((result.entries[0] as { text: string }).text)
     expect(payload.results).toEqual([
       { title: 'Python 3.13', url: 'https://example.com/py313', description: 'Python 3.13 was released in October 2024.' },
     ])
@@ -424,7 +416,7 @@ describe('web_search provider dispatch', () => {
 
     const result = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it('returns "No results found." when AgentCore returns an empty results array', async () => {
@@ -432,7 +424,7 @@ describe('web_search provider dispatch', () => {
 
     const result = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
 
-    const payload = JSON.parse((result.content?.[0] as { text: string }).text)
+    const payload = JSON.parse((result.entries[0] as { text: string }).text)
     expect(payload.results).toEqual([])
     expect(payload.text).toBe('No results found.')
   })
@@ -464,54 +456,54 @@ describe('browse_web dispatch', () => {
     const result = await executeTool('browse_web', { steps: [{ tool: 'browser_navigate', params: { url: 'https://example.com' } }] }, TEST_CTX)
 
     expect(mockRunBrowserSteps).toHaveBeenCalledWith([{ tool: 'browser_navigate', params: { url: 'https://example.com' } }])
-    expect(result.status).toBe('success')
-    expect(result.content).toEqual([{ text: '### browser_navigate\nNavigated' }])
+    expect(result.isError).toBe(false)
+    expect(result.entries).toEqual([{ kind: 'text', text: '### browser_navigate\nNavigated' }])
   })
 
   it('returns error without calling runBrowserSteps when steps is empty', async () => {
     const result = await executeTool('browse_web', { steps: [] }, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it('returns error without calling runBrowserSteps when steps is missing', async () => {
     const result = await executeTool('browse_web', {}, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it(`returns error without calling runBrowserSteps when over ${MAX_BROWSER_STEPS} steps`, async () => {
     const steps = Array.from({ length: MAX_BROWSER_STEPS + 1 }, () => ({ tool: 'browser_navigate', params: { url: 'https://example.com' } }))
     const result = await executeTool('browse_web', { steps }, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it('returns a self-correcting error without calling runBrowserSteps when a step uses a disallowed tool', async () => {
     const result = await executeTool('browse_web', { steps: [{ tool: 'browser_run_code_unsafe', params: { code: '1' } }] }, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toMatch(/Unknown step tool/)
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toMatch(/Unknown step tool/)
   })
 
   it('returns a self-correcting error when steps is empty, mentioning the steps array shape', async () => {
     const result = await executeTool('browse_web', { steps: [] }, TEST_CTX)
-    expect((result.content?.[0] as { text: string }).text).toMatch(/non-empty "steps" array/)
+    expect((result.entries[0] as { text: string }).text).toMatch(/non-empty "steps" array/)
   })
 
   it('gives a self-correcting hint when a step tool name is called as a standalone top-level tool', async () => {
     const result = await executeTool('browser_take_screenshot', { target: 'e1' }, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toMatch(/not a standalone tool/)
-    expect((result.content?.[0] as { text: string }).text).toMatch(/browse_web/)
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toMatch(/not a standalone tool/)
+    expect((result.entries[0] as { text: string }).text).toMatch(/browse_web/)
   })
 
   it(`returns error without calling runBrowserSteps when over ${MAX_BROWSER_SCREENSHOTS} screenshot steps`, async () => {
     const steps = Array.from({ length: MAX_BROWSER_SCREENSHOTS + 1 }, () => ({ tool: 'browser_take_screenshot', params: {} }))
     const result = await executeTool('browse_web', { steps }, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it('propagates multiple text and image content entries across steps', async () => {
@@ -532,11 +524,11 @@ describe('browse_web dispatch', () => {
       ],
     }, TEST_CTX)
 
-    expect(result.status).toBe('success')
-    expect(result.content).toEqual([
-      { text: '### browser_snapshot\ntree...' },
-      { image: { format: 'png', source: { bytes: Buffer.from('abc') } } },
-      { text: '### browser_console_messages\n[log] hi' },
+    expect(result.isError).toBe(false)
+    expect(result.entries).toEqual([
+      { kind: 'text', text: '### browser_snapshot\ntree...' },
+      { kind: 'image', format: 'png', bytes: Buffer.from('abc') },
+      { kind: 'text', text: '### browser_console_messages\n[log] hi' },
     ])
   })
 
@@ -548,8 +540,8 @@ describe('browse_web dispatch', () => {
 
     const result = await executeTool('browse_web', { steps: [{ tool: 'browser_click', params: { target: 'e3' } }] }, TEST_CTX)
 
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toMatch(/selector not found/)
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toMatch(/selector not found/)
   })
 
   it('logs a browser_tool CloudWatch event with stepCount and screenshotCount', async () => {
@@ -589,10 +581,10 @@ describe('take_screenshot dispatch', () => {
       { tool: 'browser_navigate', params: { url: 'https://example.com' } },
       { tool: 'browser_take_screenshot', params: { type: 'png', fullPage: true } },
     ])
-    expect(result.status).toBe('success')
-    expect(result.content).toEqual([
-      { text: '### browser_navigate\nNavigated' },
-      { image: { format: 'png', source: { bytes: Buffer.from('img') } } },
+    expect(result.isError).toBe(false)
+    expect(result.entries).toEqual([
+      { kind: 'text', text: '### browser_navigate\nNavigated' },
+      { kind: 'image', format: 'png', bytes: Buffer.from('img') },
     ])
   })
 
@@ -611,7 +603,7 @@ describe('take_screenshot dispatch', () => {
   it('returns error without calling runBrowserSteps when url is missing', async () => {
     const result = await executeTool('take_screenshot', {}, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it('propagates a runBrowserSteps error', async () => {
@@ -620,7 +612,7 @@ describe('take_screenshot dispatch', () => {
       isError: true,
     })
     const result = await executeTool('take_screenshot', { url: 'https://bad.invalid' }, TEST_CTX)
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 })
 
@@ -633,9 +625,8 @@ describe('generate_image dispatch', () => {
 
   it('dispatches to executeGenerateImageTool', async () => {
     mockExecuteGenerateImageTool.mockResolvedValueOnce({
-      toolUseId: '',
-      content: [{ image: { format: 'png', source: { bytes: Buffer.from('img') } } }],
-      status: 'success',
+      entries: [{ kind: 'image', format: 'png', bytes: Buffer.from('img') }],
+      isError: false,
     })
 
     const result = await executeTool('generate_image', { prompt: 'a red panda skateboarding' }, { ...TEST_CTX, chatId: 'chat-1' })
@@ -644,7 +635,7 @@ describe('generate_image dispatch', () => {
       { prompt: 'a red panda skateboarding' },
       { ...TEST_CTX, chatId: 'chat-1' },
     )
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
   })
 })
 
@@ -670,9 +661,9 @@ describe('get_rendered_page dispatch', () => {
       { tool: 'browser_navigate', params: { url: 'https://example.com' } },
       { tool: 'browser_snapshot', params: {} },
     ])
-    expect(result.status).toBe('success')
-    expect(result.content).toHaveLength(1)
-    const envelope = JSON.parse((result.content![0] as { text: string }).text) as { result: { title: string; url: string; description: string }; text: string }
+    expect(result.isError).toBe(false)
+    expect(result.entries).toHaveLength(1)
+    const envelope = JSON.parse((result.entries[0] as { text: string }).text) as { result: { title: string; url: string; description: string }; text: string }
     // Same {result,text} shape web_fetch's jinaFetch() produces — reuses its card rendering.
     expect(envelope.result.title).toBe('Example Domain')
     expect(envelope.result.url).toBe('https://example.com/')
@@ -691,7 +682,7 @@ describe('get_rendered_page dispatch', () => {
     })
 
     const result = await executeTool('get_rendered_page', { url: 'https://example.com' }, TEST_CTX)
-    const envelope = JSON.parse((result.content![0] as { text: string }).text) as { result: { title: string; url: string } }
+    const envelope = JSON.parse((result.entries[0] as { text: string }).text) as { result: { title: string; url: string } }
     expect(envelope.result.title).toBe('https://example.com')
     expect(envelope.result.url).toBe('https://example.com')
   })
@@ -711,7 +702,7 @@ describe('get_rendered_page dispatch', () => {
   it('returns error without calling runBrowserSteps when url is missing', async () => {
     const result = await executeTool('get_rendered_page', {}, TEST_CTX)
     expect(mockRunBrowserSteps).not.toHaveBeenCalled()
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it('returns the generic multi-step error content (not a JSON envelope) when a step fails', async () => {
@@ -721,7 +712,7 @@ describe('get_rendered_page dispatch', () => {
     })
 
     const result = await executeTool('get_rendered_page', { url: 'https://bad.invalid' }, TEST_CTX)
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toMatch(/ERR_NAME_NOT_RESOLVED/)
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toMatch(/ERR_NAME_NOT_RESOLVED/)
   })
 })

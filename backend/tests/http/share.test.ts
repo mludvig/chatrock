@@ -46,10 +46,10 @@ test('live mode renders the chat\'s CURRENT active path as HTML by default', asy
   })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', activeLeafId: 'a2' })
   mockDynamo.listMessages.mockResolvedValue([
-    row('u1', null, 'user', [{ text: 'hi' }]),
-    row('a1', 'u1', 'assistant', [{ text: 'first answer' }]),
-    row('u2', 'a1', 'user', [{ text: 'follow-up' }]),
-    row('a2', 'u2', 'assistant', [{ text: 'second answer' }]),
+    row('u1', null, 'user', [{ kind: 'text', text: 'hi' }]),
+    row('a1', 'u1', 'assistant', [{ kind: 'text', text: 'first answer' }]),
+    row('u2', 'a1', 'user', [{ kind: 'text', text: 'follow-up' }]),
+    row('a2', 'u2', 'assistant', [{ kind: 'text', text: 'second answer' }]),
   ])
 
   const res = result(await handler(makeEvent('s1') as any))
@@ -66,10 +66,10 @@ test('snapshot mode only renders msgIds frozen at creation, ignoring later turns
   })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', activeLeafId: 'a2' })
   mockDynamo.listMessages.mockResolvedValue([
-    row('u1', null, 'user', [{ text: 'hi' }]),
-    row('a1', 'u1', 'assistant', [{ text: 'frozen answer' }]),
-    row('u2', 'a1', 'user', [{ text: 'added after snapshot' }]),
-    row('a2', 'u2', 'assistant', [{ text: 'answer added after snapshot' }]),
+    row('u1', null, 'user', [{ kind: 'text', text: 'hi' }]),
+    row('a1', 'u1', 'assistant', [{ kind: 'text', text: 'frozen answer' }]),
+    row('u2', 'a1', 'user', [{ kind: 'text', text: 'added after snapshot' }]),
+    row('a2', 'u2', 'assistant', [{ kind: 'text', text: 'answer added after snapshot' }]),
   ])
 
   const res = result(await handler(makeEvent('s1') as any))
@@ -85,7 +85,7 @@ test('snapshot mode drops a msgId that was later deleted from the chat', async (
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat' })
   // a1 was deleted since the snapshot was taken -- listMessages no longer returns it
   mockDynamo.listMessages.mockResolvedValue([
-    row('u1', null, 'user', [{ text: 'hi' }]),
+    row('u1', null, 'user', [{ kind: 'text', text: 'hi' }]),
   ])
 
   const res = result(await handler(makeEvent('s1') as any))
@@ -99,8 +99,8 @@ test('.md path suffix returns Markdown with the shareId stripped of the extensio
   })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue([
-    row('u1', null, 'user', [{ text: 'hi' }]),
-    row('a1', 'u1', 'assistant', [{ text: 'answer' }]),
+    row('u1', null, 'user', [{ kind: 'text', text: 'hi' }]),
+    row('a1', 'u1', 'assistant', [{ kind: 'text', text: 'answer' }]),
   ])
 
   const res = result(await handler(makeEvent('s1.md') as any))
@@ -115,7 +115,7 @@ test('?format=md and Accept: text/markdown also select Markdown', async () => {
     shareId: 's1', sub: 'user-1', chatId: 'c1', mode: 'live', includeThinking: false, includeTools: false,
   })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', activeLeafId: 'a1' })
-  mockDynamo.listMessages.mockResolvedValue([row('a1', null, 'assistant', [{ text: 'answer' }])])
+  mockDynamo.listMessages.mockResolvedValue([row('a1', null, 'assistant', [{ kind: 'text', text: 'answer' }])])
 
   const res1 = result(await handler(makeEvent('s1', { format: 'md' }) as any))
   expect((res1.headers as Record<string, string>)['Content-Type']).toContain('text/markdown')
@@ -131,9 +131,9 @@ test('excludes thinking and tool steps when includeThinking/includeTools are fal
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue([
     row('a1', null, 'assistant', [
-      { reasoningContent: { reasoningText: { text: 'secret reasoning' } } },
-      { toolUse: { toolUseId: 't1', name: 'web_search', input: {} } },
-      { text: 'visible answer' },
+      { kind: 'thinking', text: 'secret reasoning' },
+      { kind: 'tool_call', callId: 't1', name: 'web_search', input: {} },
+      { kind: 'text', text: 'visible answer' },
     ]),
   ])
 
@@ -150,9 +150,9 @@ test('includes thinking and tool steps when both flags are true', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue([
     row('a1', null, 'assistant', [
-      { reasoningContent: { reasoningText: { text: 'visible reasoning' } } },
-      { toolUse: { toolUseId: 't1', name: 'web_search', input: {} } },
-      { text: 'visible answer' },
+      { kind: 'thinking', text: 'visible reasoning' },
+      { kind: 'tool_call', callId: 't1', name: 'web_search', input: {} },
+      { kind: 'text', text: 'visible answer' },
     ]),
   ])
 

@@ -12,7 +12,7 @@
  *     tool_call_start, tool_call, tool_result, stop) still flow through.
  */
 import { converseStream, coalesceMessages, healDanglingToolUse, bedrockClient, HEARTBEAT_INTERVAL_MS } from '../../src/lib/bedrock'
-import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/blocks'
+import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/llm/blocks'
 import * as tools from '../../src/lib/tools'
 import * as attachmentsLib from '../../src/lib/attachments'
 import { s3KeyPrefix } from '../../src/lib/attachments'
@@ -98,9 +98,8 @@ test('assembles verbatim turn chunk with reasoning text+signature, text, toolUse
 
   // Second round: mock executeTool then a simple end_turn response
   mockExecuteTool.mockResolvedValueOnce({
-    toolUseId: 'tu-1',
-    content: [{ text: 'search result' }],
-    status: 'success',
+    entries: [{ kind: 'text', text: 'search result' }],
+    isError: false,
   })
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -124,26 +123,22 @@ test('assembles verbatim turn chunk with reasoning text+signature, text, toolUse
   expect(assistantTurn).toBeDefined()
   const content = assistantTurn!.content as Array<Record<string, unknown>>
 
-  // Block 0: reasoning with text concatenated + signature
+  // Block 0: reasoning with text concatenated + signature (carried in opaque)
   expect(content[0]).toMatchObject({
-    reasoningContent: {
-      reasoningText: {
-        text: 'think more',
-        signature: 'SIG123',
-      },
-    },
+    kind: 'thinking',
+    text: 'think more',
   })
+  expect((content[0] as { opaque: { provider: string } }).opaque.provider).toBe('bedrock-converse')
 
   // Block 1: text
-  expect(content[1]).toMatchObject({ text: 'Hello world' })
+  expect(content[1]).toMatchObject({ kind: 'text', text: 'Hello world' })
 
   // Block 2: toolUse with parsed input
   expect(content[2]).toMatchObject({
-    toolUse: {
-      toolUseId: 'tu-1',
-      name: 'web_search',
-      input: { query: 'foo' },
-    },
+    kind: 'tool_call',
+    callId: 'tu-1',
+    name: 'web_search',
+    input: { query: 'foo' },
   })
 })
 
@@ -171,9 +166,8 @@ test('captures redactedContent on a reasoning block', async () => {
     .find(c => (c as {type: string}).type === 'turn' && (c as {role: string}).role === 'assistant')
   expect(assistantTurn).toBeDefined()
   const block0 = (assistantTurn!.content as Array<Record<string, unknown>>)[0]
-  expect(block0).toMatchObject({
-    reasoningContent: { redactedContent: redactedBytes },
-  })
+  expect(block0).toMatchObject({ kind: 'thinking', redacted: true, text: '' })
+  expect((block0 as { opaque: { provider: string } }).opaque.provider).toBe('bedrock-converse')
 
   // UI: a redacted thinking block emits thinking_done but no thinking_delta text
   const thinkingDone = chunks.find(c => (c as {type: string}).type === 'thinking_done')
@@ -213,9 +207,8 @@ test('yields a user turn chunk for tool results', async () => {
     { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
   ]))
   mockExecuteTool.mockResolvedValueOnce({
-    toolUseId: 'tu-2',
-    content: [{ text: 'fetched content' }],
-    status: 'success',
+    entries: [{ kind: 'text', text: 'fetched content' }],
+    isError: false,
   })
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -235,10 +228,8 @@ test('yields a user turn chunk for tool results', async () => {
   expect(userTurn).toBeDefined()
   const userContent = userTurn!.content as Array<Record<string, unknown>>
   expect(userContent[0]).toMatchObject({
-    toolResult: {
-      toolUseId: 'tu-2',
-      content: [{ text: 'fetched content' }],
-    },
+    kind: 'tool_result',
+    entries: [{ kind: 'text', text: 'fetched content' }],
   })
 })
 
@@ -265,9 +256,8 @@ test('30 parallel tool calls in one round: aggregate tool-result content stays w
   ]))
   for (let i = 0; i < N; i++) {
     mockExecuteTool.mockResolvedValueOnce({
-      toolUseId: `tu-${i}`,
-      content: [{ text: bigResult }],
-      status: 'success',
+      entries: [{ kind: 'text', text: bigResult }],
+      isError: false,
     })
   }
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
@@ -288,8 +278,8 @@ test('30 parallel tool calls in one round: aggregate tool-result content stays w
   expect(userTurn.content).toHaveLength(N)
 
   const totalBytes = userTurn.content.reduce((sum, block) => {
-    const toolResult = block.toolResult as { content: Array<{ text: string }> }
-    return sum + Buffer.byteLength(toolResult.content[0].text, 'utf8')
+    const toolResult = block as { entries: Array<{ text: string }> }
+    return sum + Buffer.byteLength(toolResult.entries[0].text, 'utf8')
   }, 0)
   expect(totalBytes).toBeLessThanOrEqual(TOOL_RESULTS_ROUND_CAP)
 })
@@ -349,9 +339,8 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
       { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
     ]))
     mockExecuteTool.mockResolvedValueOnce({
-      toolUseId: `tu-${i}`,
-      content: [{ text: 'result' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'result' }],
+      isError: false,
     })
   }
 
@@ -405,9 +394,8 @@ test('final forced call itself returns tool_use with no text: toolUse stripped, 
       { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
     ]))
     mockExecuteTool.mockResolvedValueOnce({
-      toolUseId: `tu-${i}`,
-      content: [{ text: 'result' }],
-      status: 'success',
+      entries: [{ kind: 'text', text: 'result' }],
+      isError: false,
     })
   }
 
@@ -681,9 +669,8 @@ test('ctx: loop threads ctx into executeTool call — 3rd arg is {sub}', async (
     { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
   ]))
   mockExecuteTool.mockResolvedValueOnce({
-    toolUseId: 'tu-ctx',
-    content: [{ text: 'Saved.' }],
-    status: 'success',
+    entries: [{ kind: 'text', text: 'Saved.' }],
+    isError: false,
   })
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -714,9 +701,8 @@ test('memoryChanged: manage_memory tool success → memoryChanged chunk yielded'
     { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
   ]))
   mockExecuteTool.mockResolvedValueOnce({
-    toolUseId: 'tu-mem',
-    content: [{ text: 'Saved.' }],
-    status: 'success',
+    entries: [{ kind: 'text', text: 'Saved.' }],
+    isError: false,
   })
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -744,9 +730,8 @@ test('memoryChanged NOT yielded when manage_memory returns error', async () => {
     { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
   ]))
   mockExecuteTool.mockResolvedValueOnce({
-    toolUseId: 'tu-fail',
-    content: [{ text: 'memId is required.' }],
-    status: 'error',
+    entries: [{ kind: 'text', text: 'memId is required.' }],
+    isError: true,
   })
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -782,7 +767,7 @@ test('part1a: forced-final call after max rounds has non-empty toolConfig in its
       { messageStop: { stopReason: 'tool_use' } },
       { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
     ]))
-    mockExecuteTool.mockResolvedValueOnce({ toolUseId: `tu-${i}`, content: [{ text: 'result' }], status: 'success' })
+    mockExecuteTool.mockResolvedValueOnce({ entries: [{ kind: 'text', text: 'result' }], isError: false })
   }
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -822,7 +807,7 @@ test('part1b: history with toolResult blocks forces toolConfig even when webSear
   const historyWithToolBlock = [
     {
       role: 'user' as const,
-      content: [{ toolResult: { toolUseId: 'old-tu', content: [{ text: 'old result' }], status: 'success' as const } }],
+      content: [{ kind: 'tool_result' as const, callId: 'old-tu', entries: [{ kind: 'text' as const, text: 'old result' }], isError: false }],
     },
   ]
 
@@ -854,8 +839,8 @@ test('regression: converseStream heals a dangling tool_use tail in the replayed 
   ]))
 
   const historyWithDanglingToolUse = [
-    { role: 'user' as const, content: [{ text: 'find the latest news' }] },
-    { role: 'assistant' as const, content: [{ toolUse: { toolUseId: 'orphan-tu', name: 'web_search', input: { query: 'news' } } }] },
+    { role: 'user' as const, content: [{ kind: 'text' as const, text: 'find the latest news' }] },
+    { role: 'assistant' as const, content: [{ kind: 'tool_call' as const, callId: 'orphan-tu', name: 'web_search', input: { query: 'news' } }] },
   ]
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -907,9 +892,8 @@ test('still emits thinking_delta, thinking_done, delta, tool_call_start, tool_ca
     { metadata: { usage: { inputTokens: 5, outputTokens: 2 } } },
   ]))
   mockExecuteTool.mockResolvedValueOnce({
-    toolUseId: 'tu-3',
-    content: [{ text: 'r' }],
-    status: 'success',
+    entries: [{ kind: 'text', text: 'r' }],
+    isError: false,
   })
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -1084,9 +1068,8 @@ describe('converseStream forceToolName (forced Search turn)', () => {
       { metadata: { usage: { inputTokens: 10, outputTokens: 3 } } },
     ]))
     mockExecuteTool.mockResolvedValueOnce({
-      toolUseId: 'tu-1',
-      content: [{ text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
-      status: 'success',
+      entries: [{ kind: 'text', text: JSON.stringify({ results: [], text: 'No relevant past chats or files found.' }) }],
+      isError: false,
     })
     getMockSend().mockResolvedValueOnce(fakeStreamResponse([
       { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -1254,12 +1237,11 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
       { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
     ]))
     mockExecuteTool.mockResolvedValueOnce({
-      toolUseId: 'tu-browse',
-      content: [
-        { text: '### browser_take_screenshot\ndone' },
-        { image: { format: 'png', source: { bytes: PNG_BYTES } } },
+      entries: [
+        { kind: 'text', text: '### browser_take_screenshot\ndone' },
+        { kind: 'image', format: 'png', bytes: PNG_BYTES },
       ],
-      status: 'success',
+      isError: false,
     })
     getMockSend().mockResolvedValueOnce(fakeStreamResponse([
       { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -1279,11 +1261,11 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     }
 
     const toolResultTurn = turnChunks.find(t => t.role === 'user')!
-    const block = toolResultTurn.content[0] as { toolResult: { content: Array<Record<string, unknown>> } }
-    const imageEntry = block.toolResult.content.find(c => 'image' in c) as { image: { source: { s3Location?: { uri: string }; bytes?: Uint8Array } } }
-    expect(imageEntry.image.source.s3Location).toBeDefined()
-    expect(imageEntry.image.source.bytes).toBeUndefined()
-    expect(imageEntry.image.source.s3Location!.uri).toContain(s3KeyPrefix(CTX.sub, CTX.chatId))
+    const block = toolResultTurn.content[0] as { entries: Array<{ kind: string; image?: { source: { s3Uri?: string; bytes?: Uint8Array } } }> }
+    const imageEntry = block.entries.find(e => e.kind === 'image')!
+    expect(imageEntry.image!.source).toHaveProperty('s3Uri')
+    expect((imageEntry.image!.source as { bytes?: Uint8Array }).bytes).toBeUndefined()
+    expect((imageEntry.image!.source as { s3Uri: string }).s3Uri).toContain(s3KeyPrefix(CTX.sub, CTX.chatId))
   })
 
   test('the next round\'s outgoing Bedrock request uses inline bytes, not s3Location', async () => {
@@ -1342,7 +1324,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     // Resolve executeTool only after the heartbeat interval has genuinely elapsed, so the
     // race inside the round loop has time to fire at least one heartbeat tick.
     mockExecuteTool.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve({
-      toolUseId: 'tu-slow', content: [{ text: 'done' }], status: 'success',
+      entries: [{ kind: 'text', text: 'done' }], isError: false,
     }), HEARTBEAT_INTERVAL_MS + 200)))
     getMockSend().mockResolvedValueOnce(fakeStreamResponse([
       { contentBlockStart: { contentBlockIndex: 0, start: {} } },
@@ -1369,7 +1351,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
       { messageStop: { stopReason: 'tool_use' } },
       { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
     ]))
-    mockExecuteTool.mockResolvedValueOnce({ toolUseId: 'tu-ws', content: [{ text: 'plain result' }], status: 'success' })
+    mockExecuteTool.mockResolvedValueOnce({ entries: [{ kind: 'text', text: 'plain result' }], isError: false })
     getMockSend().mockResolvedValueOnce(fakeStreamResponse([
       { contentBlockStart: { contentBlockIndex: 0, start: {} } },
       { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Answer' } } },
@@ -1397,12 +1379,11 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
       { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
     ]))
     mockExecuteTool.mockResolvedValueOnce({
-      toolUseId: 'tu-bw',
-      content: [
-        { text: '### browser_navigate\nnav trace' },
-        { text: '### browser_snapshot\nyaml snapshot content' },
+      entries: [
+        { kind: 'text', text: '### browser_navigate\nnav trace' },
+        { kind: 'text', text: '### browser_snapshot\nyaml snapshot content' },
       ],
-      status: 'success',
+      isError: false,
     })
     getMockSend().mockResolvedValueOnce(fakeStreamResponse([
       { contentBlockStart: { contentBlockIndex: 0, start: {} } },

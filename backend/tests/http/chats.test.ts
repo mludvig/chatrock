@@ -30,7 +30,7 @@ const mockEnrichment = enrichmentLib as jest.Mocked<typeof enrichmentLib>
 // Helper: build a minimal turn row mock for listMessages responses
 const makeRow = (msgId: string, parentId: string | null) => ({
   PK: 'CHAT#c1', SK: `MSG#2025-01-01T00:00:00.000Z#0000#${msgId}`,
-  msgId, parentId, role: 'user', blocks: [{ text: 'x' }],
+  msgId, parentId, role: 'user', blocks: [{ kind: 'text', text: 'x' }],
   model: 'm', createdAt: '2025-01-01T00:00:00.000Z', turnIndex: 0, responseId: 'r1',
 })
 
@@ -209,7 +209,7 @@ test('PATCH /api/chats/{chatId} with unknown model returns 400', async () => {
 test('PATCH /api/chats/{chatId} with valid model succeeds', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
   mockDynamo.updateChatModel.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'global.anthropic.claude-opus-4-8' }, { chatId: 'c1' }) as any))
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'global.anthropic.claude-opus-5' }, { chatId: 'c1' }) as any))
   expect(res.statusCode).toBe(200)
 })
 
@@ -271,7 +271,7 @@ const makeForkRow = (
   PK: 'CHAT#c1', SK: `MSG#2025-01-01T00:00:00.000Z#0000#${msgId}`,
   msgId, parentId,
   role: overrides.role ?? 'assistant',
-  blocks: overrides.blocks ?? [{ text: 'hello' }],
+  blocks: overrides.blocks ?? [{ kind: 'text', text: 'hello' }],
   model: 'model-x', createdAt: '2025-01-01T00:00:00.000Z',
   turnIndex: 0, responseId: overrides.responseId ?? 'r1',
 })
@@ -623,7 +623,7 @@ test('DELETE /api/chats/{chatId} deletes only the Chat item, not messages/S3 dir
 test('POST /api/chats/{chatId}/fork calls copyChatObjects', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'x', systemPrompt: '' })
   const rows = [
-    { PK: 'CHAT#c1', SK: 'MSG#2024#0000#u1', msgId: 'u1', parentId: null, role: 'user', blocks: [{ text: 'hi' }], model: 'x', createdAt: '2024-01-01T00:00:00Z', turnIndex: 0, responseId: 'r1' },
+    { PK: 'CHAT#c1', SK: 'MSG#2024#0000#u1', msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'hi' }], model: 'x', createdAt: '2024-01-01T00:00:00Z', turnIndex: 0, responseId: 'r1' },
   ]
   mockDynamo.listMessages.mockResolvedValue(rows as any)
   mockDynamo.putChat.mockResolvedValue(undefined)
@@ -866,10 +866,10 @@ test('retitle: generates title from blocks[] and persists it', async () => {
   })
   mockDynamo.listMessages.mockResolvedValue([
     { PK: 'CHAT#c1', SK: 'MSG#t#0#u1', msgId: 'u1', parentId: null, role: 'user',
-      blocks: [{ text: 'What is the capital of France?' }],
+      blocks: [{ kind: 'text', text: 'What is the capital of France?' }],
       model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
     { PK: 'CHAT#c1', SK: 'MSG#t#1#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
-      blocks: [{ text: 'The capital of France is Paris.' }],
+      blocks: [{ kind: 'text', text: 'The capital of France is Paris.' }],
       model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
   ])
   mockBedrock.converseOnce.mockResolvedValue('Capital of France')
@@ -910,7 +910,7 @@ test('retitle: allowed for a sensitive chat (title never resurfaces elsewhere)',
   })
   mockDynamo.listMessages.mockResolvedValue([
     { PK: 'CHAT#c1', SK: 'MSG#t#0#u1', msgId: 'u1', parentId: null, role: 'user',
-      blocks: [{ text: 'hi' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+      blocks: [{ kind: 'text', text: 'hi' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
   ])
   mockBedrock.converseOnce.mockResolvedValue('New Title')
   mockDynamo.updateChatTitle.mockResolvedValue(undefined)
@@ -990,9 +990,9 @@ test('proj: fork carries projectId from source chat', async () => {
   })
   mockDynamo.listMessages.mockResolvedValue([
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null, role: 'user',
-      blocks: [{ text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+      blocks: [{ kind: 'text', text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
-      blocks: [{ text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
+      blocks: [{ kind: 'text', text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
   ])
   mockDynamo.putChat.mockResolvedValue(undefined)
   mockDynamo.batchPutMessages.mockResolvedValue(undefined)
@@ -1011,9 +1011,9 @@ test('proj: fork without projectId does not set it on fork', async () => {
   })
   mockDynamo.listMessages.mockResolvedValue([
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null, role: 'user',
-      blocks: [{ text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+      blocks: [{ kind: 'text', text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
-      blocks: [{ text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
+      blocks: [{ kind: 'text', text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
   ])
   mockDynamo.putChat.mockResolvedValue(undefined)
   mockDynamo.batchPutMessages.mockResolvedValue(undefined)
@@ -1079,9 +1079,9 @@ test('fork resolves a stale source model onto the new chat and self-heals the so
   })
   mockDynamo.listMessages.mockResolvedValue([
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null, role: 'user',
-      blocks: [{ text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
+      blocks: [{ kind: 'text', text: 'x' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r1' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1', role: 'assistant',
-      blocks: [{ text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
+      blocks: [{ kind: 'text', text: 'y' }], model: 'x', createdAt: 't', turnIndex: 0, responseId: 'r2' },
   ])
   mockDynamo.putChat.mockResolvedValue(undefined)
   mockDynamo.batchPutMessages.mockResolvedValue(undefined)
@@ -1179,7 +1179,7 @@ test('GET /api/chats/{chatId}/export renders the active path to Markdown with a 
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat!', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue([
     makeRow('u1', null),
-    { ...makeRow('a1', 'u1'), role: 'assistant', blocks: [{ text: 'hello there' }] },
+    { ...makeRow('a1', 'u1'), role: 'assistant', blocks: [{ kind: 'text', text: 'hello there' }] },
   ])
 
   const event = {
@@ -1204,9 +1204,9 @@ test('GET /api/chats/{chatId}/export excludes thinking/tools by default (clean e
     {
       ...makeRow('a1', 'u1'), role: 'assistant',
       blocks: [
-        { reasoningContent: { reasoningText: { text: 'secret reasoning' } } },
-        { toolUse: { toolUseId: 't1', name: 'web_search', input: {} } },
-        { text: 'final answer' },
+        { kind: 'thinking', text: 'secret reasoning' },
+        { kind: 'tool_call', callId: 't1', name: 'web_search', input: {} },
+        { kind: 'text', text: 'final answer' },
       ],
     },
   ])
@@ -1229,9 +1229,9 @@ test('GET /api/chats/{chatId}/export?includeThinking=true&includeTools=true incl
     {
       ...makeRow('a1', 'u1'), role: 'assistant',
       blocks: [
-        { reasoningContent: { reasoningText: { text: 'visible reasoning' } } },
-        { toolUse: { toolUseId: 't1', name: 'web_search', input: {} } },
-        { text: 'final answer' },
+        { kind: 'thinking', text: 'visible reasoning' },
+        { kind: 'tool_call', callId: 't1', name: 'web_search', input: {} },
+        { kind: 'text', text: 'final answer' },
       ],
     },
   ])

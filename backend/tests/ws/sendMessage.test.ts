@@ -6,7 +6,7 @@ import * as enrichmentLib from '../../src/lib/enrichment'
 import * as projectFilesMod from '../../src/lib/projectFiles'
 
 jest.mock('../../src/lib/attachments', () => ({
-  attachmentBlock: jest.fn().mockReturnValue({ image: { format: 'png', source: { s3Location: { uri: 's3://bucket/key.png' } } } }),
+  attachmentBlock: jest.fn().mockReturnValue({ kind: 'image', image: { format: 'png', source: { s3Uri: 's3://bucket/key.png' } } }),
   hydrateBlocks: jest.fn().mockImplementation(async (blocks: unknown[]) => blocks),
 }))
 import * as attachmentsMod from '../../src/lib/attachments'
@@ -92,7 +92,7 @@ test('persists user prompt as a turn record and assistant response as per-turn r
     yield { type: 'delta' as const, text: ' world' }
     // usage emitted before turn (bedrock.ts order: usage → turn → stop)
     yield { type: 'usage' as const, usage: { inputTokens: 10, outputTokens: 5 } }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Hello world' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Hello world' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -109,7 +109,7 @@ test('persists user prompt as a turn record and assistant response as per-turn r
     c => (c[0] as {role: string}).role === 'user',
   )![0] as Record<string, unknown>
   expect(userCall.role).toBe('user')
-  expect(userCall.blocks).toEqual([{ text: 'Hi' }])
+  expect(userCall.blocks).toEqual([{ kind: 'text', text: 'Hi' }])
   expect((userCall.SK as string)).toMatch(/^MSG#.+#\d{4}#.+$/) // buildTurnKey format
   expect(userCall).not.toHaveProperty('content') // format-C uses blocks, not content
 
@@ -118,7 +118,7 @@ test('persists user prompt as a turn record and assistant response as per-turn r
     c => (c[0] as {role: string}).role === 'assistant',
   )![0] as Record<string, unknown>
   expect(assistantCall.role).toBe('assistant')
-  expect(assistantCall.blocks).toEqual([{ text: 'Hello world' }])
+  expect(assistantCall.blocks).toEqual([{ kind: 'text', text: 'Hello world' }])
   expect(assistantCall.usage).toMatchObject({ inputTokens: 10, outputTokens: 5 })
   expect(assistantCall.turnIndex).toBe(0)
   expect(assistantCall).not.toHaveProperty('content') // format-C uses blocks
@@ -144,8 +144,8 @@ test('persists multiple turns from a tool-use round (user prompt + 2 assistant +
       type: 'turn' as const,
       role: 'assistant' as const,
       content: [
-        { reasoningContent: { reasoningText: { text: 'ponder', signature: 'SIG' } } },
-        { toolUse: { toolUseId: 't1', name: 'web_search', input: { query: 'foo' } } },
+        { kind: 'thinking' as const, text: 'ponder', opaque: { provider: 'bedrock-converse' as const, v: 1 as const, data: 'x' } },
+        { kind: 'tool_call' as const, callId: 't1', name: 'web_search', input: { query: 'foo' } },
       ],
       turnIndex: 0,
     }
@@ -153,7 +153,7 @@ test('persists multiple turns from a tool-use round (user prompt + 2 assistant +
     yield {
       type: 'turn' as const,
       role: 'user' as const,
-      content: [{ toolResult: { toolUseId: 't1', content: [{ text: 'results' }], status: 'success' as const } }],
+      content: [{ kind: 'tool_result' as const, callId: 't1', entries: [{ kind: 'text' as const, text: 'results' }], isError: false }],
       turnIndex: 1,
     }
     // Round 1: final answer
@@ -162,7 +162,7 @@ test('persists multiple turns from a tool-use round (user prompt + 2 assistant +
     yield {
       type: 'turn' as const,
       role: 'assistant' as const,
-      content: [{ text: 'done' }],
+      content: [{ kind: 'text' as const, text: 'done' }],
       turnIndex: 2,
     }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
@@ -182,20 +182,20 @@ test('persists multiple turns from a tool-use round (user prompt + 2 assistant +
   const [asst0, userTool] = mockDynamo.putMessagePair.mock.calls[0] as [Record<string, unknown>, Record<string, unknown>]
 
   expect(userPrompt.role).toBe('user')
-  expect(userPrompt.blocks).toEqual([{ text: 'Q' }])
+  expect(userPrompt.blocks).toEqual([{ kind: 'text' as const, text: 'Q' }])
 
   expect(asst0.role).toBe('assistant')
   expect(asst0.turnIndex).toBe(0)
   expect(asst0.usage).toMatchObject({ inputTokens: 20, outputTokens: 8 })
   // blocks contain reasoning (with signature) + toolUse verbatim
   const asst0Blocks = asst0.blocks as Array<Record<string, unknown>>
-  expect(asst0Blocks[0]).toMatchObject({ reasoningContent: { reasoningText: { signature: 'SIG' } } })
-  expect(asst0Blocks[1]).toMatchObject({ toolUse: { toolUseId: 't1' } })
+  expect(asst0Blocks[0]).toMatchObject({ kind: 'thinking', text: 'ponder' })
+  expect(asst0Blocks[1]).toMatchObject({ kind: 'tool_call', callId: 't1' })
 
   expect(userTool.role).toBe('user')
   expect(userTool.turnIndex).toBe(1)
   const toolBlocks = userTool.blocks as Array<Record<string, unknown>>
-  expect(toolBlocks[0]).toMatchObject({ toolResult: { toolUseId: 't1' } })
+  expect(toolBlocks[0]).toMatchObject({ kind: 'tool_result', callId: 't1' })
 
   expect(asst2.role).toBe('assistant')
   expect(asst2.turnIndex).toBe(2)
@@ -210,7 +210,7 @@ test('forwards a compact aggregated usage WS event', async () => {
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'hi' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'hi' }], turnIndex: 0 }
     yield { type: 'usage' as const, usage: { inputTokens: 100, outputTokens: 20, cacheReadInputTokens: 50 } }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
@@ -232,7 +232,7 @@ test('replays history as verbatim blocks (not flat text)', async () => {
   mockDynamo.listMessages.mockResolvedValue([
     {
       PK: 'CHAT#c1', SK: 'MSG#t1#0000#u1', msgId: 'u1', parentId: null, role: 'user',
-      blocks: [{ text: 'previous question' }], model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', createdAt: 't1',
+      blocks: [{ kind: 'text' as const, text: 'previous question' }], model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', createdAt: 't1',
       turnIndex: 0, responseId: 'r0',
     },
     {
@@ -251,7 +251,7 @@ test('replays history as verbatim blocks (not flat text)', async () => {
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'ok' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -262,14 +262,14 @@ test('replays history as verbatim blocks (not flat text)', async () => {
   const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
   expect(passedMessages).toHaveLength(3)
   // First message content verbatim
-  expect(passedMessages[0].content).toEqual([{ text: 'previous question' }])
+  expect(passedMessages[0].content).toEqual([{ kind: 'text', text: 'previous question' }])
   // Second message content verbatim (including reasoningContent with signature)
   expect(passedMessages[1].content).toEqual([
     { reasoningContent: { reasoningText: { text: 'I thought', signature: 'MOCKED_SIG' } } },
     { text: 'previous answer' },
   ])
   // Third message is the new user follow-up
-  expect(passedMessages[2].content).toEqual([{ text: 'follow-up' }])
+  expect(passedMessages[2].content).toEqual([{ kind: 'text', text: 'follow-up' }])
 })
 
 test('streams UI chunks and persists without persisting them on WS', async () => {
@@ -281,7 +281,7 @@ test('streams UI chunks and persists without persisting them on WS', async () =>
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Hello' }
     yield { type: 'delta' as const, text: ' world' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Hello world' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Hello world' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -391,7 +391,7 @@ test('inc2: each persisted turn carries a top-level msgId and parentId', async (
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -416,7 +416,7 @@ test('inc2: user prompt parentId = chat.activeLeafId (null for a fresh chat)', a
   mockDynamo.updateChatTitle.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'hi' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -435,13 +435,13 @@ test('inc2: user prompt parentId = existing chat.activeLeafId', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'prev-leaf-id' })
   mockDynamo.listMessages.mockResolvedValue([
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#prev-leaf-id', msgId: 'prev-leaf-id', parentId: null,
-      role: 'assistant', blocks: [{ text: 'previous' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+      role: 'assistant', blocks: [{ kind: 'text' as const, text: 'previous' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
   ])
   mockDynamo.putMessage.mockResolvedValue(undefined)
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -463,9 +463,9 @@ test('inc2: response turns chain parentId from user turn through each assistant/
 
   // Two turns: assistant + user-toolResult + assistant-final
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], turnIndex: 0 }
-    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' as const } }], turnIndex: 1 }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'done' }], turnIndex: 2 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'tool_call' as const, callId: 't1', name: 'web_search', input: {} }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ kind: 'tool_result' as const, callId: 't1', entries: [{ kind: 'text' as const, text: 'res' }], isError: false }], turnIndex: 1 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'done' }], turnIndex: 2 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -492,7 +492,7 @@ test('inc2: activeLeafId advanced incrementally; final call is the final turn ms
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'final' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'final' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -517,9 +517,9 @@ test('inc2: activeLeafId advanced incrementally; final call is the final turn ms
 
 const RERUN_PRIOR_ROWS = [
   { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
-    role: 'user', blocks: [{ text: 'original question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+    role: 'user', blocks: [{ kind: 'text' as const, text: 'original question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
   { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
-    role: 'assistant', blocks: [{ text: 'original answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+    role: 'assistant', blocks: [{ kind: 'text' as const, text: 'original answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
 ]
 
 function rerunEvent(overrides: Record<string, unknown> = {}) {
@@ -537,7 +537,7 @@ function rerunBase() {
 test('inc3: re-run does NOT persist a new user turn', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 're-answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -553,7 +553,7 @@ test('inc3: re-run does NOT persist a new user turn', async () => {
 test('inc3: re-run new assistant turn parentId === given parentId', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 're-answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -569,7 +569,7 @@ test('inc3: re-run new assistant turn parentId === given parentId', async () => 
 test('inc3: re-run updateChatActiveLeaf called with new leaf msgId', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 're-answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -588,7 +588,7 @@ test('inc3: re-run updateChatActiveLeaf called with new leaf msgId', async () =>
 test('inc3: re-run replay ends at the user turn — original answer NOT included', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 're-answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -598,7 +598,7 @@ test('inc3: re-run replay ends at the user turn — original answer NOT included
   const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
   // Only the user turn (root→u1), NOT the original answer (a1)
   expect(passedMessages).toHaveLength(1)
-  expect(passedMessages[0].content).toEqual([{ text: 'original question' }])
+  expect(passedMessages[0].content).toEqual([{ kind: 'text', text: 'original question' }])
   expect(passedMessages[0].role).toBe('user')
 })
 
@@ -610,7 +610,7 @@ test('inc3: re-run does NOT call auto-title even when title is "New Chat"', asyn
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 're-answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 're-answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -649,7 +649,7 @@ function editEvent(overrides: Record<string, unknown> = {}) {
 test('inc5: edit persists a new user turn with edited content and correct parentId', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -661,13 +661,13 @@ test('inc5: edit persists a new user turn with edited content and correct parent
     .filter(r => r.role === 'user')
   expect(userPuts).toHaveLength(1)
   expect(userPuts[0].parentId).toBeNull()
-  expect(userPuts[0].blocks).toEqual([{ text: 'edited question' }])
+  expect(userPuts[0].blocks).toEqual([{ kind: 'text', text: 'edited question' }])
 })
 
 test('inc5: edit new user turn has a different msgId from the original', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -683,7 +683,7 @@ test('inc5: edit new user turn has a different msgId from the original', async (
 test('inc5: edit assistant turn parentId === new user turn msgId', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -702,7 +702,7 @@ test('inc5: edit assistant turn parentId === new user turn msgId', async () => {
 test('inc5: edit updateChatActiveLeaf called once with the new assistant leaf', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -721,7 +721,7 @@ test('inc5: edit updateChatActiveLeaf called once with the new assistant leaf', 
 test('inc5: edit replay is root→new-user-turn (edited content is last message)', async () => {
   rerunBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -732,7 +732,7 @@ test('inc5: edit replay is root→new-user-turn (edited content is last message)
   // Root edit: only the new user turn in history (no prior ancestor)
   expect(passedMessages).toHaveLength(1)
   expect(passedMessages[0].role).toBe('user')
-  expect(passedMessages[0].content).toEqual([{ text: 'edited question' }])
+  expect(passedMessages[0].content).toEqual([{ kind: 'text', text: 'edited question' }])
 })
 
 test('inc5: edit does NOT call auto-title when title is "New Chat"', async () => {
@@ -743,7 +743,7 @@ test('inc5: edit does NOT call auto-title when title is "New Chat"', async () =>
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -771,13 +771,13 @@ test('inc5: edit with non-null parentId creates new user turn as sibling under t
   // Tree: u1 (root) → a1 → u2 → a2
   const rows = [
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
-      role: 'user', blocks: [{ text: 'q1' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+      role: 'user', blocks: [{ kind: 'text' as const, text: 'q1' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
-      role: 'assistant', blocks: [{ text: 'a1' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+      role: 'assistant', blocks: [{ kind: 'text' as const, text: 'a1' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0002#u2', msgId: 'u2', parentId: 'a1',
-      role: 'user', blocks: [{ text: 'q2' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r1' },
+      role: 'user', blocks: [{ kind: 'text' as const, text: 'q2' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r1' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0003#a2', msgId: 'a2', parentId: 'u2',
-      role: 'assistant', blocks: [{ text: 'a2' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r1' },
+      role: 'assistant', blocks: [{ kind: 'text' as const, text: 'a2' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r1' },
   ]
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'a2' })
@@ -786,7 +786,7 @@ test('inc5: edit with non-null parentId creates new user turn as sibling under t
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'edited a1' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'edited a1' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -798,7 +798,7 @@ test('inc5: edit with non-null parentId creates new user turn as sibling under t
     .map(c => c[0] as Record<string, unknown>)
     .find(r => r.role === 'user')!
   expect(userPut.parentId).toBe('a1')
-  expect(userPut.blocks).toEqual([{ text: 'mid-convo edit' }])
+  expect(userPut.blocks).toEqual([{ kind: 'text', text: 'mid-convo edit' }])
   // New user turn is a different node from u2
   expect(userPut.msgId).not.toBe('u2')
 })
@@ -818,7 +818,7 @@ test('d3: cancel between turns — persisted turns survive, cancelled event emit
   // abort signal being fired by the poll timer between turns).
   const converseStreamFn = jest.fn((_model: unknown, _sys: unknown, _msgs: unknown, _settings: unknown, signal?: AbortSignal) =>
     (async function* () {
-      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'first answer' }], turnIndex: 0 }
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'first answer' }], turnIndex: 0 }
       // Simulate the abort signal firing (as if the poll timer called abort())
       if (signal) {
         const ctrl = (signal as unknown as { _controller?: AbortController })._controller
@@ -833,7 +833,7 @@ test('d3: cancel between turns — persisted turns survive, cancelled event emit
   // A simpler approach: the fake stream throws AbortError directly to simulate cancellation.
   const converseStreamFn2 = jest.fn((_m: unknown, _s: unknown, _msgs: unknown, _settings: unknown, _signal?: AbortSignal) =>
     (async function* () {
-      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'first answer' }], turnIndex: 0 }
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'first answer' }], turnIndex: 0 }
       // Throw AbortError to simulate the signal firing
       const err = new Error('Request aborted')
       err.name = 'AbortError'
@@ -892,7 +892,7 @@ test('d3: cancel mid-turn — partial text flushed as assistant turn, cancelled 
   // Partial text should have been flushed as an assistant turn
   const partialPut = putCalls.find(r => r.role === 'assistant')
   expect(partialPut).toBeDefined()
-  expect(partialPut!.blocks).toEqual([{ text: 'partial answer' }])
+  expect(partialPut!.blocks).toEqual([{ kind: 'text', text: 'partial answer' }])
 
   // 'cancelled' WS event emitted
   const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
@@ -917,7 +917,7 @@ test('ack: emits an ack frame as the first WS frame on a valid send', async () =
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'hi' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'hi' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -983,7 +983,7 @@ test('f1: assistant turn row stores thinkingEffort and webSearchEnabled from mod
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'hi' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1009,7 +1009,7 @@ test('f2: webSearchEnabled:false passes empty tools — converseStream called wi
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1031,16 +1031,16 @@ test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat histo
   // Two prior rows — a linear chain (user → assistant)
   const priorRows = [
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#user-prev', msgId: 'user-prev', parentId: null,
-      role: 'user', blocks: [{ text: 'prior question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+      role: 'user', blocks: [{ kind: 'text' as const, text: 'prior question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0001#asst-prev', msgId: 'asst-prev', parentId: 'user-prev',
-      role: 'assistant', blocks: [{ text: 'prior answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+      role: 'assistant', blocks: [{ kind: 'text' as const, text: 'prior answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
   ]
   mockDynamo.listMessages.mockResolvedValue(priorRows)
   mockDynamo.putMessage.mockResolvedValue(undefined)
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'new' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'new' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1051,10 +1051,10 @@ test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat histo
   // For a linear chat the active-path walk produces the same order as the flat array
   const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
   // First two messages are the prior rows (verbatim blocks)
-  expect(passedMessages[0].content).toEqual([{ text: 'prior question' }])
-  expect(passedMessages[1].content).toEqual([{ text: 'prior answer' }])
+  expect(passedMessages[0].content).toEqual([{ kind: 'text', text: 'prior question' }])
+  expect(passedMessages[1].content).toEqual([{ kind: 'text', text: 'prior answer' }])
   // Third message is the newly persisted user turn
-  expect(passedMessages[2].content).toEqual([{ text: 'Follow-up' }])
+  expect(passedMessages[2].content).toEqual([{ kind: 'text', text: 'Follow-up' }])
 })
 
 describe('attachments in WS payload', () => {
@@ -1070,7 +1070,7 @@ describe('attachments in WS payload', () => {
     mockDynamo.updateChatTitle?.mockResolvedValue(undefined)
 
     const fakeStream = async function* () {
-      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'OK' }], turnIndex: 0 }
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'OK' }], turnIndex: 0 }
       yield { type: 'stop' as const, stopReason: 'end_turn' }
     }
     mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1109,7 +1109,7 @@ describe('attachments in WS payload', () => {
     mockDynamo.updateChatTitle?.mockResolvedValue(undefined)
 
     const fakeStream = async function* () {
-      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'I see it' }], turnIndex: 0 }
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'I see it' }], turnIndex: 0 }
       yield { type: 'stop' as const, stopReason: 'end_turn' }
     }
     mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1151,7 +1151,7 @@ test('prefs1: uses assembleSystemPrompt with user prefs — persona appears in s
   mockDynamo.getUserPrefs.mockResolvedValue({ persona: 'Be brief' })
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1169,7 +1169,7 @@ test('prefs2: client modelSettings override user preference defaults', async () 
   mockDynamo.getUserPrefs.mockResolvedValue({ webSearchEnabled: false })
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1186,7 +1186,7 @@ test('prefs2b: client modelSettings.imageGenerationEnabled flows through to conv
   mockDynamo.getUserPrefs.mockResolvedValue({})
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1232,7 +1232,7 @@ test('mem1: memory extraction runs after assistant message persisted — putUser
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Hello from NZ' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Hello from NZ' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Hello from NZ' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1260,7 +1260,7 @@ test('mem2: memory extraction failure is swallowed — chat turn completes norma
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'ok' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1294,7 +1294,7 @@ test('mem3: user memories are injected into assembled prompt', async () => {
   ])
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1323,7 +1323,7 @@ test('mem3b: passive enrichment uses memories re-read AFTER the agentic loop (no
     .mockResolvedValueOnce([toolWritten])  // post-loop re-read (enrichment)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1352,7 +1352,7 @@ test('mem4: memoryEnabled:false — listUserMemories NOT called and memory text 
   ])
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1375,7 +1375,7 @@ test('mem5: memoryEnabled:false — enrichTurn NOT called (extraction skipped)',
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Hello' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Hello' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Hello' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1428,7 +1428,7 @@ test('err1: Bedrock error mid-turn — partial text flushed as incomplete assist
   const partialPut = putCalls.find(r => r.role === 'assistant')
 
   expect(partialPut).toBeDefined()
-  expect(partialPut!.blocks).toEqual([{ text: 'partial answer' }])
+  expect(partialPut!.blocks).toEqual([{ kind: 'text', text: 'partial answer' }])
   expect(partialPut!.incomplete).toBe(true)
 })
 
@@ -1500,8 +1500,8 @@ test('err5: Bedrock error after complete turns — survived turns intact, last t
 
   mockBedrock.converseStream.mockImplementation(() => (async function* () {
     // First tool-use turn fully persisted before error
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], turnIndex: 0 }
-    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' as const } }], turnIndex: 1 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'tool_call' as const, callId: 't1', name: 'web_search', input: {} }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ kind: 'tool_result' as const, callId: 't1', entries: [{ kind: 'text' as const, text: 'res' }], isError: false }], turnIndex: 1 }
     // Then partial text starts streaming and the error fires
     yield { type: 'delta' as const, text: 'partial result' }
     throw new Error('ValidationException: toolConfig required')
@@ -1518,7 +1518,7 @@ test('err5: Bedrock error after complete turns — survived turns intact, last t
   expect(putCalls).toHaveLength(2)
   const partialPut = putCalls[1]
   expect(partialPut.role).toBe('assistant')
-  expect(partialPut.blocks).toEqual([{ text: 'partial result' }])
+  expect(partialPut.blocks).toEqual([{ kind: 'text' as const, text: 'partial result' }])
   expect(partialPut.incomplete).toBe(true)
   // The flushed partial correctly chains from the tool-result turn, confirming
   // lastTurnMsgId was updated once the pair committed.
@@ -1542,10 +1542,10 @@ test('err6-regression: putMessagePair failure on a later round never advances ac
     .mockRejectedValueOnce(new Error('ValidationException: Item size has exceeded the maximum allowed size'))
 
   mockBedrock.converseStream.mockImplementation(() => (async function* () {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 'tA', name: 'web_search', input: {} } }], turnIndex: 0 }
-    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 'tA', content: [{ text: 'resA' }], status: 'success' as const } }], turnIndex: 1 }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ toolUse: { toolUseId: 'tB', name: 'web_search', input: {} } }], turnIndex: 2 }
-    yield { type: 'turn' as const, role: 'user' as const, content: [{ toolResult: { toolUseId: 'tB', content: [{ text: 'resB' }], status: 'success' as const } }], turnIndex: 3 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'tool_call' as const, callId: 'tA', name: 'web_search', input: {} }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ kind: 'tool_result' as const, callId: 'tA', entries: [{ kind: 'text' as const, text: 'resA' }], isError: false }], turnIndex: 1 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'tool_call' as const, callId: 'tB', name: 'web_search', input: {} }], turnIndex: 2 }
+    yield { type: 'turn' as const, role: 'user' as const, content: [{ kind: 'tool_result' as const, callId: 'tB', entries: [{ kind: 'text' as const, text: 'resB' }], isError: false }], turnIndex: 3 }
   })())
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
@@ -1583,9 +1583,9 @@ test('err6-regression: putMessagePair failure on a later round never advances ac
 
 const CONTINUE_PRIOR_ROWS = [
   { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
-    role: 'user', blocks: [{ text: 'original question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+    role: 'user', blocks: [{ kind: 'text' as const, text: 'original question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
   { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
-    role: 'assistant', blocks: [{ text: 'partial answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0', incomplete: true },
+    role: 'assistant', blocks: [{ kind: 'text' as const, text: 'partial answer' }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0', incomplete: true },
 ]
 
 function continueEvent(overrides: Record<string, unknown> = {}) {
@@ -1603,7 +1603,7 @@ function continueBase() {
 test('cont1: continue does NOT persist a new user turn', async () => {
   continueBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'continued answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1619,7 +1619,7 @@ test('cont1: continue does NOT persist a new user turn', async () => {
 test('cont2: continue new assistant turn parentId === the leaf msgId (child, not sibling)', async () => {
   continueBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'continued' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1636,7 +1636,7 @@ test('cont2: continue new assistant turn parentId === the leaf msgId (child, not
 test('cont3: continue new turns reuse the failed responseId so bubbles fuse', async () => {
   continueBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'continued' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1653,7 +1653,7 @@ test('cont3: continue new turns reuse the failed responseId so bubbles fuse', as
 test('cont4: continue replay is INCLUSIVE of the leaf (assistant-terminated history = prefill)', async () => {
   continueBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'continued' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1664,15 +1664,15 @@ test('cont4: continue replay is INCLUSIVE of the leaf (assistant-terminated hist
   // Should be: [user-u1, assistant-a1] (leaf included, not just root→parent)
   expect(passedMessages).toHaveLength(2)
   expect(passedMessages[0].role).toBe('user')
-  expect(passedMessages[0].content).toEqual([{ text: 'original question' }])
+  expect(passedMessages[0].content).toEqual([{ kind: 'text', text: 'original question' }])
   expect(passedMessages[1].role).toBe('assistant')
-  expect(passedMessages[1].content).toEqual([{ text: 'partial answer' }])
+  expect(passedMessages[1].content).toEqual([{ kind: 'text', text: 'partial answer' }])
 })
 
 test('cont5: continue updateChatActiveLeaf called with the new continuation turn msgId', async () => {
   continueBase()
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'continued' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1709,7 +1709,7 @@ test('cont7: continue does NOT call auto-title even when title is "New Chat"', a
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'continued' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'continued' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1724,11 +1724,11 @@ test('cont8: continue from toolResult-user leaf — replay ends at user turn (cl
   // Tree: u1 → a1 (toolUse) → toolResult-u2 (incomplete continuation point)
   const rows = [
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
-      role: 'user', blocks: [{ text: 'question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+      role: 'user', blocks: [{ kind: 'text' as const, text: 'question' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
-      role: 'assistant', blocks: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+      role: 'assistant', blocks: [{ kind: 'tool_call' as const, callId: 't1', name: 'web_search', input: {} }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0002#tr1', msgId: 'tr1', parentId: 'a1',
-      role: 'user', blocks: [{ toolResult: { toolUseId: 't1', content: [{ text: 'result' }], status: 'success' as const } }], model: MODEL, createdAt: 't', turnIndex: 2, responseId: 'r0' },
+      role: 'user', blocks: [{ kind: 'tool_result' as const, callId: 't1', entries: [{ kind: 'text' as const, text: 'result' }], isError: false }], model: MODEL, createdAt: 't', turnIndex: 2, responseId: 'r0' },
   ]
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'tr1' })
@@ -1737,7 +1737,7 @@ test('cont8: continue from toolResult-user leaf — replay ends at user turn (cl
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'final answer' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'final answer' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1761,13 +1761,13 @@ test('cont9: continue uses resolveResponseLeaf — bubble msgId (first turn) res
   // Tree: u1 → a1 (first asst turn, bubble msgId) → tr1 (toolResult) → a2 (incomplete leaf, deepest)
   const rows = [
     { PK: 'CHAT#c1', SK: 'MSG#t#0000#u1', msgId: 'u1', parentId: null,
-      role: 'user', blocks: [{ text: 'q' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
+      role: 'user', blocks: [{ kind: 'text' as const, text: 'q' }], model: MODEL, createdAt: 't', turnIndex: 0, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0001#a1', msgId: 'a1', parentId: 'u1',
-      role: 'assistant', blocks: [{ toolUse: { toolUseId: 't1', name: 'web_search', input: {} } }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
+      role: 'assistant', blocks: [{ kind: 'tool_call' as const, callId: 't1', name: 'web_search', input: {} }], model: MODEL, createdAt: 't', turnIndex: 1, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0002#tr1', msgId: 'tr1', parentId: 'a1',
-      role: 'user', blocks: [{ toolResult: { toolUseId: 't1', content: [{ text: 'res' }], status: 'success' as const } }], model: MODEL, createdAt: 't', turnIndex: 2, responseId: 'r0' },
+      role: 'user', blocks: [{ kind: 'tool_result' as const, callId: 't1', entries: [{ kind: 'text' as const, text: 'res' }], isError: false }], model: MODEL, createdAt: 't', turnIndex: 2, responseId: 'r0' },
     { PK: 'CHAT#c1', SK: 'MSG#t#0003#a2', msgId: 'a2', parentId: 'tr1',
-      role: 'assistant', blocks: [{ text: 'partial' }], model: MODEL, createdAt: 't', turnIndex: 3, responseId: 'r0', incomplete: true },
+      role: 'assistant', blocks: [{ kind: 'text' as const, text: 'partial' }], model: MODEL, createdAt: 't', turnIndex: 3, responseId: 'r0', incomplete: true },
   ]
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'a2' })
@@ -1776,7 +1776,7 @@ test('cont9: continue uses resolveResponseLeaf — bubble msgId (first turn) res
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'final' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'final' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1809,7 +1809,7 @@ test('D1a: llm_call chat log emitted after stop chunk with stopReason and token 
 
   async function* fakeStream() {
     yield { type: 'usage' as const, usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 3 } }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'hi' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1841,7 +1841,7 @@ test('D1b: llm_call enrich_turn log emitted after enrichTurn call', async () => 
   mockDynamo.updateChatTitle.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1886,7 +1886,7 @@ test('D1c: llm_call enrich_turn log emitted and user facts persisted via reconci
   ])
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'hi' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'hi' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1911,7 +1911,7 @@ test('memoryChanged chunk from converseStream → postFn called with memoryUpdat
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'ok' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
     yield { type: 'memoryChanged' as const }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
@@ -1935,7 +1935,7 @@ test('memoryChanged during stream suppresses passive-extractor memoryUpdated to 
 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Noted' }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'Noted' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Noted' }], turnIndex: 0 }
     yield { type: 'memoryChanged' as const }  // tool already fired
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
@@ -1983,7 +1983,7 @@ describe('project chat enrichment', () => {
   function simpleStream() {
     async function* gen() {
       yield { type: 'delta' as const, text: 'ok' }
-      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'ok' }], turnIndex: 0 }
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
       yield { type: 'stop' as const, stopReason: 'end_turn' }
     }
     mockBedrock.converseStream.mockReturnValue(gen())
@@ -2319,7 +2319,7 @@ describe('Search (forced search_history turn)', () => {
   async function* simpleSearchStream() {
     yield { type: 'delta' as const, text: 'No relevant past chats or files found.' }
     yield { type: 'usage' as const, usage: { inputTokens: 10, outputTokens: 5 } }
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ text: 'No relevant past chats or files found.' }], turnIndex: 0 }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'No relevant past chats or files found.' }], turnIndex: 0 }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
 

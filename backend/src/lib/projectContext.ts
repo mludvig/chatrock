@@ -1,24 +1,31 @@
 import { getProjectFile, listMessages, getChat } from './dynamo'
 import { buildActivePath, type TurnRow } from './tree'
-import { capToolResultText } from './blocks'
+import { capToolResultText } from './llm/blocks'
 import { fetchS3Text, fetchS3Bytes } from './projectFiles'
-import type { ContentBlock, ToolResultBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { ToolResult, ToolResultEntry } from './llm/toolSpec'
 import type { ToolContext } from './tools'
 
 const TRANSCRIPT_TURNS_CAP = 40
 
+function textResult(text: string, isError = false): ToolResult {
+  return { entries: [{ kind: 'text', text }], isError }
+}
+function errorResult(text: string): ToolResult {
+  return textResult(text, true)
+}
+
 export async function executeProjectReadFileTool(
   input: Record<string, string>,
   ctx: ToolContext,
-): Promise<ToolResultBlock> {
+): Promise<ToolResult> {
   const { fileId, detail } = input
   if (!fileId || !ctx.projectId) {
-    return { toolUseId: '', content: [{ text: 'Missing fileId or project context' }], status: 'error' }
+    return errorResult('Missing fileId or project context')
   }
 
   const file = await getProjectFile(ctx.projectId, fileId)
   if (!file) {
-    return { toolUseId: '', content: [{ text: `File ${fileId} not found in this project` }], status: 'error' }
+    return errorResult(`File ${fileId} not found in this project`)
   }
 
   if (detail === 'summary' || !detail) {
@@ -27,7 +34,7 @@ export async function executeProjectReadFileTool(
       `Micro-label: ${(file.microLabel as string | undefined) ?? '(none)'}`,
       `Summary: ${(file.summary as string | undefined) ?? '(no summary available)'}`,
     ].join('\n')
-    return { toolUseId: '', content: [{ text }], status: 'success' }
+    return textResult(text)
   }
 
   if (detail === 'full') {
@@ -42,9 +49,9 @@ export async function executeProjectReadFileTool(
         const raw = await fetchS3Text(keyToRead)
         const capped = capToolResultText(raw)
         const header = `File: ${file.filename as string}\n\n`
-        return { toolUseId: '', content: [{ text: header + capped }], status: 'success' }
+        return textResult(header + capped)
       } catch {
-        return { toolUseId: '', content: [{ text: `Could not read file content: ${file.filename as string}` }], status: 'error' }
+        return errorResult(`Could not read file content: ${file.filename as string}`)
       }
     }
 
@@ -53,87 +60,72 @@ export async function executeProjectReadFileTool(
         try {
           const raw = await fetchS3Text(extractedTextKey)
           const capped = capToolResultText(raw)
-          return { toolUseId: '', content: [{ text: `File: ${file.filename as string}\n\n${capped}` }], status: 'success' }
+          return textResult(`File: ${file.filename as string}\n\n${capped}`)
         } catch { /* fall through to raw bytes */ }
       }
-      // No extracted text — send raw PDF bytes as a document block
+      // No extracted text — send raw PDF bytes as a document entry
       try {
         const bytes = await fetchS3Bytes(s3Key)
         const docName = (file.filename as string).replace(/\.pdf$/i, '').slice(0, 200) || 'document'
-        return {
-          toolUseId: '',
-          content: [
-            { document: { format: 'pdf', name: docName, source: { bytes } } } as unknown as ContentBlock,
-            { text: 'The complete PDF is included above.' } as ContentBlock,
-          ] as unknown as Array<{ text: string }>,
-          status: 'success',
-        }
+        const entries: ToolResultEntry[] = [
+          { kind: 'document', format: 'pdf', name: docName, bytes },
+          { kind: 'text', text: 'The complete PDF is included above.' },
+        ]
+        return { entries, isError: false }
       } catch {
         const text = `File: ${file.filename as string}\n\nCould not read PDF content. Summary:\n${(file.summary as string | undefined) ?? '(no summary)'}`
-        return { toolUseId: '', content: [{ text }], status: 'error' }
+        return errorResult(text)
       }
     }
 
     if (contentType.startsWith('image/')) {
-      // Return image bytes as an image content block
+      // Return image bytes as an image tool-result entry
       try {
         const bytes = await fetchS3Bytes(s3Key)
-        const format = contentType.split('/')[1] as 'png' | 'jpeg' | 'gif' | 'webp'
-        return {
-          toolUseId: '',
-          content: [{ image: { format, source: { bytes } } } as unknown as { text: string }],
-          status: 'success',
-        }
+        const format = contentType.split('/')[1] as 'png' | 'jpeg'
+        return { entries: [{ kind: 'image', format, bytes }], isError: false }
       } catch {
-        return { toolUseId: '', content: [{ text: `File: ${file.filename as string}\n\nSummary: ${(file.summary as string | undefined) ?? '(no summary)'}` }], status: 'success' }
+        return textResult(`File: ${file.filename as string}\n\nSummary: ${(file.summary as string | undefined) ?? '(no summary)'}`)
       }
     }
 
     // Binary/unknown — return summary
-    return {
-      toolUseId: '',
-      content: [{ text: `File: ${file.filename as string}\n\nBinary file — full content not available.\nSummary: ${(file.summary as string | undefined) ?? '(no summary)'}` }],
-      status: 'success',
-    }
+    return textResult(`File: ${file.filename as string}\n\nBinary file — full content not available.\nSummary: ${(file.summary as string | undefined) ?? '(no summary)'}`)
   }
 
-  return { toolUseId: '', content: [{ text: `Unknown detail level: ${detail}` }], status: 'error' }
+  return errorResult(`Unknown detail level: ${detail}`)
 }
 
 export async function executeProjectReadChatTool(
   input: Record<string, string>,
   ctx: ToolContext,
-): Promise<ToolResultBlock> {
+): Promise<ToolResult> {
   const { chatId: targetChatId, detail } = input
   if (!targetChatId || !ctx.projectId || !ctx.sub) {
-    return { toolUseId: '', content: [{ text: 'Missing chatId or project context' }], status: 'error' }
+    return errorResult('Missing chatId or project context')
   }
 
   // Reject reading the current chat (use the conversation directly)
   if (targetChatId === ctx.chatId) {
-    return { toolUseId: '', content: [{ text: 'Cannot read the current chat — it is already in your context.' }], status: 'error' }
+    return errorResult('Cannot read the current chat — it is already in your context.')
   }
 
   // Verify ownership: the chat must belong to this project
   const chat = await getChat(ctx.sub, targetChatId)
   if (!chat || chat.projectId !== ctx.projectId) {
-    return { toolUseId: '', content: [{ text: `Chat ${targetChatId} not found in this project` }], status: 'error' }
+    return errorResult(`Chat ${targetChatId} not found in this project`)
   }
 
   if (detail === 'summary' || !detail) {
     const summary = (chat.summary as string | undefined) ?? '(no summary yet)'
-    return {
-      toolUseId: '',
-      content: [{ text: `Chat: ${chat.title as string}\n\nSummary: ${summary}` }],
-      status: 'success',
-    }
+    return textResult(`Chat: ${chat.title as string}\n\nSummary: ${summary}`)
   }
 
   if (detail === 'full') {
     try {
       const rows = await listMessages(targetChatId)
       if (rows.length === 0) {
-        return { toolUseId: '', content: [{ text: `Chat: ${chat.title as string}\n\n(no messages)` }], status: 'success' }
+        return textResult(`Chat: ${chat.title as string}\n\n(no messages)`)
       }
       const typedRows = rows as unknown as TurnRow[]
       const leaf = typedRows[typedRows.length - 1]
@@ -142,19 +134,18 @@ export async function executeProjectReadChatTool(
         .filter(r => r.role === 'user' || r.role === 'assistant')
         .slice(-TRANSCRIPT_TURNS_CAP)
         .map(r => {
-          const blocks = (r.blocks as Array<{ text?: string }> | undefined) ?? []
-          const text = blocks.map(b => b.text ?? '').filter(Boolean).join(' ')
+          const text = r.blocks.filter(b => b.kind === 'text').map(b => b.text).filter(Boolean).join(' ')
           return `${r.role === 'user' ? 'User' : 'Assistant'}: ${text}`
         })
         .join('\n\n')
       const capped = capToolResultText(`Chat: ${chat.title as string}\n\n${transcript}`)
-      return { toolUseId: '', content: [{ text: capped }], status: 'success' }
+      return textResult(capped)
     } catch {
-      return { toolUseId: '', content: [{ text: `Could not load chat transcript for: ${chat.title as string}` }], status: 'error' }
+      return errorResult(`Could not load chat transcript for: ${chat.title as string}`)
     }
   }
 
-  return { toolUseId: '', content: [{ text: `Unknown detail level: ${detail}` }], status: 'error' }
+  return errorResult(`Unknown detail level: ${detail}`)
 }
 
 function isTextLike(contentType: string): boolean {

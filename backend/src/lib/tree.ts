@@ -1,4 +1,4 @@
-import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
+import type { Block } from './llm/blocks'
 import type { TokenUsage } from './bedrock'
 
 // Minimal shape needed for tree operations (superset of TurnRow)
@@ -8,7 +8,7 @@ export interface TurnRow {
   msgId: string
   parentId: string | null
   role: 'user' | 'assistant'
-  blocks: ContentBlock[]
+  blocks: Block[]
   model: string
   createdAt: string
   turnIndex: number

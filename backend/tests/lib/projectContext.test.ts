@@ -38,8 +38,8 @@ void blocksLib
 const ctx = { sub: 'user1', projectId: 'proj1', chatId: 'chat-current' }
 
 // Helper to get content array safely
-function content0(result: { content?: unknown[] }) {
-  return result.content![0]
+function content0(result: { entries?: unknown[] }) {
+  return result.entries![0]
 }
 
 describe('executeProjectReadFileTool', () => {
@@ -53,7 +53,7 @@ describe('executeProjectReadFileTool', () => {
       status: 'ready', inclusion: 'auto',
     } as Record<string, unknown>)
     const result = await executeProjectReadFileTool({ fileId: 'f1', detail: 'summary' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Meeting notes') })
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Covers Q3 planning.') })
   })
@@ -65,7 +65,7 @@ describe('executeProjectReadFileTool', () => {
     } as Record<string, unknown>)
     mockFetchS3Text.mockResolvedValue('Full file content here')
     const result = await executeProjectReadFileTool({ fileId: 'f1', detail: 'full' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Full file content here') })
   })
 
@@ -78,7 +78,7 @@ describe('executeProjectReadFileTool', () => {
     } as Record<string, unknown>)
     mockFetchS3Text.mockResolvedValue('Extracted text')
     const result = await executeProjectReadFileTool({ fileId: 'f1', detail: 'full' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(mockFetchS3Text).toHaveBeenCalledWith('k/notes.txt.extracted.txt')
   })
 
@@ -91,10 +91,10 @@ describe('executeProjectReadFileTool', () => {
     } as Record<string, unknown>)
     mockFetchS3Bytes.mockResolvedValue(fakeBytes)
     const result = await executeProjectReadFileTool({ fileId: 'f2', detail: 'full' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     // No extracted-text sidecar: the full PDF is sent verbatim as a document block
-    expect(content0(result)).toMatchObject({ document: { format: 'pdf', source: { bytes: fakeBytes } } })
-    expect(result.content![1]).toMatchObject({ text: expect.stringContaining('complete PDF') })
+    expect(content0(result)).toMatchObject({ kind: 'document', format: 'pdf', bytes: fakeBytes })
+    expect(result.entries![1]).toMatchObject({ kind: 'text', text: expect.stringContaining('complete PDF') })
   })
 
   it('returns pdf full text when extractedTextKey exists', async () => {
@@ -106,7 +106,7 @@ describe('executeProjectReadFileTool', () => {
     } as Record<string, unknown>)
     mockFetchS3Text.mockResolvedValue('PDF extracted text content')
     const result = await executeProjectReadFileTool({ fileId: 'f2', detail: 'full' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('PDF extracted text content') })
   })
 
@@ -119,21 +119,21 @@ describe('executeProjectReadFileTool', () => {
     } as Record<string, unknown>)
     mockFetchS3Bytes.mockResolvedValue(fakeBytes)
     const result = await executeProjectReadFileTool({ fileId: 'f3', detail: 'full' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     // Image content block is returned (not a text block)
-    expect(content0(result)).toMatchObject({ image: { format: 'png', source: { bytes: fakeBytes } } })
+    expect(content0(result)).toMatchObject({ kind: 'image', format: 'png', bytes: fakeBytes })
   })
 
   it('returns error when file not in project', async () => {
     mockGetProjectFile.mockResolvedValue(undefined)
     const result = await executeProjectReadFileTool({ fileId: 'bad', detail: 'summary' }, ctx)
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('not found') })
   })
 
   it('returns error when no projectId in ctx', async () => {
     const result = await executeProjectReadFileTool({ fileId: 'f1', detail: 'summary' }, { sub: 'u' })
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Missing') })
   })
 
@@ -143,7 +143,7 @@ describe('executeProjectReadFileTool', () => {
       contentType: 'text/plain', s3Key: 'k/notes.txt', status: 'ready', inclusion: 'auto',
     } as Record<string, unknown>)
     const result = await executeProjectReadFileTool({ fileId: 'f1', detail: 'unknown' }, ctx)
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Unknown detail level') })
   })
 })
@@ -156,7 +156,7 @@ describe('executeProjectReadChatTool', () => {
       title: 'Sibling Chat', projectId: 'proj1', summary: 'Chat about APIs.',
     } as Record<string, unknown>)
     const result = await executeProjectReadChatTool({ chatId: 'chat2', detail: 'summary' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Chat about APIs.') })
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Sibling Chat') })
   })
@@ -166,39 +166,39 @@ describe('executeProjectReadChatTool', () => {
       title: 'No Summary Chat', projectId: 'proj1',
     } as Record<string, unknown>)
     const result = await executeProjectReadChatTool({ chatId: 'chat2', detail: 'summary' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('(no summary yet)') })
   })
 
   it('rejects reading the current chat', async () => {
     const result = await executeProjectReadChatTool({ chatId: 'chat-current', detail: 'summary' }, ctx)
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('current chat') })
   })
 
   it('rejects chat from a different project', async () => {
     mockGetChat.mockResolvedValue({ title: 'Other', projectId: 'other-proj' } as Record<string, unknown>)
     const result = await executeProjectReadChatTool({ chatId: 'chat-other', detail: 'summary' }, ctx)
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('not found') })
   })
 
   it('rejects chat not found (null)', async () => {
     mockGetChat.mockResolvedValue(undefined)
     const result = await executeProjectReadChatTool({ chatId: 'chat-missing', detail: 'summary' }, ctx)
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   it('returns full transcript', async () => {
     mockGetChat.mockResolvedValue({ title: 'Chat 2', projectId: 'proj1' } as Record<string, unknown>)
     const rows = [
-      { msgId: 'm1', parentId: null, role: 'user', blocks: [{ text: 'Hello' }] },
-      { msgId: 'm2', parentId: 'm1', role: 'assistant', blocks: [{ text: 'Hi there' }] },
+      { msgId: 'm1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'Hello' }] },
+      { msgId: 'm2', parentId: 'm1', role: 'assistant', blocks: [{ kind: 'text', text: 'Hi there' }] },
     ]
     mockListMessages.mockResolvedValue(rows as Record<string, unknown>[])
     mockBuildActivePath.mockReturnValue(rows as unknown as import('../../src/lib/tree').TurnRow[])
     const result = await executeProjectReadChatTool({ chatId: 'chat2', detail: 'full' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Hello') })
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Hi there') })
   })
@@ -207,20 +207,20 @@ describe('executeProjectReadChatTool', () => {
     mockGetChat.mockResolvedValue({ title: 'Empty Chat', projectId: 'proj1' } as Record<string, unknown>)
     mockListMessages.mockResolvedValue([])
     const result = await executeProjectReadChatTool({ chatId: 'chat2', detail: 'full' }, ctx)
-    expect(result.status).toBe('success')
+    expect(result.isError).toBe(false)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('no messages') })
   })
 
   it('returns error when no projectId in ctx', async () => {
     const result = await executeProjectReadChatTool({ chatId: 'chat2', detail: 'summary' }, { sub: 'u' })
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Missing') })
   })
 
   it('returns error for unknown detail level', async () => {
     mockGetChat.mockResolvedValue({ title: 'Chat 2', projectId: 'proj1' } as Record<string, unknown>)
     const result = await executeProjectReadChatTool({ chatId: 'chat2', detail: 'unknown' }, ctx)
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(content0(result)).toMatchObject({ text: expect.stringContaining('Unknown detail level') })
   })
 })

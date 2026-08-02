@@ -296,8 +296,8 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Saved.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Saved.')
     expect(mockDynamo.putUserMemory).toHaveBeenCalledTimes(1)
     const arg = mockDynamo.putUserMemory.mock.calls[0][0] as Record<string, unknown>
     expect(arg.PK).toBe(`USER#${ctx.sub}`)
@@ -316,8 +316,8 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Already known.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Already known.')
     expect(mockDynamo.putUserMemory).not.toHaveBeenCalled()
   })
 
@@ -327,7 +327,7 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.putUserMemory).not.toHaveBeenCalled()
   })
 
@@ -337,7 +337,7 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.putUserMemory).not.toHaveBeenCalled()
   })
 
@@ -353,8 +353,8 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Updated.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Updated.')
     expect(mockDynamo.putUserMemory).toHaveBeenCalledTimes(1)
     const arg = mockDynamo.putUserMemory.mock.calls[0][0] as Record<string, unknown>
     expect(arg.PK).toBe(`USER#${ctx.sub}`)
@@ -377,8 +377,8 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toContain('not found')
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toContain('not found')
     expect(mockDynamo.putUserMemory).not.toHaveBeenCalled()
   })
 
@@ -388,7 +388,7 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.putUserMemory).not.toHaveBeenCalled()
   })
 
@@ -404,8 +404,8 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Forgotten.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Forgotten.')
     expect(mockDynamo.deleteUserMemory).toHaveBeenCalledTimes(1)
     expect(mockDynamo.deleteUserMemory).toHaveBeenCalledWith(ctx.sub, 'mem-del')
   })
@@ -420,7 +420,7 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.deleteUserMemory).not.toHaveBeenCalled()
   })
 
@@ -430,7 +430,7 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.deleteUserMemory).not.toHaveBeenCalled()
   })
 
@@ -461,7 +461,7 @@ describe('executeMemoryTool', () => {
       ctx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   // ── logging ───────────────────────────────────────────────────────────────
@@ -589,8 +589,8 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Saved.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Saved.')
     expect(mockDynamo.putProjectMemory).toHaveBeenCalledTimes(1)
     const arg = mockDynamo.putProjectMemory.mock.calls[0][0] as Record<string, unknown>
     expect(arg.PK).toBe(`PROJECT#${projectCtx.projectId}`)
@@ -609,8 +609,8 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Already known.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Already known.')
     expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
   })
 
@@ -620,7 +620,7 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
   })
 
@@ -630,7 +630,7 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
   })
 
@@ -646,8 +646,8 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Updated.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Updated.')
     expect(mockDynamo.putProjectMemory).toHaveBeenCalledTimes(1)
     const arg = mockDynamo.putProjectMemory.mock.calls[0][0] as Record<string, unknown>
     expect(arg.PK).toBe(`PROJECT#${projectCtx.projectId}`)
@@ -669,8 +669,8 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('error')
-    expect((result.content?.[0] as { text: string }).text).toContain('not found')
+    expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toContain('not found')
     expect(mockDynamo.putProjectMemory).not.toHaveBeenCalled()
   })
 
@@ -686,8 +686,8 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('success')
-    expect((result.content?.[0] as { text: string }).text).toBe('Forgotten.')
+    expect(result.isError).toBe(false)
+    expect((result.entries[0] as { text: string }).text).toBe('Forgotten.')
     expect(mockDynamo.deleteProjectMemory).toHaveBeenCalledTimes(1)
     expect(mockDynamo.deleteProjectMemory).toHaveBeenCalledWith(projectCtx.projectId, 'proj-mem-del')
   })
@@ -702,7 +702,7 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
     expect(mockDynamo.deleteProjectMemory).not.toHaveBeenCalled()
   })
 
@@ -712,7 +712,7 @@ describe('executeProjectMemoryTool', () => {
       projectCtx,
     )
 
-    expect(result.status).toBe('error')
+    expect(result.isError).toBe(true)
   })
 
   // ── security: projectId from ctx, NOT sub ─────────────────────────────────
