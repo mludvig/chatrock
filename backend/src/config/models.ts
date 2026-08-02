@@ -1,12 +1,24 @@
 // ── Model capabilities ────────────────────────────────────────────────────────
 
+import type { ProviderId } from '../lib/llm/blocks'
+
+export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
+
 export interface ModelCapabilities {
+  provider: ProviderId
   temperature: boolean
   topP: boolean
   topK: boolean
-  // 'adaptive' = effort-based (low/medium/high/max); 'none' = no thinking support
-  thinking: 'adaptive' | 'none'
-  attachments: boolean
+  // 'adaptive' = Bedrock Converse's thinking.type=adaptive + output_config.effort (Anthropic);
+  // 'effort' = a plain reasoning.effort dial (e.g. Bedrock Mantle/OpenAI); 'none' = unsupported.
+  thinking: 'adaptive' | 'effort' | 'none'
+  // Which of ThinkingEffort's five levels this model accepts. Omit -> all five.
+  thinkingLevels?: ThinkingEffort[]
+  attachments: boolean                           // images
+  documents: boolean                             // pdf/txt/csv/md
+  promptCaching: 'auto' | 'explicit' | 'none'
+  region?: string                                // per-model region pin; undefined -> bedrockRegion()
+  maxOutputTokens?: number
 }
 
 // Per-send inference settings from the client. Only include supported fields.
@@ -14,7 +26,7 @@ export interface ModelSettings {
   temperature?: number                              // 0.0–1.0
   topP?: number                                     // 0.0–1.0
   topK?: number                                     // 1–500 (integer)
-  thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
+  thinkingEffort?: ThinkingEffort
   webSearchEnabled?: boolean                        // false disables web tools
   webSearchProvider?: 'jina' | 'agentcore'           // which backend powers the web_search tool
   browserCoreEnabled?: boolean                      // false disables take_screenshot/get_rendered_page
@@ -40,22 +52,22 @@ export const MODELS: Model[] = [
   {
     id: 'global.anthropic.claude-fable-5',
     name: 'Claude Fable 5',
-    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
+    capabilities: { provider: 'bedrock-converse', temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-opus-5',
     name: 'Claude Opus 5',
-    capabilities: { temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true },
+    capabilities: { provider: 'bedrock-converse', temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-sonnet-5',
     name: 'Claude Sonnet 5',
-    capabilities: { temperature: true, topP: true, topK: false, thinking: 'adaptive', attachments: true },
+    capabilities: { provider: 'bedrock-converse', temperature: true, topP: true, topK: false, thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     name: 'Claude Haiku 4.5',
-    capabilities: { temperature: true, topP: true, topK: true, thinking: 'none', attachments: true },
+    capabilities: { provider: 'bedrock-converse', temperature: true, topP: true, topK: true, thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
 ]
 
@@ -71,7 +83,7 @@ export const MEMORY_EXTRACTION_MODEL = DEFAULT_CHAT_MODEL
 
 export function getCapabilities(modelId: string): ModelCapabilities {
   return MODELS.find(m => m.id === modelId)?.capabilities
-    ?? { temperature: true, topP: true, topK: false, thinking: 'none', attachments: true }
+    ?? { provider: 'bedrock-converse', temperature: true, topP: true, topK: false, thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
 }
 
 export function isValidModelId(modelId: string): boolean {
@@ -79,7 +91,10 @@ export function isValidModelId(modelId: string): boolean {
 }
 
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {
+  const defaultEffort: ThinkingEffort = caps.thinkingLevels?.includes('low') === false
+    ? (caps.thinkingLevels[0] ?? 'low')
+    : 'low'
   return {
-    ...(caps.thinking !== 'none' ? { thinkingEffort: 'low' as const } : {}),
+    ...(caps.thinking !== 'none' ? { thinkingEffort: defaultEffort } : {}),
   }
 }
