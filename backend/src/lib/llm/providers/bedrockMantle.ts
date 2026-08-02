@@ -22,6 +22,21 @@ import { toNeutral, fromNeutralMessages } from './mantleTranslate'
 
 const DEFAULT_REGION = 'us-east-1'
 
+// Reasoning continuity needs `include:['reasoning.encrypted_content']`, since
+// store:false means the server keeps nothing. That payload can run large on a
+// long multi-round agentic answer against DynamoDB's 400 KB item limit — cap
+// what's PERSISTED, not what's replayed within this invocation (see TurnResult
+// below). Worst case at the cap is "reasoning doesn't persist across user turns",
+// exactly what you'd get with no opaque at all — never a hard failure.
+const REASONING_OPAQUE_CAP = 96 * 1024
+
+function capReasoningOpaque(blocks: Block[]): Block[] {
+  return blocks.map(b => {
+    if (b.kind !== 'thinking' || !b.opaque || b.opaque.data.length <= REASONING_OPAQUE_CAP) return b
+    return { kind: 'thinking', text: b.text }
+  })
+}
+
 function regionFor(modelId: string): string {
   return getCapabilities(modelId).region ?? process.env.OPENAI_BEDROCK_REGION ?? DEFAULT_REGION
 }
@@ -184,7 +199,10 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
     toolUses: finalResponse.output
       .filter((item): item is Extract<typeof item, { type: 'function_call' }> => item.type === 'function_call')
       .map(item => ({ callId: item.call_id, name: item.name, inputJson: item.arguments })),
-    content,
+    // Persisted form drops any oversized reasoning opaque; replayContent carries the
+    // full payload for this invocation's next round only (see REASONING_OPAQUE_CAP).
+    content: capReasoningOpaque(content),
+    replayContent: content,
     usage: mapUsage(finalResponse.usage),
   }
 }
