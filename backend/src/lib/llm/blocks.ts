@@ -151,14 +151,3 @@ export function encodeOpaque(provider: ProviderId, data: unknown): Opaque {
 export function decodeOpaque<T>(opaque: Opaque): T {
   return JSON.parse(Buffer.from(opaque.data, 'base64').toString('utf8')) as T
 }
-
-// ── Legacy-shape detection (for the one-off migration script + read-time guard) ─
-
-/**
- * True for a row already in the neutral format (every block has a `kind`
- * discriminant). False for a legacy row still in raw Bedrock ContentBlock shape
- * (pre-cutover data) — those need `bedrockConverse.toNeutral()` first.
- */
-export function isNeutralBlocks(blocks: unknown[]): blocks is Block[] {
-  return blocks.length === 0 || (typeof blocks[0] === 'object' && blocks[0] !== null && 'kind' in blocks[0])
-}

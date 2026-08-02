@@ -1,7 +1,6 @@
 import type { ContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import { toNeutral, fromNeutral } from '../../../src/lib/llm/providers/converseTranslate'
-import { normalizeStoredBlocks } from '../../../src/lib/llm/normalize'
-import { isNeutralBlocks, type Block } from '../../../src/lib/llm/blocks'
+import type { Block } from '../../../src/lib/llm/blocks'
 
 describe('converseTranslate: toNeutral / fromNeutral round-trip', () => {
   test('text block', () => {
@@ -118,29 +117,5 @@ describe('converseTranslate: toNeutral / fromNeutral round-trip', () => {
     const neutral = toNeutral(bedrock)
     expect(neutral.map(b => b.kind)).toEqual(['thinking', 'text', 'tool_call'])
     expect(fromNeutral(neutral)).toEqual(bedrock)
-  })
-})
-
-describe('isNeutralBlocks / normalizeStoredBlocks', () => {
-  test('empty array is neutral', () => {
-    expect(isNeutralBlocks([])).toBe(true)
-  })
-
-  test('neutral-shaped row is detected as neutral', () => {
-    const blocks: Block[] = [{ kind: 'text', text: 'hi' }]
-    expect(isNeutralBlocks(blocks)).toBe(true)
-    expect(normalizeStoredBlocks(blocks)).toBe(blocks) // passthrough, no copy needed
-  })
-
-  test('legacy Bedrock-shaped row is detected as non-neutral and upgraded', () => {
-    const legacy: ContentBlock[] = [{ text: 'legacy turn' }]
-    expect(isNeutralBlocks(legacy)).toBe(false)
-    expect(normalizeStoredBlocks(legacy)).toEqual([{ kind: 'text', text: 'legacy turn' }])
-  })
-
-  test('legacy row with toolUse/toolResult upgrades correctly', () => {
-    const legacy: ContentBlock[] = [{ toolUse: { toolUseId: 'tu1', name: 'web_search', input: { query: 'x' } } }]
-    const upgraded = normalizeStoredBlocks(legacy)
-    expect(upgraded).toEqual([{ kind: 'tool_call', callId: 'tu1', name: 'web_search', input: { query: 'x' } }])
   })
 })
