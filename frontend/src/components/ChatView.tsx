@@ -160,48 +160,93 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     return pendingNewChatIdRef.current
   }
 
+  // Bedrock vision gets no quality benefit above ~1568px on the long edge, and phone photos
+  // (iPhones especially) routinely exceed MAX_SIZES at full sensor resolution — re-encode down
+  // to a size that's still well above what the model uses, so full-resolution originals don't
+  // hit the cap. Returns the original file unchanged if it's already small or decoding fails
+  // (e.g. a format the browser can't rasterize onto a canvas).
+  const MAX_IMAGE_DIMENSION = 2048
+  const IMAGE_JPEG_QUALITY = 0.85
+
+  async function downscaleImage(file: File): Promise<File> {
+    try {
+      const bitmap = await createImageBitmap(file)
+      const scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(bitmap.width, bitmap.height))
+      if (scale >= 1) {
+        bitmap.close()
+        return file
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(bitmap.width * scale)
+      canvas.height = Math.round(bitmap.height * scale)
+      const ctx2d = canvas.getContext('2d')
+      if (!ctx2d) {
+        bitmap.close()
+        return file
+      }
+      ctx2d.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      bitmap.close()
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', IMAGE_JPEG_QUALITY))
+      if (!blob || blob.size >= file.size) return file
+      return new File([blob], file.name, { type: 'image/jpeg' })
+    } catch {
+      return file
+    }
+  }
+
   function addFiles(files: File[]) {
     const currentChatId = chatId && chatId !== 'new' ? chatId : newChatUploadId()
     for (const file of files) {
-      let ct = file.type || 'application/octet-stream'
-      let kind = ALLOWED_TYPES[ct]
-
-      if (!kind) {
-        const ext = extOf(file.name)
-        if (TEXT_EXTENSIONS.has(ext) || file.type.startsWith('text/')) {
-          ct = ext === 'csv' || ext === 'tsv' ? 'text/csv' : ext === 'md' || ext === 'markdown' ? 'text/markdown' : 'text/plain'
-          kind = 'document'
-        } else if (confirm(`Chatrock doesn't recognize "${file.name}" as a supported file type. Attach it as plain text anyway?`)) {
-          ct = 'text/plain'
-          kind = 'document'
-        } else {
-          pushToast({ kind: 'error', text: `File type not supported: ${file.name}` })
-          continue
-        }
-      }
-      const maxBytes = MAX_SIZES[ct] ?? 1 * 1024 * 1024
-      if (file.size > maxBytes) {
-        pushToast({ kind: 'error', text: `File too large: ${file.name}` })
-        continue
-      }
-      const id = crypto.randomUUID()
-      const localUrl = kind === 'image' ? URL.createObjectURL(file) : undefined
-      const att: PendingAttachment = {
-        id, file, contentType: ct, filename: file.name,
-        attachmentKind: kind, mode: 'standard', localUrl, status: 'uploading',
-      }
-      setAttachments(prev => [...prev, att])
-
-      requestUpload({ chatId: currentChatId, filename: file.name, contentType: ct, sizeBytes: file.size })
-        .then(({ s3Key, uploadUrl }) => uploadToS3(uploadUrl, file).then(() => s3Key))
-        .then(s3Key => {
-          setAttachments(prev => prev.map(a => a.id === id ? { ...a, s3Key, status: 'ready' } : a))
-        })
-        .catch(e => {
-          const msg = e instanceof Error ? e.message : String(e)
-          setAttachments(prev => prev.map(a => a.id === id ? { ...a, status: 'error', errorMsg: msg } : a))
-        })
+      void addOneFile(file, currentChatId)
     }
+  }
+
+  async function addOneFile(file: File, currentChatId: string) {
+    let ct = file.type || 'application/octet-stream'
+    let kind = ALLOWED_TYPES[ct]
+
+    if (!kind) {
+      const ext = extOf(file.name)
+      if (TEXT_EXTENSIONS.has(ext) || file.type.startsWith('text/')) {
+        ct = ext === 'csv' || ext === 'tsv' ? 'text/csv' : ext === 'md' || ext === 'markdown' ? 'text/markdown' : 'text/plain'
+        kind = 'document'
+      } else if (confirm(`Chatrock doesn't recognize "${file.name}" as a supported file type. Attach it as plain text anyway?`)) {
+        ct = 'text/plain'
+        kind = 'document'
+      } else {
+        pushToast({ kind: 'error', text: `File type not supported: ${file.name}` })
+        return
+      }
+    }
+
+    let uploadFile = file
+    if (kind === 'image') {
+      uploadFile = await downscaleImage(file)
+      ct = uploadFile.type || ct
+    }
+
+    const maxBytes = MAX_SIZES[ct] ?? 1 * 1024 * 1024
+    if (uploadFile.size > maxBytes) {
+      pushToast({ kind: 'error', text: `File too large: ${file.name}` })
+      return
+    }
+    const id = crypto.randomUUID()
+    const localUrl = kind === 'image' ? URL.createObjectURL(uploadFile) : undefined
+    const att: PendingAttachment = {
+      id, file: uploadFile, contentType: ct, filename: uploadFile.name,
+      attachmentKind: kind, mode: 'standard', localUrl, status: 'uploading',
+    }
+    setAttachments(prev => [...prev, att])
+
+    requestUpload({ chatId: currentChatId, filename: uploadFile.name, contentType: ct, sizeBytes: uploadFile.size })
+      .then(({ s3Key, uploadUrl }) => uploadToS3(uploadUrl, uploadFile).then(() => s3Key))
+      .then(s3Key => {
+        setAttachments(prev => prev.map(a => a.id === id ? { ...a, s3Key, status: 'ready' } : a))
+      })
+      .catch(e => {
+        const msg = e instanceof Error ? e.message : String(e)
+        setAttachments(prev => prev.map(a => a.id === id ? { ...a, status: 'error', errorMsg: msg } : a))
+      })
   }
 
   // Keep ref in sync after each render (must be an effect, not during render)

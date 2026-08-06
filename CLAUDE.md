@@ -8,6 +8,10 @@ Chatrock is a multi-user LLM chat web app on AWS: React SPA + TypeScript Lambda 
 
 See `backend/CLAUDE.md` for backend implementation detail. See `frontend/CLAUDE.md` for frontend detail.
 
+## Architecture decisions
+
+For any non-trivial design decision (a choice between real alternatives, not a straightforward bug fix), write an ADR to `docs/adr/NNNN-title.md` (four-digit sequence number, kebab-case title) alongside the implementation. Cover: Status, Context, Decision, Consequences (including alternatives considered and why they were rejected).
+
 ## Commands
 
 ### Deploy (the primary workflow)
