@@ -690,7 +690,7 @@ export const buildHandler = (postFn: PostFn) => async (
         // the loop; passive enrichment must see those writes (with their memIds) so
         // it retains/merges them instead of re-deriving a paraphrase as a NEW item
         // (the dual-writer duplicate). One cheap read each — same partition the
-        // tool just wrote to.
+        // tool just wrote to. See docs/adr/0007-passive-enrichment-fresh-reads.md.
         const [freshUserMemsRaw, freshProjectMemsRaw] = await Promise.all([
           listUserMemories(sub),
           projectId ? listProjectMemories(projectId) : Promise.resolve([]),

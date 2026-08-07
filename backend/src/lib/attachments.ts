@@ -118,6 +118,7 @@ export async function deleteS3Objects(keys: string[]): Promise<void> {
 
 const s3 = new S3Client({})
 
+// Presigned direct-to-S3 PUT — see docs/adr/0011-presigned-s3-direct-put-uploads.md.
 export async function presignPut(key: string, contentType: string): Promise<string> {
   return s3GetSignedUrl(
     s3,

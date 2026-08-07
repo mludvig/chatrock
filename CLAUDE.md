@@ -10,7 +10,7 @@ See `backend/CLAUDE.md` for backend implementation detail. See `frontend/CLAUDE.
 
 ## Architecture decisions
 
-For any non-trivial design decision (a choice between real alternatives, not a straightforward bug fix), write an ADR to `docs/adr/NNNN-title.md` (four-digit sequence number, kebab-case title) alongside the implementation. Cover: Status, Context, Decision, Consequences (including alternatives considered and why they were rejected).
+For any non-trivial design decision (a choice between real alternatives, not a straightforward bug fix), write an ADR to `docs/adr/NNNN-title.md` (four-digit sequence number, kebab-case title) alongside the implementation. Cover: Status, Context, Decision, Consequences (including alternatives considered and why they were rejected). See `docs/adr/` for the existing decision log — the "why" behind the single-table design, the conversation tree, cascade delete, sensitive/ephemeral flags, and more all live there; this file and `backend`/`frontend` `CLAUDE.md` stick to the "how it works" so they don't drift out of sync with the ADRs' rationale.
 
 ## Commands
 
@@ -83,7 +83,7 @@ Browser → CloudFront (single distribution, custom domain)
 
 ### DynamoDB single-table
 
-Table `chatrock-prod` with PK/SK:
+Why one table instead of one per entity: `docs/adr/0003-single-dynamodb-table.md`. Table `chatrock-prod` with PK/SK:
 - Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?, topics?
 - Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearchEnabled?
 - WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL, cancelRequested?
@@ -103,7 +103,7 @@ Attachments are stored in S3 under `attachments/<sub>/<chatId>/<fileId>/<filenam
 
 ### Conversation tree model
 
-Each turn record has `msgId` (UUID) + `parentId` (null at root) forming a tree. `activeLeafId` on the chat record tracks the current branch tip. `GET /messages` does a single DynamoDB Query of the full `CHAT#<chatId>` partition, then walks the tree in memory to extract the active path and compute sibling metadata.
+Why a tree instead of a linear history: `docs/adr/0004-conversation-tree-model.md`. Each turn record has `msgId` (UUID) + `parentId` (null at root) forming a tree. `activeLeafId` on the chat record tracks the current branch tip. `GET /messages` does a single DynamoDB Query of the full `CHAT#<chatId>` partition, then walks the tree in memory to extract the active path and compute sibling metadata.
 
 Key helpers in `backend/src/lib/tree.ts`:
 - `buildActivePath(rows, leafId)` — leaf→root walk, reversed to root→leaf order. Falls back to `mostRecentLeaf(rows)` (not raw array order) when `leafId` doesn't resolve.

@@ -1,6 +1,7 @@
 import type { Block } from './llm/blocks'
 import type { TokenUsage } from './bedrock'
 
+// Conversation-tree model (msgId/parentId + activeLeafId) — see docs/adr/0004-conversation-tree-model.md.
 // Minimal shape needed for tree operations (superset of TurnRow)
 export interface TurnRow {
   PK: string
