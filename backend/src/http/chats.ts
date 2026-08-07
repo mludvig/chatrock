@@ -115,7 +115,8 @@ export const handler = async (
     const ephemeral = body.ephemeral === true
     // sensitive/ephemeral are independent flags — both are allowed on project chats. A
     // sensitive chat still reads project context in (instructions/files/memory) but never
-    // writes back to it; see "Sensitive & ephemeral chats" in backend/CLAUDE.md.
+    // writes back to it; see "Sensitive & ephemeral chats" in backend/CLAUDE.md, and
+    // docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md.
     await putChat({
       ...buildChatKey(sub, chatId),
       title: 'New Chat',

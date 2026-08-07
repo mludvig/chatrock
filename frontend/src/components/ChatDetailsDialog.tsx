@@ -7,6 +7,8 @@ import ToolsPanel from './ToolsPanel'
 import ModelTuningPanel from './ModelTuningPanel'
 import ShareTab from './ShareTab'
 
+// Item-scoped settings dialog — see docs/adr/0009-consolidate-item-scoped-settings-into-one-dialog.md.
+// sensitive/ephemeral toggles: see docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md.
 interface Props {
   open: boolean
   onClose: () => void

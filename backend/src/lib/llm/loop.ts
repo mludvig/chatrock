@@ -108,6 +108,7 @@ export async function* converseStream(
     // nothing re-hydrates `newMessages` mid-loop), `toolResultsPersist` carries S3 locations
     // instead (small, durable — matches how user attachments are stored at rest). Text-only
     // tool results are identical in both and unaffected by this split.
+    // See docs/adr/0005-dual-tool-result-representation.md.
     const toolResultsLive: Block[] = []
     const toolResultsPersist: Block[] = []
     for (const tu of result.toolUses) {

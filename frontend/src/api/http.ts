@@ -334,6 +334,7 @@ export interface UploadResponse {
   uploadUrl: string
 }
 
+// Presigned direct-to-S3 PUT — see docs/adr/0011-presigned-s3-direct-put-uploads.md.
 export async function requestUpload(uploadReq: UploadRequest): Promise<UploadResponse> {
   return req<UploadResponse>('POST', '/api/attachments', uploadReq)
 }

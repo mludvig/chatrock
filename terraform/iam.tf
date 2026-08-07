@@ -72,7 +72,7 @@ data "aws_iam_policy_document" "lambda_policy" {
   # no documented IAM reference for this as of Aug 2026): "arn:aws:bedrock-mantle:us-east-1:
   # <account>:project/default" is a fixed per-account "default" project, not per-model.
   # us-east-1-hardcoded since Mantle models are pinned there (see config/models.ts) regardless
-  # of var.aws_region.
+  # of var.aws_region. See docs/adr/0010-bedrock-mantle-distinct-iam-signing-service.md.
   statement {
     sid       = "InvokeBedrockMantle"
     actions   = ["bedrock-mantle:CreateInference"]

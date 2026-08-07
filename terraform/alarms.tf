@@ -198,7 +198,7 @@ resource "aws_cloudwatch_metric_alarm" "http_api_5xx" {
 # request the client cares about did not fail, only APIGW's synchronous wrapper around it timed
 # out. Threshold/period below require a sustained burst (5+ in 5min) rather than one-off timeouts,
 # so this still catches a genuine integration break (bad deploy, auth failure, systemic Bedrock
-# outage) without paging on a normal long tool-use turn.
+# outage) without paging on a normal long tool-use turn. See docs/adr/0002-tune-ws-alarm-instead-of-async-invocation.md.
 resource "aws_cloudwatch_metric_alarm" "ws_api_execution_error" {
   alarm_name          = "chatrock-ws-api-execution-error-${var.env}"
   alarm_description   = "WebSocket API route execution is failing (backend/integration errors)"

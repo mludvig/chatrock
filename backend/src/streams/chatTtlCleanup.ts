@@ -6,7 +6,8 @@ import { deleteChatObjects } from '../lib/attachments'
 // filter_criteria restricts this to Chat-item REMOVE events — see terraform/stream_chat_cleanup.tf)
 // on both manual DELETE /api/chats/{chatId} (http/chats.ts only deletes the Chat item itself) and
 // TTL expiry of a private chat. One cascade implementation instead of two. See "Chat deletion &
-// temporary/private chats" in backend/CLAUDE.md for the full design rationale.
+// temporary/private chats" in backend/CLAUDE.md, and docs/adr/0006-cascade-delete-via-dynamodb-streams.md,
+// for the full design rationale.
 export const handler = async (event: DynamoDBStreamEvent): Promise<void> => {
   for (const record of event.Records) {
     const keys = record.dynamodb?.Keys
