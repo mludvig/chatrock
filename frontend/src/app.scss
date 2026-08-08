@@ -2513,6 +2513,13 @@ $private-light: #ece2fa;
     &:hover { background: $surface2; }
     &.remove { color: $danger; }
     &.active { font-weight: 600; color: $accent; }
+    &.move-menu-new { color: $accent; border-bottom: 1px solid $border; margin-bottom: 4px; }
+  }
+
+  .rename-input {
+    display: block;
+    width: calc(100% - 20px);
+    margin: 4px 10px 8px;
   }
 }
 
