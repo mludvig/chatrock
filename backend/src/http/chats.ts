@@ -8,7 +8,7 @@ import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { Block } from '../lib/llm/blocks'
-import { summarizeChatById } from '../lib/enrichment'
+import { summarizeChatById, enrichProjectFactsByChatId } from '../lib/enrichment'
 import { groupTurnsToBubbles, filterSteps, renderMarkdown } from '../lib/transcript'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
@@ -240,7 +240,15 @@ export const handler = async (
         const proj = await getProject(sub, body.projectId)
         if (!proj) return err(400, 'Invalid projectId')
         await updateChatProject(sub, chatId, body.projectId)
-        if (!prevProjectId) await summarizeChatById(sub, chatId)
+        if (!prevProjectId) {
+          await summarizeChatById(sub, chatId)
+          // Backfill project memory on move — see docs/adr/0012-backfill-project-memory-on-chat-move.md.
+          // Sensitive chats never write facts out into shared project memory — see
+          // "Sensitive & ephemeral chats" in backend/CLAUDE.md.
+          if (chat.sensitive !== true && (proj.memoryEnabled ?? true)) {
+            await enrichProjectFactsByChatId(chatId, body.projectId)
+          }
+        }
       } else {
         return err(400, 'projectId must be a string or null')
       }
