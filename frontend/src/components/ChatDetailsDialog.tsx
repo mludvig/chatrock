@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEyeSlash, faTrash, faHashtag } from '@fortawesome/free-solid-svg-icons'
 import type { Chat, ModelCapabilities, ModelSettings } from '../api/http'
+import type { SaveStatus } from '../lib/useSaveStatus'
 import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
 import ModelTuningPanel from './ModelTuningPanel'
 import ShareTab from './ShareTab'
+import SaveIndicator from './SaveIndicator'
 
 // Item-scoped settings dialog — see docs/adr/0009-consolidate-item-scoped-settings-into-one-dialog.md.
 // sensitive/ephemeral toggles: see docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md.
@@ -27,6 +29,7 @@ interface Props {
   onSettingsChange: (s: ModelSettings) => void
   systemPrompt: string
   onSystemPromptChange: (v: string) => void
+  systemPromptSaveStatus?: SaveStatus
 }
 
 type Tab = 'settings' | 'info' | 'share'
@@ -35,7 +38,7 @@ export default function ChatDetailsDialog({
   open, onClose, isNew, chat, onRename,
   sensitive, ephemeral, expiresAt, onToggleSensitive, onToggleEphemeral,
   showTokenStats, onToggleShowTokenStats,
-  caps, settings, onSettingsChange, systemPrompt, onSystemPromptChange,
+  caps, settings, onSettingsChange, systemPrompt, onSystemPromptChange, systemPromptSaveStatus,
 }: Props) {
   // A draft chat has no title/summary yet, so there's nothing for an Info tab to
   // show — only a saved chat gets the tab bar; a draft just sees Settings directly.
@@ -102,7 +105,10 @@ export default function ChatDetailsDialog({
       ) : (
         <div className="prefs-tab-content">
           <div className="pref-section">
-            <div className="pref-label">Custom instructions for this chat</div>
+            <div className="pref-label">
+              Custom instructions for this chat
+              {systemPromptSaveStatus && <SaveIndicator status={systemPromptSaveStatus} />}
+            </div>
             <textarea
               className="pref-textarea"
               placeholder="Override global instructions for this chat only…"

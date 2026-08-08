@@ -1716,6 +1716,11 @@ $mobile: 720px;
 
   .header-controls { gap: 6px; }
 
+  // Icon-only on mobile — the full "Private" label plus a project chip left
+  // the settings cog crowded off the edge of narrow viewports.
+  .btn-private-toggle { padding: 5px 8px; }
+  .btn-private-label { display: none; }
+
   .model-select { font-size: 12px; padding: 4px 8px; max-width: 130px; }
 
   // Bubbles: reduce horizontal padding on mobile
@@ -1925,6 +1930,18 @@ $mobile: 720px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-bottom: 6px;
+  }
+
+  .save-indicator {
+    font-size: 11px;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    margin-left: 8px;
+
+    &--saving { color: $muted; }
+    &--saved { color: $accent; }
+    &--error { color: $danger; }
   }
 
   .pref-textarea {
