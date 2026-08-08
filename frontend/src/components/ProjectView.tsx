@@ -9,6 +9,7 @@ import { api, uploadToS3 } from '../api/http'
 import type { Chat, ModelSettings, ProjectMemory, ProjectFile } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { sortByRecent } from '../lib/sort'
+import { useSaveStatus } from '../lib/useSaveStatus'
 import ChatListFilter, { applyChatListFilter, useChatListFilter } from './ChatListFilter'
 import ProjectDetailsDialog from './ProjectDetailsDialog'
 
@@ -56,6 +57,8 @@ export default function ProjectView({ defaultModel }: Props) {
 
   const [descDraft, setDescDraft] = useState('')
   const [instrDraft, setInstrDraft] = useState('')
+  const { status: descSaveStatus, track: trackDescSave } = useSaveStatus()
+  const { status: instrSaveStatus, track: trackInstrSave } = useSaveStatus()
   const settingsInitRef = useRef<string | null>(null)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const settingsDebounceRef = useRef<number | null>(null)
@@ -323,28 +326,20 @@ export default function ProjectView({ defaultModel }: Props) {
     }
   }
 
-  async function handleDescriptionBlur() {
+  function handleDescriptionBlur() {
     if (!projectId) return
     const description = descDraft
     if (project?.description === description) return
     updateProject(projectId, { description })
-    try {
-      await api.updateProject(projectId, { description })
-    } catch (err) {
-      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    }
+    trackDescSave(api.updateProject(projectId, { description }))
   }
 
-  async function handleInstructionsBlur() {
+  function handleInstructionsBlur() {
     if (!projectId) return
     const instructions = instrDraft
     if (project?.instructions === instructions) return
     updateProject(projectId, { instructions })
-    try {
-      await api.updateProject(projectId, { instructions })
-    } catch (err) {
-      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    }
+    trackInstrSave(api.updateProject(projectId, { instructions }))
   }
 
   async function handleToggleMemoryEnabled() {
@@ -644,9 +639,11 @@ export default function ProjectView({ defaultModel }: Props) {
         descDraft={descDraft}
         onDescChange={setDescDraft}
         onDescBlur={handleDescriptionBlur}
+        descSaveStatus={descSaveStatus}
         instrDraft={instrDraft}
         onInstrChange={setInstrDraft}
         onInstrBlur={handleInstructionsBlur}
+        instrSaveStatus={instrSaveStatus}
         models={models}
         defaultModel={project?.defaultModel ?? ''}
         onDefaultModelChange={handleDefaultModelChange}

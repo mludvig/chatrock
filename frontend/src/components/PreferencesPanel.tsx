@@ -6,6 +6,8 @@ import type { UserPreferences } from '../api/http'
 import { THINKING_EFFORTS } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { ToggleRow, EffortRow } from './PrefControls'
+import SaveIndicator from './SaveIndicator'
+import { useSaveStatus } from '../lib/useSaveStatus'
 
 // App-wide defaults only — per-chat and per-project overrides now live in their own
 // "details" dialogs (ChatDetailsDialog / ProjectDetailsDialog), reachable from the
@@ -15,7 +17,7 @@ export default function PreferencesPanel() {
   const { models, userPreferences, setUserPreferences } = useChatStore()
 
   const [prefs, setPrefs] = useState<UserPreferences>(userPreferences)
-  const [saved, setSaved] = useState(false)
+  const { status: saveStatus, track: trackSave } = useSaveStatus()
   const debounceRef = useRef<number | null>(null)
   // Gates both the mount-time fetch below and the auto-save effect: true once the user
   // has made a real edit. Guards two races at once — (1) the fetch resolving after a quick
@@ -35,11 +37,7 @@ export default function PreferencesPanel() {
     if (!editedRef.current) return
     if (debounceRef.current !== null) clearTimeout(debounceRef.current)
     debounceRef.current = window.setTimeout(() => {
-      api.savePreferences(prefs).then(() => {
-        setUserPreferences(prefs)
-        setSaved(true)
-        setTimeout(() => setSaved(false), 2000)
-      }).catch(() => {})
+      trackSave(api.savePreferences(prefs).then(() => { setUserPreferences(prefs) }))
     }, 800)
     return () => {
       if (debounceRef.current !== null) clearTimeout(debounceRef.current)
@@ -141,7 +139,7 @@ export default function PreferencesPanel() {
           onToggle={() => patch({ injectCurrentDate: prefs.injectCurrentDate === false ? true : false })}
         />
 
-        <div className="saved-indicator">{saved ? 'Saved' : ''}</div>
+        <div className="saved-indicator"><SaveIndicator status={saveStatus} /></div>
       </div>
     </div>
   )

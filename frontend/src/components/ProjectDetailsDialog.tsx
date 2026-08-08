@@ -1,8 +1,10 @@
 import type { Model, ModelCapabilities, ModelSettings } from '../api/http'
+import type { SaveStatus } from '../lib/useSaveStatus'
 import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
 import ModelTuningPanel from './ModelTuningPanel'
 import { ToggleRow } from './PrefControls'
+import SaveIndicator from './SaveIndicator'
 
 interface Props {
   open: boolean
@@ -11,9 +13,11 @@ interface Props {
   descDraft: string
   onDescChange: (v: string) => void
   onDescBlur: () => void
+  descSaveStatus: SaveStatus
   instrDraft: string
   onInstrChange: (v: string) => void
   onInstrBlur: () => void
+  instrSaveStatus: SaveStatus
   models: Model[]
   defaultModel: string
   onDefaultModelChange: (modelId: string) => void
@@ -26,8 +30,8 @@ interface Props {
 
 export default function ProjectDetailsDialog({
   open, onClose, projectName,
-  descDraft, onDescChange, onDescBlur,
-  instrDraft, onInstrChange, onInstrBlur,
+  descDraft, onDescChange, onDescBlur, descSaveStatus,
+  instrDraft, onInstrChange, onInstrBlur, instrSaveStatus,
   models, defaultModel, onDefaultModelChange,
   caps, settings, onSettingsChange,
   memoryEnabled, onToggleMemory,
@@ -36,7 +40,7 @@ export default function ProjectDetailsDialog({
     <Dialog open={open} onClose={onClose} title={`Project details — ${projectName}`}>
       <div className="prefs-tab-content">
         <div className="pref-section">
-          <div className="pref-label">Description</div>
+          <div className="pref-label">Description<SaveIndicator status={descSaveStatus} /></div>
           <textarea
             className="pref-textarea"
             placeholder="What is this project about?"
@@ -47,7 +51,7 @@ export default function ProjectDetailsDialog({
         </div>
 
         <div className="pref-section">
-          <div className="pref-label">Instructions</div>
+          <div className="pref-label">Instructions<SaveIndicator status={instrSaveStatus} /></div>
           <textarea
             className="pref-textarea"
             placeholder="Custom instructions applied to every chat in this project…"

@@ -6,6 +6,7 @@ import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from
 import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
+import { useSaveStatus } from '../lib/useSaveStatus'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
 import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
@@ -101,6 +102,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Debounce refs for the Chat details dialog's system-prompt/model-settings edits
   // (moved here from the old PreferencesPanel "This chat" tab — same 800ms pattern).
   const chatInstructionsDebounceRef = useRef<number | null>(null)
+  const { status: systemPromptSaveStatus, track: trackSystemPromptSave } = useSaveStatus()
   const chatSettingsDebounceRef = useRef<number | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
@@ -997,7 +999,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       updateChatSystemPrompt(chatId, value)
       if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
       chatInstructionsDebounceRef.current = window.setTimeout(() => {
-        api.updateSystemPrompt(chatId, value).catch(() => {})
+        trackSystemPromptSave(api.updateSystemPrompt(chatId, value))
       }, 800)
     }
   }
@@ -1113,7 +1115,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               ? 'Private: sensitive + auto-delete, both on. Click to turn both off.'
               : 'Quick-set Private: sensitive + auto-delete, both on. Use the chat details dialog to set them independently.'}
           >
-            <FontAwesomeIcon icon={faEyeSlash} /> Private
+            <FontAwesomeIcon icon={faEyeSlash} /> <span className="btn-private-label">Private</span>
           </button>
           <select
             className="model-select"
@@ -1374,6 +1376,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         onSettingsChange={handleChatSettingsChange}
         systemPrompt={isNew ? draftSystemPrompt : (activeChat?.systemPrompt ?? '')}
         onSystemPromptChange={handleChatInstructionsChange}
+        systemPromptSaveStatus={isNew ? undefined : systemPromptSaveStatus}
       />
     </div>
   )
