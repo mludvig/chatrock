@@ -18,7 +18,7 @@ export default function ProjectsPanel() {
   const matchProject = useMatch('/p/:projectId')
   const activeProjectId = matchProject?.params.projectId
 
-  const { projects, chats, addProject, removeProject, removeChat, pushToast, mergeProjectFiles, updateProject, newProjectTick } = useChatStore()
+  const { projects, chats, addProject, removeProject, removeChat, pushToast, mergeProjectFiles, updateProject, setProjects, newProjectTick } = useChatStore()
   const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
 
   // URL-driven when on /p/:projectId; stays open when navigating into a chat
@@ -26,6 +26,20 @@ export default function ProjectsPanel() {
   useEffect(() => {
     if (activeProjectId) setExpandedProjectId(activeProjectId)
   }, [activeProjectId])
+
+  // Projects are only fetched once, in App.tsx on mount — a project created on another
+  // device/tab never appears here without a full page reload. Re-fetch every time this
+  // panel opens, keeping the cached list visible immediately while it refreshes.
+  const [refreshing, setRefreshing] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    setRefreshing(true)
+    api.listProjects()
+      .then(res => { if (!cancelled) setProjects(res.projects) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setRefreshing(false) })
+    return () => { cancelled = true }
+  }, [])
 
   const [showNewInput, setShowNewInput] = useState(false)
   const [newName, setNewName] = useState('')
@@ -132,6 +146,7 @@ export default function ProjectsPanel() {
       <div className="panel-header">
         <FontAwesomeIcon icon={faFolderTree} />
         <span>Projects</span>
+        {refreshing && <FontAwesomeIcon icon={faSpinner} spin style={{ opacity: 0.5, marginLeft: 4 }} />}
         <button
           className="panel-header-btn"
           title="New project"
