@@ -19,6 +19,7 @@ jest.mock('../../src/lib/attachments', () => ({
 }))
 jest.mock('../../src/lib/enrichment', () => ({
   summarizeChatById: jest.fn().mockResolvedValue(undefined),
+  enrichProjectFactsByChatId: jest.fn().mockResolvedValue(undefined),
   enrichTurn: jest.fn().mockResolvedValue({ userFacts: [] }),
 }))
 
@@ -965,6 +966,24 @@ test('proj: PATCH projectId (move in from no project) → summarizeChatById call
   mockDynamo.updateChatProject.mockResolvedValue(undefined)
   await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'proj-1' }, { chatId: 'c1' }) as any)
   expect(mockEnrichment.summarizeChatById).toHaveBeenCalledWith('user-1', 'c1')
+  expect(mockEnrichment.enrichProjectFactsByChatId).toHaveBeenCalledWith('c1', 'proj-1')
+})
+
+test('proj: PATCH projectId (sensitive chat) → enrichProjectFactsByChatId NOT called', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', sensitive: true }) // no prevProjectId
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'Test' })
+  mockDynamo.updateChatProject.mockResolvedValue(undefined)
+  await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'proj-1' }, { chatId: 'c1' }) as any)
+  expect(mockEnrichment.summarizeChatById).toHaveBeenCalledWith('user-1', 'c1')
+  expect(mockEnrichment.enrichProjectFactsByChatId).not.toHaveBeenCalled()
+})
+
+test('proj: PATCH projectId (project memory disabled) → enrichProjectFactsByChatId NOT called', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' }) // no prevProjectId
+  mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'Test', memoryEnabled: false })
+  mockDynamo.updateChatProject.mockResolvedValue(undefined)
+  await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'proj-1' }, { chatId: 'c1' }) as any)
+  expect(mockEnrichment.enrichProjectFactsByChatId).not.toHaveBeenCalled()
 })
 
 test('proj: PATCH projectId null removes association → updateChatProject(null) called; summarizeChatById NOT called', async () => {

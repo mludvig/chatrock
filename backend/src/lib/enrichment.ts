@@ -1,7 +1,9 @@
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL, TITLE_MODEL } from '../config/models'
-import { listMessages, updateChatSummary } from './dynamo'
+import { listMessages, updateChatSummary, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey } from './dynamo'
 import { buildActivePath, type TurnRow } from './tree'
+import { reconcileMemoryList } from './memory'
+import { newId } from './ids'
 import USER_SYSTEM_PROMPT from '../../prompts/user-memory-extraction.txt'
 import TITLE_PROMPT from '../../prompts/chat-title.txt'
 import SUMMARIZE_CHAT_SYSTEM_PROMPT from '../../prompts/chat-summary.txt'
@@ -232,21 +234,8 @@ export async function summarizeChat(
  */
 export async function summarizeChatById(sub: string, chatId: string): Promise<ChatSummaryResult | undefined> {
   try {
-    const rows = (await listMessages(chatId)) as unknown as TurnRow[]
-    if (rows.length === 0) return undefined
-
-    const leaf = rows[rows.length - 1]
-    const path = buildActivePath(rows, leaf.msgId)
-    if (path.length === 0) return undefined
-
-    const transcript = path
-      .filter(r => r.role === 'user' || r.role === 'assistant')
-      .slice(-20)
-      .map(r => {
-        const text = r.blocks.filter(b => b.kind === 'text').map(b => b.text).filter(Boolean).join(' ').slice(0, 400)
-        return `${r.role === 'user' ? 'User' : 'Assistant'}: ${text}`
-      })
-      .join('\n')
+    const transcript = await buildChatTranscript(chatId)
+    if (!transcript) return undefined
 
     const result = await summarizeChat(transcript, '', [], chatId)
     if (result.summary || result.topics.length > 0) {
@@ -255,5 +244,68 @@ export async function summarizeChatById(sub: string, chatId: string): Promise<Ch
     return result
   } catch {
     return undefined
+  }
+}
+
+/**
+ * Loads a chat's messages and builds a transcript from the last 20 turns —
+ * shared by summarizeChatById and enrichProjectFactsByChatId, both of which
+ * backfill a chat's contribution to a store immediately (e.g. on moving it
+ * into a project) rather than waiting for its next turn.
+ */
+async function buildChatTranscript(chatId: string): Promise<string | undefined> {
+  const rows = (await listMessages(chatId)) as unknown as TurnRow[]
+  if (rows.length === 0) return undefined
+
+  const leaf = rows[rows.length - 1]
+  const path = buildActivePath(rows, leaf.msgId)
+  if (path.length === 0) return undefined
+
+  return path
+    .filter(r => r.role === 'user' || r.role === 'assistant')
+    .slice(-20)
+    .map(r => {
+      const text = r.blocks.filter(b => b.kind === 'text').map(b => b.text).filter(Boolean).join(' ').slice(0, 400)
+      return `${r.role === 'user' ? 'User' : 'Assistant'}: ${text}`
+    })
+    .join('\n')
+}
+
+/**
+ * Backfills project memory for a chat moved into a project: reads the
+ * project's current memory, extracts facts from this chat's transcript, and
+ * reconciles/applies the resulting ops — the project-memory analogue of
+ * summarizeChatById. Without this, a chat moved into a project only
+ * contributes to project memory on its *next* turn, never for the history
+ * it already carries in. Never throws.
+ */
+export async function enrichProjectFactsByChatId(chatId: string, projectId: string): Promise<void> {
+  try {
+    const transcript = await buildChatTranscript(chatId)
+    if (!transcript) return
+
+    const existingRaw = await listProjectMemories(projectId)
+    const existing = (existingRaw as Record<string, unknown>[]).map(i => ({
+      memId: i.memId as string,
+      text: i.text as string,
+      category: i.category as string,
+      createdAt: i.createdAt as string,
+    }))
+
+    const result = await enrichProjectFacts(transcript, existing, chatId)
+    const ops = reconcileMemoryList(result.memories, existing)
+    const now = new Date().toISOString()
+    for (const op of ops) {
+      if (op.op === 'ADD') {
+        const memId = newId()
+        await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: now, updatedAt: now })
+      } else if (op.op === 'UPDATE') {
+        await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: now })
+      } else if (op.op === 'DELETE') {
+        await deleteProjectMemory(projectId, op.memId)
+      }
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ event: 'enrich_project_facts_by_chat_id_error', chatId, projectId, error: String(err) }))
   }
 }
