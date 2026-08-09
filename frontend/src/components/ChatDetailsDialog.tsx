@@ -120,7 +120,7 @@ export default function ChatDetailsDialog({
           <div className="model-settings">
             <div className="pref-label">Privacy</div>
             <div className="model-setting-row model-setting-row--inline">
-              <label className="setting-label" title="Blocks this chat's facts from being written into memory, project memory, and search — used by other chats. Doesn't affect reading: your existing saved memories are still injected here regardless of this toggle (see Memory below).">
+              <label className="setting-label" title="Blocks this chat's facts from being written into memory, project memory, and search — used by other chats — even if Memory (below) is on. Doesn't affect reading: your existing saved memories are still injected here regardless of this toggle.">
                 <FontAwesomeIcon icon={faEyeSlash} />
                 <span>Sensitive</span>
               </label>
@@ -141,7 +141,7 @@ export default function ChatDetailsDialog({
               </button>
             </div>
             <div className="model-setting-row model-setting-row--inline">
-              <label className="setting-label" title="Controls this chat only. On: your saved memories are injected into this chat's system prompt, and new facts from this chat can be extracted into memory. Off: neither happens — nothing is read in or written out. Independent of Sensitive, which only ever blocks writes.">
+              <label className="setting-label" title="Controls this chat only. On: your saved memories are injected into this chat's system prompt, and new facts from this chat are extracted into memory (unless Sensitive is also on, which blocks that regardless). Off: nothing is read in or written out, full stop — Sensitive or not.">
                 <FontAwesomeIcon icon={faMemory} />
                 <span>Memory</span>
               </label>
