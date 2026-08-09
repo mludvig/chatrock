@@ -4,11 +4,11 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderTree, faFolderOpen, faFolder, faFolderPlus,
   faPenToSquare, faTrash, faChevronRight, faChevronDown,
-  faComment, faFile, faBrain, faSpinner,
+  faComment, faFile, faBrain, faSpinner, faPlus,
   faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
-import type { ProjectFile, ProjectMemory } from '../api/http'
+import type { Project, ProjectFile, ProjectMemory } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { useChatActions } from '../lib/useChatActions'
 import { sortByRecent } from '../lib/sort'
@@ -18,7 +18,11 @@ export default function ProjectsPanel() {
   const matchProject = useMatch('/p/:projectId')
   const activeProjectId = matchProject?.params.projectId
 
-  const { projects, chats, addProject, removeProject, removeChat, pushToast, mergeProjectFiles, updateProject, setProjects, newProjectTick } = useChatStore()
+  const {
+    projects, chats, addProject, addChat, removeProject, removeChat, pushToast,
+    mergeProjectFiles, updateProject, setProjects, newProjectTick,
+    lastModel, userPreferences, models,
+  } = useChatStore()
   const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
 
   // URL-driven when on /p/:projectId; stays open when navigating into a chat
@@ -69,6 +73,21 @@ export default function ProjectsPanel() {
       const project = { projectId: res.projectId, name, createdAt: now, updatedAt: now }
       addProject(project)
       navigate(`/p/${res.projectId}`)
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  // Mirrors ProjectView.tsx's handleNewChat — lets a chat be started in a project directly
+  // from the sidebar tree, without first navigating into the project dashboard.
+  async function handleNewChatInProject(e: React.MouseEvent, project: Project) {
+    e.stopPropagation()
+    const model = project.defaultModel || userPreferences.defaultModel || lastModel || models[0]?.id || ''
+    try {
+      const res = await api.createChat(model, '', undefined, project.modelSettings, project.projectId)
+      const now = new Date().toISOString()
+      addChat({ chatId: res.chatId, title: 'New Chat', model, systemPrompt: '', createdAt: now, updatedAt: now, projectId: project.projectId })
+      navigate(`/c/${res.chatId}`)
     } catch (err) {
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
@@ -230,6 +249,9 @@ export default function ProjectsPanel() {
                   />
                   <span className="project-title">{project.name}</span>
                   <div className="project-actions">
+                    <button onClick={e => handleNewChatInProject(e, project)} title="New chat in this project">
+                      <FontAwesomeIcon icon={faPlus} />
+                    </button>
                     <button onClick={e => startProjectRename(e, project.projectId, project.name)} title="Rename project">
                       <FontAwesomeIcon icon={faPenToSquare} />
                     </button>

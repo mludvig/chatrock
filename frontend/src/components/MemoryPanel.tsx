@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api/http'
 import type { UserMemory } from '../api/http'
 import { useChatStore } from '../store/chatStore'
@@ -12,6 +12,16 @@ export default function MemoryPanel() {
   const [editMemoryText, setEditMemoryText] = useState('')
   const memoryRefreshTick = useChatStore(s => s.memoryRefreshTick)
   const pushToast = useChatStore(s => s.pushToast)
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-grow the edit box to roughly match the memory text's length instead of a
+  // cramped single-line input; capped by .memory-edit-textarea's max-height (scrolls beyond that).
+  useEffect(() => {
+    const el = editTextareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [editingMemoryId, editMemoryText])
 
   // Load memories on mount and whenever memoryRefreshTick changes
   useEffect(() => {
@@ -77,14 +87,15 @@ export default function MemoryPanel() {
                 {items.map(mem => (
                   <div key={mem.memId} className="memory-item">
                     {editingMemoryId === mem.memId ? (
-                      <input
+                      <textarea
                         autoFocus
-                        className="rename-input"
+                        ref={editTextareaRef}
+                        className="memory-edit-textarea"
                         value={editMemoryText}
                         onChange={e => setEditMemoryText(e.target.value)}
                         onBlur={() => commitMemoryEdit(mem.memId)}
                         onKeyDown={e => {
-                          if (e.key === 'Enter') commitMemoryEdit(mem.memId)
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitMemoryEdit(mem.memId) }
                           if (e.key === 'Escape') setEditingMemoryId(null)
                         }}
                       />

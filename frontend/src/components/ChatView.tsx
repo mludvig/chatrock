@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
-import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step } from '../api/http'
+import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
@@ -30,6 +30,7 @@ const isMobileViewport = () => window.matchMedia('(max-width: 720px)').matches
 export default function ChatView({ accessToken, models, defaultModel, onModelChange, onOpenSidebar }: Props) {
   const { chatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const isNew = !chatId || chatId === 'new'
 
   const {
@@ -559,9 +560,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (newChatTick > 0) requestAnimationFrame(() => inputRef.current?.focus())
   }, [newChatTick])
 
-  // Sensitive/ephemeral/project must default off for every fresh /c/new — they should
-  // never silently carry over from a previous chat the user made sensitive or filed.
-  useEffect(() => { setDraftSensitive(false); setDraftEphemeral(false); setDraftProjectId('') }, [newChatTick])
+  // Sensitive/ephemeral must default off for every fresh /c/new — they should never silently
+  // carry over from a previous chat the user made sensitive. Project defaults to the ?project=
+  // query param (set by the header "+" button when a project is in view — see App.tsx's
+  // contextProjectId) instead of always blank, so "+" from inside a project files the new
+  // chat there rather than always creating an unfiled one.
+  useEffect(() => {
+    setDraftSensitive(false)
+    setDraftEphemeral(false)
+    setDraftProjectId(searchParams.get('project') ?? '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newChatTick])
 
   // Close the Chat details dialog when switching chats so it doesn't linger open across
   // navigation to a different chat.
@@ -1078,6 +1087,29 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }
 
+  // Summary/topics have no live WS push (unlike title's titleUpdated) — post-turn enrichment
+  // writes them straight to DynamoDB with no notification, so the global chats store can go
+  // stale the moment a turn completes. Refetch on dialog open rather than adding a push event,
+  // since it's only ever read here. See docs/adr/0017-chat-summary-refetch-on-dialog-open.md.
+  useEffect(() => {
+    if (!detailsOpen || isNew || !chatId) return
+    api.getChat(chatId)
+      .then(fresh => patchChat(chatId, { summary: fresh.summary, topics: fresh.topics }))
+      .catch(() => {})
+  }, [detailsOpen, isNew, chatId, patchChat])
+
+  async function handleUpdateChatSummary(fields: Partial<Pick<Chat, 'summary' | 'topics'>>) {
+    if (!chatId || isNew) return
+    const prev = { summary: activeChat?.summary, topics: activeChat?.topics }
+    patchChat(chatId, fields)
+    try {
+      await api.updateChatSummary(chatId, fields)
+    } catch (err) {
+      patchChat(chatId, prev)
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
   const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
 
   const sensitive = isNew ? draftSensitive : !!activeChat?.sensitive
@@ -1392,6 +1424,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         isNew={isNew}
         chat={activeChat ?? null}
         onRename={handleRenameChat}
+        onSummaryChange={handleUpdateChatSummary}
         sensitive={sensitive}
         ephemeral={ephemeral}
         expiresAt={activeChat?.expiresAt}
