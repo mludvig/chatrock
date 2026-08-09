@@ -12,13 +12,14 @@ const makeEvent = (
   method: string,
   path: string,
   pathParameters: Record<string, string> = {},
+  body?: unknown,
 ) => ({
   requestContext: {
     authorizer: { jwt: { claims: { sub: 'user-1' } } },
   },
   routeKey: `${method} ${path}`,
   pathParameters,
-  body: undefined,
+  body: body !== undefined ? JSON.stringify(body) : undefined,
 })
 
 const result = (r: unknown) => r as APIGatewayProxyStructuredResultV2
@@ -96,4 +97,50 @@ test('DELETE /api/memory/{memId} with missing memId returns 400', async () => {
   )
   expect(res.statusCode).toBe(400)
   expect(mockDynamo.deleteUserMemory).not.toHaveBeenCalled()
+})
+
+// ── PATCH /api/memory/{memId} ────────────────────────────────────────────────
+
+test('PATCH /api/memory/{memId} updates text, returns ok', async () => {
+  mockDynamo.updateUserMemory.mockResolvedValue(undefined)
+
+  const res = result(
+    await handler(makeEvent('PATCH', '/api/memory/{memId}', { memId: 'mem-abc' }, { text: 'Corrected fact' }) as any),
+  )
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateUserMemory).toHaveBeenCalledWith('user-1', 'mem-abc', { text: 'Corrected fact' })
+})
+
+test('PATCH /api/memory/{memId} updates category', async () => {
+  mockDynamo.updateUserMemory.mockResolvedValue(undefined)
+
+  const res = result(
+    await handler(makeEvent('PATCH', '/api/memory/{memId}', { memId: 'mem-abc' }, { category: 'preference' }) as any),
+  )
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateUserMemory).toHaveBeenCalledWith('user-1', 'mem-abc', { category: 'preference' })
+})
+
+test('PATCH /api/memory/{memId} with empty text returns 400', async () => {
+  const res = result(
+    await handler(makeEvent('PATCH', '/api/memory/{memId}', { memId: 'mem-abc' }, { text: '   ' }) as any),
+  )
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateUserMemory).not.toHaveBeenCalled()
+})
+
+test('PATCH /api/memory/{memId} with invalid category returns 400', async () => {
+  const res = result(
+    await handler(makeEvent('PATCH', '/api/memory/{memId}', { memId: 'mem-abc' }, { category: 'bogus' }) as any),
+  )
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateUserMemory).not.toHaveBeenCalled()
+})
+
+test('PATCH /api/memory/{memId} with missing memId returns 400', async () => {
+  const res = result(
+    await handler(makeEvent('PATCH', '/api/memory/{memId}', {}, { text: 'x' }) as any),
+  )
+  expect(res.statusCode).toBe(400)
+  expect(mockDynamo.updateUserMemory).not.toHaveBeenCalled()
 })

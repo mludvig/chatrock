@@ -21,7 +21,24 @@ export default function Toaster() {
     <div className="toaster">
       {toasts.map(t => (
         <div key={t.id} className={`toast toast--${t.kind}`}>
-          <span className="toast-text">{t.text}</span>
+          {t.items && t.items.length > 0 ? (
+            <div className="toast-memory-cards">
+              {t.items.map((mem, i) => (
+                <div key={i} className="memory-update-card">
+                  <div className="memory-update-head">
+                    <span className="memory-update-op">
+                      {mem.op === 'forget' ? 'Forgot' : mem.op === 'update' ? 'Updated' : 'Remembered'}
+                      {mem.scope === 'project' ? ' project memory' : ' memory'}
+                    </span>
+                    {mem.category && <span className="memory-update-cat">{mem.category}</span>}
+                  </div>
+                  {mem.text && <div className="memory-update-text">{mem.text}</div>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <span className="toast-text">{t.text}</span>
+          )}
           <button className="toast-dismiss" onClick={() => dismissToast(t.id)} aria-label="Dismiss">
             <FontAwesomeIcon icon={faXmark} />
           </button>

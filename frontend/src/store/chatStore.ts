@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
+import type { MemoryUpdateItem } from '../api/ws'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
@@ -24,6 +25,7 @@ export interface Toast {
   id: number
   kind: ToastKind
   text: string
+  items?: MemoryUpdateItem[]
 }
 
 let _toastSeq = 0

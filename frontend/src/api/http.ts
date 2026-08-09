@@ -272,6 +272,8 @@ export const api = {
   savePreferences: (prefs: UserPreferences)  => req<{ ok: boolean }>('PUT', '/api/preferences', prefs),
   listMemory: ()                             => req<{ memories: UserMemory[] }>('GET', '/api/memory'),
   deleteMemory: (memId: string)              => req<void>('DELETE', `/api/memory/${memId}`),
+  updateMemory: (memId: string, fields: Partial<Pick<UserMemory, 'text' | 'category'>>) =>
+    req<{ ok: boolean }>('PATCH', `/api/memory/${memId}`, fields),
   listProjects: () => req<{ projects: Project[] }>('GET', '/api/projects'),
   createProject: (name: string) => req<{ projectId: string }>('POST', '/api/projects', { name }),
   getProject: (projectId: string) => req<{ project: Project; chats: Chat[] }>('GET', `/api/projects/${projectId}`),

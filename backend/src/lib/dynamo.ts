@@ -338,6 +338,26 @@ export async function deleteUserMemory(sub: string, memId: string): Promise<void
   }))
 }
 
+export async function updateUserMemory(
+  sub: string,
+  memId: string,
+  fields: Partial<{ text: string; category: string; updatedAt: string }>,
+) {
+  const updates = Object.entries({ ...fields, updatedAt: new Date().toISOString() })
+    .filter(([, v]) => v !== undefined)
+  if (updates.length === 0) return
+  const sets = updates.map(([_k], i) => `#f${i} = :v${i}`)
+  const names = Object.fromEntries(updates.map(([k], i) => [`#f${i}`, k]))
+  const values = Object.fromEntries(updates.map(([, v], i) => [`:v${i}`, v]))
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildUserMemKey(sub, memId),
+    UpdateExpression: `SET ${sets.join(', ')}`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+  }))
+}
+
 // Project key builders
 export const buildProjectKey = (sub: string, projectId: string) => ({
   PK: `USER#${sub}`,
