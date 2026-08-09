@@ -20,6 +20,7 @@ interface Props {
   isNew: boolean
   chat: Chat | null                 // null for a not-yet-created draft
   onRename: (title: string) => void
+  onSummaryChange: (fields: Partial<Pick<Chat, 'summary' | 'topics'>>) => void
   sensitive: boolean
   ephemeral: boolean
   expiresAt?: string
@@ -39,7 +40,7 @@ interface Props {
 type Tab = 'settings' | 'info' | 'share'
 
 export default function ChatDetailsDialog({
-  open, onClose, isNew, chat, onRename,
+  open, onClose, isNew, chat, onRename, onSummaryChange,
   sensitive, ephemeral, expiresAt, isProject, onToggleSensitive, onToggleEphemeral,
   showTokenStats, onToggleShowTokenStats,
   caps, settings, onSettingsChange, systemPrompt, onSystemPromptChange, systemPromptSaveStatus,
@@ -51,6 +52,12 @@ export default function ChatDetailsDialog({
 
   const [titleDraft, setTitleDraft] = useState(chat?.title ?? '')
   useEffect(() => { if (open) setTitleDraft(chat?.title ?? '') }, [open, chat?.title])
+
+  const [summaryDraft, setSummaryDraft] = useState(chat?.summary ?? '')
+  useEffect(() => { if (open) setSummaryDraft(chat?.summary ?? '') }, [open, chat?.summary])
+
+  const [topicsDraft, setTopicsDraft] = useState((chat?.topics ?? []).join(', '))
+  useEffect(() => { if (open) setTopicsDraft((chat?.topics ?? []).join(', ')) }, [open, chat?.topics])
 
   const hasInfo = !isNew
   // Sharing/export need a persisted chatId to hang share records and messages off of — a
@@ -92,19 +99,38 @@ export default function ChatDetailsDialog({
             />
           </div>
 
-          {(chat?.summary || (chat?.topics && chat.topics.length > 0)) && (
-            <div className="pref-section">
-              <div className="pref-label">Summary</div>
-              {chat?.summary && <p className="prefs-desc">{chat.summary}</p>}
-              {chat?.topics && chat.topics.length > 0 && (
-                <div className="topic-chips">
-                  {chat.topics.map(topic => (
-                    <span key={topic} className="topic-chip">{topic}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          <div className="pref-section">
+            <div className="pref-label">Summary</div>
+            <textarea
+              className="pref-textarea"
+              placeholder="No summary yet — one is generated automatically after a few turns, or write your own."
+              value={summaryDraft}
+              onChange={e => setSummaryDraft(e.target.value)}
+              onBlur={() => { const t = summaryDraft.trim(); if (t !== (chat?.summary ?? '')) onSummaryChange({ summary: t }) }}
+            />
+          </div>
+
+          <div className="pref-section">
+            <div className="pref-label">Topics</div>
+            <input
+              className="pref-select"
+              placeholder="Comma-separated, e.g. billing, refunds"
+              value={topicsDraft}
+              onChange={e => setTopicsDraft(e.target.value)}
+              onBlur={() => {
+                const topics = topicsDraft.split(',').map(t => t.trim()).filter(Boolean)
+                if (topics.join(', ') !== (chat?.topics ?? []).join(', ')) onSummaryChange({ topics })
+              }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+            />
+            {topicsDraft.trim() && (
+              <div className="topic-chips">
+                {topicsDraft.split(',').map(t => t.trim()).filter(Boolean).map(topic => (
+                  <span key={topic} className="topic-chip">{topic}</span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="prefs-tab-content">

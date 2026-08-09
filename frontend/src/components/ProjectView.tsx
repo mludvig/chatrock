@@ -46,6 +46,16 @@ export default function ProjectView({ defaultModel }: Props) {
 
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
   const [editMemoryText, setEditMemoryText] = useState('')
+  const editMemoryTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Auto-grow the edit box to roughly match the memory text's length instead of a
+  // cramped single-line input; capped by .memory-edit-textarea's max-height (scrolls beyond that).
+  useEffect(() => {
+    const el = editMemoryTextareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [editingMemoryId, editMemoryText])
 
   const [editingFileSummaryId, setEditingFileSummaryId] = useState<string | null>(null)
   const [editFileSummaryText, setEditFileSummaryText] = useState('')
@@ -604,14 +614,15 @@ export default function ProjectView({ defaultModel }: Props) {
                     {items.map(mem => (
                       <div key={mem.memId} className="memory-item">
                         {editingMemoryId === mem.memId ? (
-                          <input
+                          <textarea
                             autoFocus
-                            className="rename-input"
+                            ref={editMemoryTextareaRef}
+                            className="memory-edit-textarea"
                             value={editMemoryText}
                             onChange={e => setEditMemoryText(e.target.value)}
                             onBlur={() => commitMemoryEdit(mem.memId)}
                             onKeyDown={e => {
-                              if (e.key === 'Enter') commitMemoryEdit(mem.memId)
+                              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitMemoryEdit(mem.memId) }
                               if (e.key === 'Escape') setEditingMemoryId(null)
                             }}
                           />

@@ -2138,6 +2138,22 @@ $mobile: 720px;
     &:hover { text-decoration: underline; text-decoration-style: dotted; }
   }
 
+  .memory-edit-textarea {
+    flex: 1;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    font-family: $font;
+    color: $text;
+    background: $surface;
+    border: 1px solid $accent;
+    border-radius: 6px;
+    padding: 4px 6px;
+    resize: none;
+    overflow-y: auto;
+    max-height: 300px;
+    outline: none;
+  }
+
   .memory-delete {
     flex-shrink: 0;
     background: none;

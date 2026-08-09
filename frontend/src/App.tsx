@@ -53,7 +53,9 @@ function AuthedApp() {
   const defaultModel = lastModel || userPreferences.defaultModel || models[1]?.id || models[0]?.id || ''
 
   // Search's "Project only" toggle only makes sense when the current view is project-scoped:
-  // either the project dashboard itself, or a chat that belongs to a project.
+  // either the project dashboard itself, or a chat that belongs to a project. Also reused by
+  // the "+" buttons below to file a new chat into the same project — see
+  // docs/adr/0018-project-scoped-new-chat-entry-points.md.
   const projectViewMatch = /^\/p\/([^/]+)/.exec(location.pathname)
   const chatViewMatch = /^\/c\/([^/]+)/.exec(location.pathname)
   const currentChatProjectId = chatViewMatch ? chats.find(c => c.chatId === chatViewMatch[1])?.projectId : undefined
@@ -95,7 +97,7 @@ function AuthedApp() {
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}
-      <div className="sidebar-global-header" onClick={() => { setActivePanel('chats'); bumpNewChatTick(); navigate('/c/new') }} title="New chat">
+      <div className="sidebar-global-header" onClick={() => { setActivePanel('chats'); bumpNewChatTick(); navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new') }} title="New chat">
         <span className="sidebar-brand">
           <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
           <span className="sidebar-brand-text">Chatrock</span>
@@ -123,7 +125,7 @@ function AuthedApp() {
         </div>
         <button
           className="btn-new"
-          onClick={e => { e.stopPropagation(); setActivePanel('chats'); bumpNewChatTick(); navigate('/c/new') }}
+          onClick={e => { e.stopPropagation(); setActivePanel('chats'); bumpNewChatTick(); navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new') }}
           title="New chat"
           tabIndex={-1}
         >
