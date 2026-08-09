@@ -5,11 +5,14 @@ import type { ModelSettings } from '../api/http'
 interface Props {
   settings: ModelSettings
   onChange: (s: ModelSettings) => void
+  // ChatDetailsDialog renders its own Memory row in the Privacy section instead —
+  // see docs/adr/0014-memory-toggle-lives-in-privacy-section.md.
+  hideMemory?: boolean
 }
 
 // Every capability the model can reach for during a turn — none of these are
 // gated by model capabilities (unlike ModelTuningPanel), so no `caps` prop is needed.
-export default function ToolsPanel({ settings, onChange }: Props) {
+export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
   function set(patch: Partial<ModelSettings>) {
     onChange({ ...settings, ...patch })
   }
@@ -57,19 +60,21 @@ export default function ToolsPanel({ settings, onChange }: Props) {
           {settings.browserExtendedEnabled === true ? 'On' : 'Off'}
         </button>
       </div>
-      <div className="model-setting-row model-setting-row--inline">
-        <label className="setting-label" title="Toggle memory. When off, your saved memories are not injected into the system prompt and no new memories are extracted from this chat.">
-          <FontAwesomeIcon icon={faMemory} />
-          <span>Memory</span>
-        </label>
-        <button
-          className={`toggle-btn${settings.memoryEnabled !== false ? ' active' : ''}`}
-          onClick={() => set({ memoryEnabled: settings.memoryEnabled === false ? true : false })}
-          title="Toggle memory"
-        >
-          {settings.memoryEnabled !== false ? 'On' : 'Off'}
-        </button>
-      </div>
+      {!hideMemory && (
+        <div className="model-setting-row model-setting-row--inline">
+          <label className="setting-label" title="Toggle memory. When off, your saved memories are not injected into the system prompt and no new memories are extracted from this chat.">
+            <FontAwesomeIcon icon={faMemory} />
+            <span>Memory</span>
+          </label>
+          <button
+            className={`toggle-btn${settings.memoryEnabled !== false ? ' active' : ''}`}
+            onClick={() => set({ memoryEnabled: settings.memoryEnabled === false ? true : false })}
+            title="Toggle memory"
+          >
+            {settings.memoryEnabled !== false ? 'On' : 'Off'}
+          </button>
+        </div>
+      )}
       <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Toggle the search_history tool. When off, the model cannot organically search your past chats and project files mid-conversation — the explicit Search box (header) still works regardless.">
           <FontAwesomeIcon icon={faMagnifyingGlass} />
