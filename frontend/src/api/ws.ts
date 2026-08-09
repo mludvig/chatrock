@@ -1,6 +1,16 @@
 import { ENV } from '../env'
 import type { ModelSettings, TokenUsage } from './http'
 
+// Same shape whether the write came from an explicit manage_memory/manage_project_memory
+// tool call (one item) or passive post-turn enrichment (zero or more) — see
+// docs/adr/0013-memory-update-detail-and-editing.md.
+export interface MemoryUpdateItem {
+  scope: 'user' | 'project'
+  op: string
+  category?: string
+  text?: string
+}
+
 export type WSEvent =
   | { type: 'ack' }
   | { type: 'delta';          text: string }
@@ -13,7 +23,7 @@ export type WSEvent =
   | { type: 'done';           stopReason: string }
   | { type: 'cancelled' }
   | { type: 'titleUpdated';   chatId: string; title: string }
-  | { type: 'memoryUpdated';  count: number }
+  | { type: 'memoryUpdated';  count: number; items?: MemoryUpdateItem[] }
   | { type: 'error';          message: string; responseId?: string; leafId?: string }
   | { type: 'warning';        message: string }
   | { type: 'heartbeat' }

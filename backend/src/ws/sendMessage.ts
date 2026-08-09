@@ -575,9 +575,14 @@ export const buildHandler = (postFn: PostFn) => async (
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'usage', usage: chunk.usage }) })
           break
         case 'memoryChanged':
-          // Tool loop signalled that manage_memory succeeded — notify the client
+          // Tool loop signalled that manage_memory / manage_project_memory succeeded — notify
+          // the client with the same op/category/text detail its tool-pill card already shows.
           memoryChangedDuringStream = true
-          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: 1 }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({
+            type: 'memoryUpdated',
+            count: 1,
+            items: [{ scope: chunk.scope, op: chunk.operation, category: chunk.category, text: chunk.text }],
+          }) })
           break
         case 'stop':
           // Update activeLeafId before sending 'done' so the client's
@@ -683,6 +688,10 @@ export const buildHandler = (postFn: PostFn) => async (
         const isProject = !!projectId
         const memNow = new Date().toISOString()
         let totalChanged = 0
+        // Passive multi-item writes have no tool-call card to show their detail in, unlike an
+        // explicit manage_memory/manage_project_memory call — so collect it here for the
+        // memoryUpdated event. See docs/adr/0013-memory-update-detail-and-editing.md.
+        const passiveMemoryItems: Array<{ scope: 'user' | 'project'; op: string; category?: string; text?: string }> = []
 
         // Re-read memories AFTER the agentic loop, not the pre-loop snapshots
         // (userMemoriesRaw / projectMemoriesRaw loaded for the system prompt). The
@@ -710,12 +719,16 @@ export const buildHandler = (postFn: PostFn) => async (
             const memId = newId()
             await putUserMemory({ ...buildUserMemKey(sub, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
             totalChanged++
+            passiveMemoryItems.push({ scope: 'user', op: 'remember', category: op.category, text: op.text })
           } else if (op.op === 'UPDATE') {
             await putUserMemory({ ...buildUserMemKey(sub, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
             totalChanged++
+            passiveMemoryItems.push({ scope: 'user', op: 'update', category: op.category, text: op.text })
           } else if (op.op === 'DELETE') {
             await deleteUserMemory(sub, op.memId)
             totalChanged++
+            const forgotten = existingUserMems.find(m => m.memId === op.memId)
+            passiveMemoryItems.push({ scope: 'user', op: 'forget', category: forgotten?.category, text: forgotten?.text })
           }
         }
 
@@ -746,18 +759,22 @@ export const buildHandler = (postFn: PostFn) => async (
               const memId = newId()
               await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
               totalChanged++
+              passiveMemoryItems.push({ scope: 'project', op: 'remember', category: op.category, text: op.text })
             } else if (op.op === 'UPDATE') {
               await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
               totalChanged++
+              passiveMemoryItems.push({ scope: 'project', op: 'update', category: op.category, text: op.text })
             } else if (op.op === 'DELETE') {
               await deleteProjectMemory(projectId, op.memId)
               totalChanged++
+              const forgotten = existingProjectMems.find(m => m.memId === op.memId)
+              passiveMemoryItems.push({ scope: 'project', op: 'forget', category: forgotten?.category, text: forgotten?.text })
             }
           }
         }
 
         if (totalChanged > 0 && !memoryChangedDuringStream) {
-          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged }) })
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged, items: passiveMemoryItems }) })
         }
 
         console.log(JSON.stringify({ event: 'llm_call', purpose: 'enrich_turn', model: MEMORY_EXTRACTION_MODEL, chatId }))

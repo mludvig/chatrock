@@ -1912,7 +1912,7 @@ test('memoryChanged chunk from converseStream → postFn called with memoryUpdat
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'ok' }
     yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
-    yield { type: 'memoryChanged' as const }
+    yield { type: 'memoryChanged' as const, scope: 'user' as const, operation: 'remember', category: 'identity', text: 'User is from NZ' }
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
@@ -1923,6 +1923,7 @@ test('memoryChanged chunk from converseStream → postFn called with memoryUpdat
   const memEvent = events.find(e => e.type === 'memoryUpdated')
   expect(memEvent).toBeDefined()
   expect(memEvent!.count).toBe(1)
+  expect(memEvent!.items).toEqual([{ scope: 'user', op: 'remember', category: 'identity', text: 'User is from NZ' }])
 })
 
 test('memoryChanged during stream suppresses passive-extractor memoryUpdated to prevent double toast', async () => {
@@ -1936,7 +1937,7 @@ test('memoryChanged during stream suppresses passive-extractor memoryUpdated to 
   async function* fakeStream() {
     yield { type: 'delta' as const, text: 'Noted' }
     yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Noted' }], turnIndex: 0 }
-    yield { type: 'memoryChanged' as const }  // tool already fired
+    yield { type: 'memoryChanged' as const, scope: 'user' as const, operation: 'remember', category: 'identity', text: 'User is from NZ' }  // tool already fired
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())

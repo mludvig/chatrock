@@ -447,7 +447,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         renameChat(evt.chatId, evt.title)
       } else if (evt.type === 'memoryUpdated') {
         triggerMemoryRefresh()
-        pushToast({ kind: 'info', text: evt.count > 1 ? `Memory updated (${evt.count} new facts)` : 'Memory updated' })
+        pushToast({
+          kind: 'info',
+          text: evt.count > 1 ? `Memory updated (${evt.count} new facts)` : 'Memory updated',
+          items: evt.items,
+        })
       } else if (evt.type === 'warning') {
         pushToast({ kind: 'error', text: evt.message })
       } else if (evt.type === 'error') {

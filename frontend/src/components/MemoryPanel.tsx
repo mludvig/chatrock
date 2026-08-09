@@ -8,7 +8,10 @@ import { faTrash, faBrain } from '@fortawesome/free-solid-svg-icons'
 export default function MemoryPanel() {
   const [memories, setMemories] = useState<UserMemory[]>([])
   const [loading, setLoading] = useState(true)
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
+  const [editMemoryText, setEditMemoryText] = useState('')
   const memoryRefreshTick = useChatStore(s => s.memoryRefreshTick)
+  const pushToast = useChatStore(s => s.pushToast)
 
   // Load memories on mount and whenever memoryRefreshTick changes
   useEffect(() => {
@@ -22,6 +25,26 @@ export default function MemoryPanel() {
   async function handleDelete(memId: string) {
     await api.deleteMemory(memId)
     setMemories(prev => prev.filter(m => m.memId !== memId))
+  }
+
+  function startMemoryEdit(e: React.MouseEvent, mem: UserMemory) {
+    e.stopPropagation()
+    setEditingMemoryId(mem.memId)
+    setEditMemoryText(mem.text)
+  }
+
+  async function commitMemoryEdit(memId: string) {
+    setEditingMemoryId(null)
+    const text = editMemoryText.trim()
+    const prev = memories.find(m => m.memId === memId)
+    if (!text || prev?.text === text) return
+    setMemories(ms => ms.map(m => m.memId === memId ? { ...m, text } : m))
+    try {
+      await api.updateMemory(memId, { text })
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
+      if (prev) setMemories(ms => ms.map(m => m.memId === memId ? prev : m))
+    }
   }
 
   // Group by category
@@ -53,7 +76,21 @@ export default function MemoryPanel() {
                 <div className="memory-category-label">{cat}</div>
                 {items.map(mem => (
                   <div key={mem.memId} className="memory-item">
-                    <span className="memory-text">{mem.text}</span>
+                    {editingMemoryId === mem.memId ? (
+                      <input
+                        autoFocus
+                        className="rename-input"
+                        value={editMemoryText}
+                        onChange={e => setEditMemoryText(e.target.value)}
+                        onBlur={() => commitMemoryEdit(mem.memId)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') commitMemoryEdit(mem.memId)
+                          if (e.key === 'Escape') setEditingMemoryId(null)
+                        }}
+                      />
+                    ) : (
+                      <span className="memory-text" title="Click to edit" onClick={e => startMemoryEdit(e, mem)}>{mem.text}</span>
+                    )}
                     <button
                       className="memory-delete"
                       title="Delete this memory"

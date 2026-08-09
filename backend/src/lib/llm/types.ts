@@ -25,8 +25,10 @@ export type StreamChunk =
   | { type: 'turn'; role: 'user' | 'assistant'; content: Block[]; turnIndex: number }
   // Forwarded as a compact WS event for live display
   | { type: 'usage'; usage: TokenUsage }
-  // Emitted when manage_memory tool succeeds — triggers memoryUpdated WS event
-  | { type: 'memoryChanged' }
+  // Emitted when manage_memory / manage_project_memory succeeds — triggers memoryUpdated WS
+  // event; carries the same op/category/text detail the tool-pill card already shows, so the
+  // toast doesn't have to be a content-free "Memory updated".
+  | { type: 'memoryChanged'; scope: 'user' | 'project'; operation: string; category?: string; text?: string }
 
 export interface TokenUsage {
   inputTokens: number

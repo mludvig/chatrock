@@ -133,9 +133,11 @@ export async function* converseStream(
       const imageEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'image' }> => e.kind === 'image')
       const isError = toolResult.isError
 
-      // Emit memoryChanged when manage_memory succeeds (triggers WS memoryUpdated event)
-      if (tu.name === 'manage_memory' && !isError) {
-        yield { type: 'memoryChanged' as const }
+      // Emit memoryChanged when manage_memory / manage_project_memory succeeds (triggers WS
+      // memoryUpdated event) — see docs/adr/0013-memory-update-detail-and-editing.md.
+      if ((tu.name === 'manage_memory' || tu.name === 'manage_project_memory') && !isError) {
+        const scope = tu.name === 'manage_project_memory' ? 'project' as const : 'user' as const
+        yield { type: 'memoryChanged', scope, operation: String(input?.operation ?? ''), category: input?.category, text: input?.text }
       }
 
       if (imageEntries.length === 0) {
