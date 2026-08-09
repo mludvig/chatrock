@@ -51,6 +51,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // component in both states. Included directly in the createChat() flags payload.
   const [draftSensitive, setDraftSensitive] = useState(false)
   const [draftEphemeral, setDraftEphemeral] = useState(false)
+  // For /c/new: project picker in the header, so a chat can be filed into a project
+  // before its first send instead of only via "New chat" from inside a project.
+  const [draftProjectId, setDraftProjectId] = useState('')
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   const [input, setInput] = useState('')
@@ -551,9 +554,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (newChatTick > 0) requestAnimationFrame(() => inputRef.current?.focus())
   }, [newChatTick])
 
-  // Sensitive/ephemeral must default off for every fresh /c/new — they should never
-  // silently carry over from a previous chat the user made sensitive.
-  useEffect(() => { setDraftSensitive(false); setDraftEphemeral(false) }, [newChatTick])
+  // Sensitive/ephemeral/project must default off for every fresh /c/new — they should
+  // never silently carry over from a previous chat the user made sensitive or filed.
+  useEffect(() => { setDraftSensitive(false); setDraftEphemeral(false); setDraftProjectId('') }, [newChatTick])
 
   // Close the Chat details dialog when switching chats so it doesn't linger open across
   // navigation to a different chat.
@@ -821,6 +824,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // overrideContent/search/projectIdOverride are set only by the pendingSearch mount effect
   // below — a normal send from the composer passes none of them and reads from `input` as before.
   async function handleSend(overrideContent?: string, search?: { scope: 'project' | 'global' }, projectIdOverride?: string) {
+    const effectiveProjectId = projectIdOverride ?? (draftProjectId || undefined)
     const content = (overrideContent ?? input).trim()
     const readyAttachments = attachments.filter(a => a.status === 'ready')
     if ((!content && readyAttachments.length === 0) || sending || creatingChat) return
@@ -881,7 +885,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
       try {
         const newChatId = pendingNewChatIdRef.current ?? newId()
-        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, projectIdOverride, { sensitive: draftSensitive, ephemeral: draftEphemeral })
+        const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, effectiveProjectId, { sensitive: draftSensitive, ephemeral: draftEphemeral })
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
         if (draftSensitive || draftEphemeral) {
@@ -895,7 +899,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             model,
             systemPrompt,
             ...(Object.keys(draftModelSettings).length > 0 ? { modelSettings: draftModelSettings } : {}),
-            ...(projectIdOverride ? { projectId: projectIdOverride } : {}),
+            ...(effectiveProjectId ? { projectId: effectiveProjectId } : {}),
             createdAt: now,
             updatedAt: now,
           })
@@ -1117,6 +1121,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           >
             <FontAwesomeIcon icon={faEyeSlash} /> <span className="btn-private-label">Private</span>
           </button>
+          {isNew && projects.length > 0 && (
+            <select
+              className="model-select project-picker"
+              value={draftProjectId}
+              onChange={e => setDraftProjectId(e.target.value)}
+              title="File this chat into a project"
+            >
+              <option value="">No project</option>
+              {projects.map(p => (
+                <option key={p.projectId} value={p.projectId}>{p.name}</option>
+              ))}
+            </select>
+          )}
           <select
             className="model-select"
             value={currentModelId}
