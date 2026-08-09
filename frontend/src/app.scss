@@ -585,6 +585,11 @@ $header-h: 45px;
   border-bottom: 1px solid $border;
   background: $surface;
   flex-shrink: 0;
+  // Sticky so mobile browsers scrolling the focused input into view can't carry the
+  // header off-screen with it — the header stays pinned to the top of its scroll container.
+  position: sticky;
+  top: 0;
+  z-index: 5;
 
   h2, .chat-header-spacer {
     flex: 1;
@@ -1722,6 +1727,7 @@ $mobile: 720px;
   .btn-private-label { display: none; }
 
   .model-select { font-size: 12px; padding: 4px 8px; max-width: 130px; }
+  .project-picker { max-width: 100px; }
 
   // Bubbles: reduce horizontal padding on mobile
   .bubble-row { padding: 0 8px; }
