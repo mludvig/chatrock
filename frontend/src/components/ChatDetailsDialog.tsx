@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEyeSlash, faTrash, faHashtag } from '@fortawesome/free-solid-svg-icons'
+import { faEyeSlash, faTrash, faHashtag, faMemory } from '@fortawesome/free-solid-svg-icons'
 import type { Chat, ModelCapabilities, ModelSettings } from '../api/http'
 import type { SaveStatus } from '../lib/useSaveStatus'
 import Dialog from './Dialog'
@@ -120,7 +120,7 @@ export default function ChatDetailsDialog({
           <div className="model-settings">
             <div className="pref-label">Privacy</div>
             <div className="model-setting-row model-setting-row--inline">
-              <label className="setting-label" title="Excluded from memory, summaries and search. Masked in the chat list unless revealed.">
+              <label className="setting-label" title="Blocks this chat's facts from being written into memory, project memory, and search — used by other chats. Doesn't affect reading: your existing saved memories are still injected here regardless of this toggle (see Memory below).">
                 <FontAwesomeIcon icon={faEyeSlash} />
                 <span>Sensitive</span>
               </label>
@@ -141,6 +141,19 @@ export default function ChatDetailsDialog({
               </button>
             </div>
             <div className="model-setting-row model-setting-row--inline">
+              <label className="setting-label" title="Controls this chat only. On: your saved memories are injected into this chat's system prompt, and new facts from this chat can be extracted into memory. Off: neither happens — nothing is read in or written out. Independent of Sensitive, which only ever blocks writes.">
+                <FontAwesomeIcon icon={faMemory} />
+                <span>Memory</span>
+              </label>
+              <button
+                className={`toggle-btn${settings.memoryEnabled !== false ? ' active' : ''}`}
+                onClick={() => onSettingsChange({ ...settings, memoryEnabled: settings.memoryEnabled === false ? true : false })}
+                title="Toggle memory"
+              >
+                {settings.memoryEnabled !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="model-setting-row model-setting-row--inline">
               <label className="setting-label" title="Shows per-message and running-total token counts under bubbles and above the input box. Usage is always recorded regardless of this setting — it only controls whether it's displayed.">
                 <FontAwesomeIcon icon={faHashtag} />
                 <span>Show token stats</span>
@@ -151,7 +164,7 @@ export default function ChatDetailsDialog({
             </div>
           </div>
 
-          <ToolsPanel settings={settings} onChange={onSettingsChange} />
+          <ToolsPanel settings={settings} onChange={onSettingsChange} hideMemory />
           <ModelTuningPanel caps={caps} settings={settings} onChange={onSettingsChange} />
         </div>
       )}
