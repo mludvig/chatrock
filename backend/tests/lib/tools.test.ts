@@ -118,7 +118,8 @@ describe('web_fetch executor', () => {
     const payload = JSON.parse((res.entries[0] as { text: string }).text)
     expect(payload.result.url).toBe('https://example.com')
     expect(payload.result.title).toBe('https://example.com')  // title falls back to url
-    expect(payload.text).toBe('')
+    // Empty content triggers the get_rendered_page fallback hint rather than a bare empty string.
+    expect(payload.text).toContain('get_rendered_page')
   })
 })
 

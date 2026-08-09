@@ -43,7 +43,7 @@ export const WEB_TOOLS: ToolSpec[] = [
   },
   {
     name: 'web_fetch',
-    description: 'Fetch and read the full content of a web page. Returns the page as clean readable text. Use this to read a specific URL.',
+    description: "Fetch and read the full content of a web page — a fast static HTML fetch, does NOT execute JavaScript. Returns the page as clean readable text. Use this to read a specific URL. If the result comes back empty or clearly missing the page's real content (common on JS-heavy single-page apps), retry the same URL with get_rendered_page instead.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -577,7 +577,13 @@ async function jinaFetch(url: string): Promise<string> {
   const d = json.data ?? {}
   const content = d.content ?? ''
   // Cap the page body at ~8k chars to protect the context window
-  const text = content.length > 8000 ? content.slice(0, 8000) + '\n\n[... truncated ...]' : content
+  let text = content.length > 8000 ? content.slice(0, 8000) + '\n\n[... truncated ...]' : content
+  // Static fetch found little/nothing — likely a JS-rendered page Jina couldn't see past.
+  // Nudge the model toward get_rendered_page rather than silently returning a near-empty
+  // page (relying solely on the tool description is easy to miss once a call is in flight).
+  if (content.trim().length < 40) {
+    text += "\n\n[web_fetch got little or no content — this page may require JavaScript to render. Try get_rendered_page for this URL instead.]"
+  }
   const result = {
     title: d.title ?? d.url ?? url,
     url: d.url ?? url,

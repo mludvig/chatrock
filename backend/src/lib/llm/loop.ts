@@ -16,6 +16,8 @@ export { bedrockClient } from './providers/bedrockConverse'
 // Maximum number of tool-use rounds before we force a final text answer
 const MAX_TOOL_ROUNDS = 8
 export const HEARTBEAT_INTERVAL_MS = 4000
+// Max concurrent tool executions within a single round — see docs/adr/0016-parallel-tool-execution.md.
+const TOOL_CONCURRENCY = 5
 
 export async function* converseStream(
   modelId: string,
@@ -103,31 +105,31 @@ export async function* converseStream(
     // web_search calls); their results all land in the same DynamoDB turn item, so the
     // per-call cap must shrink as the round grows to keep the aggregate bounded.
     const perCallCap = Math.min(TOOL_RESULT_CAP, Math.floor(TOOL_RESULTS_ROUND_CAP / Math.max(1, result.toolUses.length)))
+    // Captured into a local so the closures below (which TS can't narrow through, since
+    // `result` is a mutable outer `let`) get a definitely-not-undefined array.
+    const toolUses = result.toolUses
     // Two representations of the same round's tool results: `toolResultsLive` carries inline
     // image bytes (replayed to the provider in the *next* round of this same invocation —
     // nothing re-hydrates `newMessages` mid-loop), `toolResultsPersist` carries S3 locations
     // instead (small, durable — matches how user attachments are stored at rest). Text-only
     // tool results are identical in both and unaffected by this split.
     // See docs/adr/0005-dual-tool-result-representation.md.
-    const toolResultsLive: Block[] = []
-    const toolResultsPersist: Block[] = []
-    for (const tu of result.toolUses) {
+    // Pre-sized (not pushed) so results land back in `toolUses` order even though
+    // execution below runs concurrently and can finish in any order — see docs/adr/0016-
+    // parallel-tool-execution.md.
+    const toolResultsLive: Block[] = new Array(toolUses.length)
+    const toolResultsPersist: Block[] = new Array(toolUses.length)
+
+    type ToolOutcome = {
+      toolResultChunk: Extract<StreamChunk, { type: 'tool_result' }>
+      memoryChunk?: Extract<StreamChunk, { type: 'memoryChanged' }>
+      live: Block
+      persist: Block
+    }
+
+    async function runOneTool(tu: (typeof toolUses)[number]): Promise<ToolOutcome> {
       const input = (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })()
-      const toolPromise = executeTool(tu.name, input, ctx ?? { sub: '' })
-      let toolResult: Awaited<ReturnType<typeof executeTool>> | undefined
-      while (!toolResult) {
-        const timerId = { current: undefined as ReturnType<typeof setTimeout> | undefined }
-        const outcome = await Promise.race([
-          toolPromise.then(r => ({ done: true as const, r })),
-          new Promise<{ done: false }>(resolve => { timerId.current = setTimeout(() => resolve({ done: false }), HEARTBEAT_INTERVAL_MS) }),
-        ])
-        clearTimeout(timerId.current)
-        if (outcome.done) {
-          toolResult = outcome.r
-        } else {
-          yield { type: 'heartbeat' }
-        }
-      }
+      const toolResult = await executeTool(tu.name, input, ctx ?? { sub: '' })
       const entries = toolResult.entries
       const textEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'text' }> => e.kind === 'text')
       const imageEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'image' }> => e.kind === 'image')
@@ -135,10 +137,9 @@ export async function* converseStream(
 
       // Emit memoryChanged when manage_memory / manage_project_memory succeeds (triggers WS
       // memoryUpdated event) — see docs/adr/0013-memory-update-detail-and-editing.md.
-      if ((tu.name === 'manage_memory' || tu.name === 'manage_project_memory') && !isError) {
-        const scope = tu.name === 'manage_project_memory' ? 'project' as const : 'user' as const
-        yield { type: 'memoryChanged', scope, operation: String(input?.operation ?? ''), category: input?.category, text: input?.text }
-      }
+      const memoryChunk: ToolOutcome['memoryChunk'] = (tu.name === 'manage_memory' || tu.name === 'manage_project_memory') && !isError
+        ? { type: 'memoryChanged', scope: tu.name === 'manage_project_memory' ? 'project' : 'user', operation: String(input?.operation ?? ''), category: input?.category, text: input?.text }
+        : undefined
 
       if (imageEntries.length === 0) {
         // Text-only tool result. Single-call tools (web_search, manage_memory, etc.) return
@@ -148,11 +149,13 @@ export async function* converseStream(
         // (e.g. the actual snapshot YAML) silently disappears.
         const rawContent = textEntries.map(t => t.text).join('\n\n')
         const cappedContent = capToolResultText(rawContent, perCallCap)
-        yield { type: 'tool_result', toolUseId: tu.callId, name: tu.name, content: cappedContent, isError }
         const block: Block = { kind: 'tool_result', callId: tu.callId, entries: [{ kind: 'text', text: cappedContent }], isError }
-        toolResultsLive.push(block)
-        toolResultsPersist.push(block)
-        continue
+        return {
+          toolResultChunk: { type: 'tool_result', toolUseId: tu.callId, name: tu.name, content: cappedContent, isError },
+          memoryChunk,
+          live: block,
+          persist: block,
+        }
       }
 
       // Image-bearing result (e.g. browser screenshots): upload each image to S3 under the
@@ -187,10 +190,47 @@ export async function* converseStream(
         }
       }
 
-      yield { type: 'tool_result', toolUseId: tu.callId, name: tu.name, content: cappedText, isError, screenshotUrls }
+      return {
+        toolResultChunk: { type: 'tool_result', toolUseId: tu.callId, name: tu.name, content: cappedText, isError, screenshotUrls },
+        memoryChunk,
+        live: { kind: 'tool_result', callId: tu.callId, entries: liveEntries, isError },
+        persist: { kind: 'tool_result', callId: tu.callId, entries: persistEntries, isError },
+      }
+    }
 
-      toolResultsLive.push({ kind: 'tool_result', callId: tu.callId, entries: liveEntries, isError })
-      toolResultsPersist.push({ kind: 'tool_result', callId: tu.callId, entries: persistEntries, isError })
+    // Run this round's tool calls concurrently instead of one-at-a-time — a round batching
+    // N web_search/web_fetch calls used to pay their full latency N times over. Capped at
+    // TOOL_CONCURRENCY in flight at once (a pool, not a single Promise.all) to avoid
+    // hammering rate-limited backends (Jina) or opening too many AgentCore browser sessions
+    // at once. See docs/adr/0016-parallel-tool-execution.md.
+    let nextToolIndex = 0
+    const runningTools = new Map<Promise<ToolOutcome>, number>()
+    function launchNextTool() {
+      if (nextToolIndex >= toolUses.length) return
+      const index = nextToolIndex++
+      runningTools.set(runOneTool(toolUses[index]), index)
+    }
+    for (let i = 0; i < Math.min(TOOL_CONCURRENCY, toolUses.length); i++) launchNextTool()
+
+    while (runningTools.size > 0) {
+      const timerId = { current: undefined as ReturnType<typeof setTimeout> | undefined }
+      const settled = Promise.race(
+        [...runningTools.keys()].map(p => p.then(outcome => ({ done: true as const, p, outcome })))
+      )
+      const heartbeat = new Promise<{ done: false }>(resolve => { timerId.current = setTimeout(() => resolve({ done: false }), HEARTBEAT_INTERVAL_MS) })
+      const outcome = await Promise.race([settled, heartbeat])
+      clearTimeout(timerId.current)
+      if (!outcome.done) {
+        yield { type: 'heartbeat' }
+        continue
+      }
+      const index = runningTools.get(outcome.p)!
+      runningTools.delete(outcome.p)
+      launchNextTool()
+      toolResultsLive[index] = outcome.outcome.live
+      toolResultsPersist[index] = outcome.outcome.persist
+      yield outcome.outcome.toolResultChunk
+      if (outcome.outcome.memoryChunk) yield outcome.outcome.memoryChunk
     }
 
     // Yield the user tool-result turn for persistence (s3Uri form, neutral at rest)
