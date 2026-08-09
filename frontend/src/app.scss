@@ -1141,6 +1141,13 @@ $header-h: 45px;
   > .pref-label { margin-bottom: -2px; }
 }
 
+.privacy-summary {
+  font-size: 11px;
+  line-height: 1.4;
+  color: $muted;
+  margin: 0;
+}
+
 .model-setting-row {
   display: flex;
   flex-direction: column;

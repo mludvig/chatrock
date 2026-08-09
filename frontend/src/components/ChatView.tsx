@@ -12,6 +12,7 @@ import type { WSEvent } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
+import { describeChatPrivacy } from '../lib/privacyDescription'
 
 interface Props {
   accessToken: string
@@ -1082,6 +1083,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const sensitive = isNew ? draftSensitive : !!activeChat?.sensitive
   const ephemeral = isNew ? draftEphemeral : !!activeChat?.ephemeral
   const isPrivate = sensitive && ephemeral
+  const isChatInProject = isNew ? !!draftProjectId : !!chatProject
 
   return (
     <div className={`chat-view${sensitive ? ' chat-view--private' : ''}`}>
@@ -1110,7 +1112,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             active "Private" toggle button below already says the same thing, so a
             second chip here would just repeat it. */}
         {sensitive && !ephemeral && (
-          <span className="private-chip" title="Sensitive chat — excluded from memory & search, masked in the chat list unless revealed">
+          <span
+            className="private-chip"
+            title={describeChatPrivacy({
+              memoryEnabled: draftModelSettings.memoryEnabled !== false,
+              sensitive, isProject: isChatInProject, ephemeral, expiresAt: activeChat?.expiresAt,
+            })}
+          >
             <FontAwesomeIcon icon={faEyeSlash} /> Sensitive
           </span>
         )}
@@ -1237,11 +1245,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         {(sensitive || ephemeral) && (
           <div className="private-footer">
             <FontAwesomeIcon icon={faEyeSlash} />
-            {sensitive && ephemeral
-              ? (activeChat?.expiresAt ? `Private — sensitive, and expires ${new Date(activeChat.expiresAt).toLocaleString()}.` : 'Private — excluded from memory & search, masked in the chat list, and auto-deleted.')
-              : ephemeral
-                ? (activeChat?.expiresAt ? `Expires ${new Date(activeChat.expiresAt).toLocaleString()} unless you delete it sooner.` : 'This chat will auto-delete after the TTL.')
-                : 'Sensitive chat — excluded from memory & search, masked in the chat list.'}
+            {describeChatPrivacy({
+              memoryEnabled: draftModelSettings.memoryEnabled !== false,
+              sensitive, isProject: isChatInProject, ephemeral, expiresAt: activeChat?.expiresAt,
+            })}
           </div>
         )}
 
@@ -1388,6 +1395,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         sensitive={sensitive}
         ephemeral={ephemeral}
         expiresAt={activeChat?.expiresAt}
+        isProject={isChatInProject}
         onToggleSensitive={() => isNew ? setDraftSensitive(v => !v) : handleToggleFlag('sensitive')}
         onToggleEphemeral={() => isNew ? setDraftEphemeral(v => !v) : handleToggleFlag('ephemeral')}
         showTokenStats={effectiveShowTokenStats}

@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEyeSlash, faTrash, faHashtag, faMemory } from '@fortawesome/free-solid-svg-icons'
 import type { Chat, ModelCapabilities, ModelSettings } from '../api/http'
 import type { SaveStatus } from '../lib/useSaveStatus'
+import { describeChatPrivacy } from '../lib/privacyDescription'
 import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
 import ModelTuningPanel from './ModelTuningPanel'
@@ -11,6 +12,8 @@ import SaveIndicator from './SaveIndicator'
 
 // Item-scoped settings dialog — see docs/adr/0009-consolidate-item-scoped-settings-into-one-dialog.md.
 // sensitive/ephemeral toggles: see docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md.
+// "Update memory" toggle displays the inverse of the underlying `sensitive` flag — see
+// docs/adr/0015-privacy-toggle-labels-and-sensitive-flag-mapping.md.
 interface Props {
   open: boolean
   onClose: () => void
@@ -20,6 +23,7 @@ interface Props {
   sensitive: boolean
   ephemeral: boolean
   expiresAt?: string
+  isProject: boolean
   onToggleSensitive: () => void
   onToggleEphemeral: () => void
   showTokenStats: boolean
@@ -36,7 +40,7 @@ type Tab = 'settings' | 'info' | 'share'
 
 export default function ChatDetailsDialog({
   open, onClose, isNew, chat, onRename,
-  sensitive, ephemeral, expiresAt, onToggleSensitive, onToggleEphemeral,
+  sensitive, ephemeral, expiresAt, isProject, onToggleSensitive, onToggleEphemeral,
   showTokenStats, onToggleShowTokenStats,
   caps, settings, onSettingsChange, systemPrompt, onSystemPromptChange, systemPromptSaveStatus,
 }: Props) {
@@ -120,12 +124,25 @@ export default function ChatDetailsDialog({
           <div className="model-settings">
             <div className="pref-label">Privacy</div>
             <div className="model-setting-row model-setting-row--inline">
-              <label className="setting-label" title="Blocks this chat's facts from being written into memory, project memory, and search — used by other chats — even if Memory (below) is on. Doesn't affect reading: your existing saved memories are still injected here regardless of this toggle.">
-                <FontAwesomeIcon icon={faEyeSlash} />
-                <span>Sensitive</span>
+              <label className="setting-label" title="Controls this chat only. On: your saved memory is injected into this chat's system prompt. Off: nothing is read in — and nothing can be written out either, regardless of Update memory below.">
+                <FontAwesomeIcon icon={faMemory} />
+                <span>Use memory</span>
               </label>
-              <button className={`toggle-btn${sensitive ? ' active' : ''}`} onClick={onToggleSensitive} title="Toggle sensitive">
-                {sensitive ? 'On' : 'Off'}
+              <button
+                className={`toggle-btn${settings.memoryEnabled !== false ? ' active' : ''}`}
+                onClick={() => onSettingsChange({ ...settings, memoryEnabled: settings.memoryEnabled === false ? true : false })}
+                title="Toggle use memory"
+              >
+                {settings.memoryEnabled !== false ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div className="model-setting-row model-setting-row--inline">
+              <label className="setting-label" title="On: new facts from this chat can be added to memory, and its summary stays current for search — the normal state. Off: this chat's content never gets written into memory, project memory, or search-indexed summaries, no matter what other chats do with theirs. Doesn't affect Use memory above — reading still works either way.">
+                <FontAwesomeIcon icon={faEyeSlash} />
+                <span>Update memory</span>
+              </label>
+              <button className={`toggle-btn${!sensitive ? ' active' : ''}`} onClick={onToggleSensitive} title="Toggle update memory">
+                {!sensitive ? 'On' : 'Off'}
               </button>
             </div>
             <div className="model-setting-row model-setting-row--inline">
@@ -140,19 +157,15 @@ export default function ChatDetailsDialog({
                 {ephemeral ? 'On' : 'Off'}
               </button>
             </div>
-            <div className="model-setting-row model-setting-row--inline">
-              <label className="setting-label" title="Controls this chat only. On: your saved memories are injected into this chat's system prompt, and new facts from this chat are extracted into memory (unless Sensitive is also on, which blocks that regardless). Off: nothing is read in or written out, full stop — Sensitive or not.">
-                <FontAwesomeIcon icon={faMemory} />
-                <span>Memory</span>
-              </label>
-              <button
-                className={`toggle-btn${settings.memoryEnabled !== false ? ' active' : ''}`}
-                onClick={() => onSettingsChange({ ...settings, memoryEnabled: settings.memoryEnabled === false ? true : false })}
-                title="Toggle memory"
-              >
-                {settings.memoryEnabled !== false ? 'On' : 'Off'}
-              </button>
-            </div>
+            <p className="privacy-summary">
+              {describeChatPrivacy({ memoryEnabled: settings.memoryEnabled !== false, sensitive, isProject, ephemeral, expiresAt })}
+            </p>
+          </div>
+
+          <ToolsPanel settings={settings} onChange={onSettingsChange} hideMemory />
+          <ModelTuningPanel caps={caps} settings={settings} onChange={onSettingsChange} />
+
+          <div className="model-settings">
             <div className="model-setting-row model-setting-row--inline">
               <label className="setting-label" title="Shows per-message and running-total token counts under bubbles and above the input box. Usage is always recorded regardless of this setting — it only controls whether it's displayed.">
                 <FontAwesomeIcon icon={faHashtag} />
@@ -163,9 +176,6 @@ export default function ChatDetailsDialog({
               </button>
             </div>
           </div>
-
-          <ToolsPanel settings={settings} onChange={onSettingsChange} hideMemory />
-          <ModelTuningPanel caps={caps} settings={settings} onChange={onSettingsChange} />
         </div>
       )}
     </Dialog>
