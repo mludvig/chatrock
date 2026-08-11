@@ -32,6 +32,17 @@ let _toastSeq = 0
 
 export type ActivePanel = 'chats' | 'memory' | 'prefs' | 'projects'
 
+// In-memory (not persisted — resets on reload) per-chat cache of the last-loaded messages
+// page(s), so switching back to a chat already viewed this session skips the network round
+// trip entirely. Capped LRU so long sessions don't grow this unbounded.
+export interface CachedChatMessages {
+  messages: Message[]
+  conversationUsage: TokenUsage | null
+  hasMoreOlder: boolean
+  oldestMsgId: string | null
+}
+const MESSAGES_CACHE_CAP = 20
+
 // A Search submitted from the global header (see App.tsx) — consumed once by ChatView's
 // /c/new mount effect, which issues the first send with `search: {scope}` and clears this.
 // Not persisted (see partialize below): a stale pending search must never survive a reload.
@@ -124,6 +135,11 @@ interface ChatState {
 
   pendingSearch: PendingSearch | null
   setPendingSearch: (pf: PendingSearch | null) => void
+
+  messagesCache: Record<string, CachedChatMessages>
+  cacheOrder: string[]
+  getMessagesCache: (chatId: string) => CachedChatMessages | undefined
+  setMessagesCache: (chatId: string, data: CachedChatMessages) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -166,7 +182,7 @@ function appendToLastText(steps: Step[], text: string): Step[] {
 
 export const useChatStore = create<ChatState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       chats: [],
       activeChatId: null,
       messages: [],
@@ -189,6 +205,8 @@ export const useChatStore = create<ChatState>()(
       projects: [],
       projectFilesById: {},
       pendingSearch: null,
+      messagesCache: {},
+      cacheOrder: [],
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -198,11 +216,17 @@ export const useChatStore = create<ChatState>()(
       clearModelMigrationNotice: (chatId) => set((s) => ({
         chats: s.chats.map(c => c.chatId === chatId ? { ...c, modelMigratedFrom: undefined } : c),
       })),
-      removeChat: (chatId) => set((s) => ({
-        chats: s.chats.filter(c => c.chatId !== chatId),
-        activeChatId: s.activeChatId === chatId ? null : s.activeChatId,
-        messages: s.activeChatId === chatId ? [] : s.messages,
-      })),
+      removeChat: (chatId) => set((s) => {
+        const { [chatId]: _removed, ...messagesCache } = s.messagesCache
+        void _removed
+        return {
+          chats: s.chats.filter(c => c.chatId !== chatId),
+          activeChatId: s.activeChatId === chatId ? null : s.activeChatId,
+          messages: s.activeChatId === chatId ? [] : s.messages,
+          messagesCache,
+          cacheOrder: s.cacheOrder.filter(id => id !== chatId),
+        }
+      }),
       renameChat: (chatId, title) => set((s) => ({
         chats: s.chats.map(c => c.chatId === chatId ? { ...c, title } : c),
       })),
@@ -402,6 +426,17 @@ export const useChatStore = create<ChatState>()(
       })),
 
       setPendingSearch: (pendingSearch) => set({ pendingSearch }),
+
+      getMessagesCache: (chatId) => get().messagesCache[chatId],
+      setMessagesCache: (chatId, data) => set((s) => {
+        const cacheOrder = [...s.cacheOrder.filter(id => id !== chatId), chatId]
+        const messagesCache = { ...s.messagesCache, [chatId]: data }
+        while (cacheOrder.length > MESSAGES_CACHE_CAP) {
+          const evicted = cacheOrder.shift()
+          if (evicted) delete messagesCache[evicted]
+        }
+        return { messagesCache, cacheOrder }
+      }),
     }),
     {
       name: 'chatrock-store',
