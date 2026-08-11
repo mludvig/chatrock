@@ -9,7 +9,7 @@ import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, sub
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { Block } from '../lib/llm/blocks'
 import { summarizeChatById, enrichProjectFactsByChatId } from '../lib/enrichment'
-import { groupTurnsToBubbles, filterSteps, renderMarkdown } from '../lib/transcript'
+import { groupTurnsToBubbles, signBubbleAttachments, filterSteps, renderMarkdown } from '../lib/transcript'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -544,7 +544,8 @@ export const handler = async (
     const rows = (await listMessages(chatId)) as unknown as TurnRow[]
     const activeLeafId = (chat.activeLeafId as string | undefined) ?? null
     const activePath = buildActivePath(rows, activeLeafId)
-    const { bubbles } = await groupTurnsToBubbles(activePath)
+    const { bubbles } = groupTurnsToBubbles(activePath)
+    await signBubbleAttachments(bubbles)
     const filtered = filterSteps(bubbles, { includeThinking, includeTools })
     const markdown = renderMarkdown(filtered, { title: (chat.title as string | undefined) ?? 'Chat' })
 

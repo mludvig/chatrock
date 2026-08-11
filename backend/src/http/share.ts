@@ -1,7 +1,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { getShare, getChat, listMessages } from '../lib/dynamo'
 import { buildActivePath } from '../lib/tree'
-import { groupTurnsToBubbles, filterSteps, renderMarkdown, renderHtml, type TurnRow } from '../lib/transcript'
+import { groupTurnsToBubbles, signBubbleAttachments, filterSteps, renderMarkdown, renderHtml, type TurnRow } from '../lib/transcript'
 
 // Public, UNAUTHENTICATED renderer for a shared chat — GET /s/{shareId}. No JWT: the route has
 // authorization_type=NONE in terraform, and this file must never call subFromClaims. The
@@ -71,7 +71,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     pathRows = buildActivePath(rows, activeLeafId)
   }
 
-  const { bubbles } = await groupTurnsToBubbles(pathRows)
+  const { bubbles } = groupTurnsToBubbles(pathRows)
+  await signBubbleAttachments(bubbles)
   const filtered = filterSteps(bubbles, { includeThinking, includeTools })
   const title = (chat.title as string | undefined) ?? 'Shared chat'
 

@@ -49,6 +49,9 @@ resource "aws_lambda_function" "http_messages" {
   handler          = "index.handler"
   runtime          = local.lambda_runtime
   timeout          = 30
+  # More memory ⇒ proportionally more CPU ⇒ much faster cold start on this hot, latency-
+  # sensitive route (default 128 MB was CPU-starved for a Node cold start).
+  memory_size = 1024
   environment { variables = local.lambda_env_base }
   tags = { Env = var.env }
 }
