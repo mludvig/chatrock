@@ -88,8 +88,13 @@ export interface TurnRow {
  *   own bubble), so the assistant bubble shows tool calls with their results.
  *
  * Raw blocks, signatures, and redactedContent are never included in output.
+ *
+ * Pure/sync — attachment and screenshot steps carry raw S3 keys, not signed URLs.
+ * Callers that render bubbles to a client must call signBubbleAttachments() on
+ * the (possibly paginated) subset they're about to return; callers that only need
+ * msgId/parentId (e.g. sibling-metadata bookkeeping) can skip signing entirely.
  */
-export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversationResponse> {
+export function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
   const bubbles: RawBubble[] = []
   const conversationUsage: TokenUsage = { inputTokens: 0, outputTokens: 0 }
 
@@ -195,11 +200,11 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
             // Image-bearing tool result (e.g. browser screenshots): screenshotUrls is a
             // first-class field (signed fresh on every load, 1h expiry) — not a JSON envelope
             // smuggled inside `result`, so the client never has to re-parse it.
+            // Holds raw S3 keys here; signBubbleAttachments() signs them afterward, in parallel.
             const screenshotUrls: string[] = []
             for (const img of imageEntries) {
               if (!('s3Uri' in img.image.source)) continue // defensive; should not be stored
-              const key = img.image.source.s3Uri.replace(/^s3:\/\/[^/]+\//, '')
-              screenshotUrls.push(await signCloudFrontUrl(key))
+              screenshotUrls.push(img.image.source.s3Uri.replace(/^s3:\/\/[^/]+\//, ''))
             }
             step.result = textEntries.map(t => t.text).join('\n\n')
             step.screenshotUrls = screenshotUrls
@@ -221,13 +226,13 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
           if ('s3Uri' in src) {
             const key = src.s3Uri.replace(/^s3:\/\/[^/]+\//, '')
             const filename = key.split('/').pop() || 'image'
-            const url = await signCloudFrontUrl(key)
+            // url holds the raw S3 key until signBubbleAttachments() signs it.
             steps.push({
               kind: 'attachment',
               attachmentKind: 'image',
               filename,
               contentType: `image/${block.image.format}`,
-              url,
+              url: key,
               s3Key: key,
             })
           }
@@ -237,7 +242,6 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
           if ('s3Uri' in src) {
             const key = src.s3Uri.replace(/^s3:\/\/[^/]+\//, '')
             const filename = key.split('/').pop() || 'document'
-            const url = await signCloudFrontUrl(key)
             const formatToMime: Record<string, string> = {
               pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv',
             }
@@ -246,7 +250,7 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
               attachmentKind: 'document',
               filename: block.document.name || filename,
               contentType: formatToMime[block.document.format] ?? 'application/octet-stream',
-              url,
+              url: key,
               s3Key: key,
               ...(block.document.citations !== undefined
                 ? { mode: block.document.citations ? 'rich' as const : 'standard' as const }
@@ -269,6 +273,28 @@ export async function groupTurnsToBubbles(rows: TurnRow[]): Promise<RawConversat
   flushAssistantBubble()
 
   return { bubbles, conversationUsage }
+}
+
+/**
+ * Sign every attachment/screenshot step's raw S3 key (stashed by groupTurnsToBubbles)
+ * into a CloudFront URL, mutating the bubbles in place. All signing calls run in
+ * parallel — call this only on the bubbles you're about to return/render, not on
+ * throwaway bubble sets (e.g. sibling-metadata bookkeeping), to bound the number of
+ * signing calls to what's actually displayed.
+ */
+export async function signBubbleAttachments(bubbles: RawBubble[]): Promise<void> {
+  const jobs: Promise<void>[] = []
+  for (const b of bubbles) {
+    for (const step of b.steps) {
+      if (step.kind === 'attachment') {
+        jobs.push(signCloudFrontUrl(step.url).then(signed => { step.url = signed }))
+      } else if (step.kind === 'tool' && step.screenshotUrls?.length) {
+        const keys = step.screenshotUrls
+        jobs.push(Promise.all(keys.map(k => signCloudFrontUrl(k))).then(signed => { step.screenshotUrls = signed }))
+      }
+    }
+  }
+  await Promise.all(jobs)
 }
 
 // ── Include/exclude filtering (thinking / tool calls) ─────────────────────────
