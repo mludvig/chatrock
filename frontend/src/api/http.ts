@@ -259,7 +259,17 @@ export const api = {
   updateChatFlags: (chatId: string, flags: { sensitive?: boolean; ephemeral?: boolean }) =>
     req<void>('PATCH', `/api/chats/${chatId}`, flags),
   deleteChat: (chatId: string)         => req<void>('DELETE', `/api/chats/${chatId}`),
-  listMessages: (chatId: string)       => req<{ bubbles: Message[]; conversationUsage: TokenUsage }>('GET', `/api/chats/${chatId}/messages`),
+  // Paginated: defaults to the most recent page. Pass `before` (the previous page's
+  // `oldestMsgId`) to fetch the page immediately before it, for scroll-up loading of
+  // older history.
+  listMessages: (chatId: string, opts?: { limit?: number; before?: string }) => {
+    const params = new URLSearchParams()
+    if (opts?.limit) params.set('limit', String(opts.limit))
+    if (opts?.before) params.set('before', opts.before)
+    const qs = params.toString()
+    return req<{ bubbles: Message[]; conversationUsage: TokenUsage; hasMore: boolean; oldestMsgId: string | null }>(
+      'GET', `/api/chats/${chatId}/messages${qs ? `?${qs}` : ''}`)
+  },
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),

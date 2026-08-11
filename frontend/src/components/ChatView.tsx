@@ -27,6 +27,25 @@ interface Props {
 // (or its arrow) is the only way to submit.
 const isMobileViewport = () => window.matchMedia('(max-width: 720px)').matches
 
+// Parses each tool step's raw result JSON into cards (web_search / search_history) — shared
+// between the initial load, background reloads, and older-page fetches.
+function enrichMessages(bubbles: Message[]): Message[] {
+  return bubbles.map(msg => {
+    if (!msg.steps?.some(s => s.kind === 'tool')) return msg
+    return {
+      ...msg,
+      steps: msg.steps.map(step => {
+        if (step.kind !== 'tool') return step
+        return {
+          ...step,
+          searchResults: parseSearchResults(step.name, step.result, step.isError),
+          searchHistoryResults: parseSearchHistoryResults(step.name, step.result, step.isError),
+        }
+      }),
+    }
+  })
+}
+
 export default function ChatView({ accessToken, models, defaultModel, onModelChange, onOpenSidebar }: Props) {
   const { chatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
@@ -82,6 +101,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [creatingChat, setCreatingChat] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
+  // Pagination state for scroll-up loading of older history (see loadOlderMessages)
+  const [hasMoreOlder, setHasMoreOlder] = useState(false)
+  const [oldestMsgId, setOldestMsgId] = useState<string | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
 
   // Conversation-level usage (from listMessages on load + updated after each exchange)
   const [conversationUsage, setConversationUsage] = useState<TokenUsage | null>(null)
@@ -274,24 +297,41 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const reloadMessages = useCallback((id: string) => {
     api.listMessages(id).then(r => {
       if (useChatStore.getState().sending) return
-      const enriched = r.bubbles.map(msg => {
-        if (!msg.steps?.some(s => s.kind === 'tool')) return msg
-        return {
-          ...msg,
-          steps: msg.steps.map(step => {
-            if (step.kind !== 'tool') return step
-            return {
-              ...step,
-              searchResults: parseSearchResults(step.name, step.result, step.isError),
-              searchHistoryResults: parseSearchHistoryResults(step.name, step.result, step.isError),
-            }
-          }),
-        }
-      })
+      const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
+      setHasMoreOlder(r.hasMore)
+      setOldestMsgId(r.oldestMsgId)
+      useChatStore.getState().setMessagesCache(id, {
+        messages: enriched, conversationUsage: r.conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
+      })
     }).catch(() => {})
   }, [setMessages])
+
+  // Fetch the page immediately before the oldest loaded bubble and prepend it. Preserves
+  // scroll position by measuring the height added and adjusting scrollTop by the same
+  // delta, so prepending older content doesn't yank the viewport.
+  const loadOlderMessages = useCallback(() => {
+    if (!chatId || !hasMoreOlder || !oldestMsgId || loadingOlder) return
+    setLoadingOlder(true)
+    const container = messagesRef.current
+    const prevScrollHeight = container?.scrollHeight ?? 0
+    const prevScrollTop = container?.scrollTop ?? 0
+    api.listMessages(chatId, { before: oldestMsgId }).then(r => {
+      const enrichedOlder = enrichMessages(r.bubbles)
+      const merged = [...enrichedOlder, ...useChatStore.getState().messages]
+      setMessages(merged)
+      setHasMoreOlder(r.hasMore)
+      setOldestMsgId(r.oldestMsgId)
+      useChatStore.getState().setMessagesCache(chatId, {
+        messages: merged, conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
+      })
+      requestAnimationFrame(() => {
+        if (!container) return
+        container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight)
+      })
+    }).catch(() => {}).finally(() => setLoadingOlder(false))
+  }, [chatId, hasMoreOlder, oldestMsgId, loadingOlder, conversationUsage, setMessages])
 
   // Sync newModel when defaultModel resolves (models loaded async)
   useEffect(() => {
@@ -484,34 +524,46 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setMessages([])
       setConversationUsage(null)
       setLoadingMessages(false)
+      setHasMoreOlder(false)
+      setOldestMsgId(null)
       return
     }
     // Don't clobber the optimistic messages while a stream is in flight
     // (e.g. new-chat navigate fires this effect with sending=true)
     if (useChatStore.getState().sending) return
-    // Clear messages immediately so stale content doesn't linger while loading
+
+    // Cache hit (this chat was opened earlier in the session): show it instantly, no
+    // spinner, no network round trip — this is the common "switch back and forth
+    // between chats" case. We don't revalidate in the background; a stale cache is a
+    // page reload away from fresh, same as every other view in this app.
+    const cached = useChatStore.getState().getMessagesCache(chatId)
+    if (cached) {
+      setMessages(cached.messages)
+      setConversationUsage(cached.conversationUsage)
+      setHasMoreOlder(cached.hasMoreOlder)
+      setOldestMsgId(cached.oldestMsgId)
+      setLoadingMessages(false)
+      justLoadedRef.current = true
+      return
+    }
+
+    // No cache: clear messages immediately so stale content doesn't linger while loading
     setMessages([])
     setConversationUsage(null)
+    setHasMoreOlder(false)
+    setOldestMsgId(null)
     setLoadingMessages(true)
     let cancelled = false
     api.listMessages(chatId).then(r => {
       if (cancelled || useChatStore.getState().sending) return
-      const enriched = r.bubbles.map(msg => {
-        if (!msg.steps?.some(s => s.kind === 'tool')) return msg
-        return {
-          ...msg,
-          steps: msg.steps.map(step => {
-            if (step.kind !== 'tool') return step
-            return {
-              ...step,
-              searchResults: parseSearchResults(step.name, step.result, step.isError),
-              searchHistoryResults: parseSearchHistoryResults(step.name, step.result, step.isError),
-            }
-          }),
-        }
-      })
+      const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
+      setHasMoreOlder(r.hasMore)
+      setOldestMsgId(r.oldestMsgId)
+      useChatStore.getState().setMessagesCache(chatId, {
+        messages: enriched, conversationUsage: r.conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
+      })
       justLoadedRef.current = true
     }).catch(() => {
       if (!cancelled) navigate('/c/new', { replace: true })
@@ -581,6 +633,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
     setShowScrollDown(!atBottom)
+    if (el.scrollTop < 200) loadOlderMessages()
   }
 
   function scrollToBottom() {
@@ -1209,9 +1262,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       <div className="messages-wrap">
         <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
           {loadingMessages && (
-            <div className="messages-loading">
+            <div className="messages-skeleton">
+              <div className="skeleton-bubble skeleton-bubble--user" />
+              <div className="skeleton-bubble skeleton-bubble--assistant" />
+              <div className="skeleton-bubble skeleton-bubble--user" />
+              <div className="skeleton-bubble skeleton-bubble--assistant" />
+            </div>
+          )}
+          {loadingOlder && (
+            <div className="messages-loading messages-loading--older">
               <FontAwesomeIcon icon={faSpinner} spin />
-              <span>Loading…</span>
+              <span>Loading earlier messages…</span>
             </div>
           )}
           {allMessages.length === 0 && isNew && (

@@ -532,6 +532,40 @@ $header-h: 45px;
   color: $muted;
   font-size: 14px;
   align-self: center;
+
+  &--older {
+    padding: 12px 0;
+  }
+}
+
+.messages-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 0;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.skeleton-bubble {
+  height: 44px;
+  border-radius: $radius;
+  background: $surface2;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+
+  &--user {
+    align-self: flex-end;
+    width: 45%;
+  }
+
+  &--assistant {
+    align-self: flex-start;
+    width: 70%;
+    height: 64px;
+  }
 }
 
 .chat-empty-state {
