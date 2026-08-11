@@ -74,6 +74,8 @@ function buildDefaultToolSet(): Tool[] {
 /**
  * Build the system prompt array with a trailing cachePoint.
  * Returns undefined when systemPrompt is empty (no dangling cachePoint).
+ * See docs/adr/0019-prompt-cache-breakpoint-placement.md — one marker for the
+ * whole prompt, so memory/manifest churn invalidates the entire block.
  */
 function buildSystemWithCache(systemPrompt: string): SystemContentBlock[] | undefined {
   if (!systemPrompt) return undefined
