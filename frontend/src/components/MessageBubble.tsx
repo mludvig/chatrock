@@ -123,6 +123,16 @@ const mdComponents = {
     }
     return <li {...props}>{children}</li>
   },
+  // Raw <table> has no scroll container of its own — wrap it so a table too
+  // wide even for the widened bubble (see .message-content:has(table)) scrolls
+  // instead of overflowing the page.
+  table({ children, ...props }: React.TableHTMLAttributes<HTMLTableElement>) {
+    return (
+      <div className="md-table-wrap">
+        <table {...props}>{children}</table>
+      </div>
+    )
+  },
 }
 
 // ── Search result cards ───────────────────────────────────────────────────────
