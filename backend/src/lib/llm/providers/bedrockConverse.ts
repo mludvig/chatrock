@@ -35,7 +35,9 @@ function buildInferenceParams(modelId: string, settings: ModelSettings) {
   const additionalFields: DocumentType = {}
   if (caps.topK && settings.topK !== undefined) (additionalFields as Record<string, DocumentType>).top_k = settings.topK
   if (thinkingActive && caps.thinking === 'adaptive') {
-    (additionalFields as Record<string, DocumentType>).thinking = { type: 'adaptive' } as DocumentType
+    // display defaults to 'omitted' on the 5-series models (Opus 5/Sonnet 5/etc) —
+    // request 'summarized' explicitly or thinking blocks come back text-empty (signature only).
+    (additionalFields as Record<string, DocumentType>).thinking = { type: 'adaptive', display: 'summarized' } as DocumentType
     ;(additionalFields as Record<string, DocumentType>).output_config = { effort: settings.thinkingEffort ?? 'low' } as DocumentType
   }
 
