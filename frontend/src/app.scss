@@ -796,6 +796,7 @@ $header-h: 45px;
   display: flex;
   flex-direction: column;
   position: relative;
+  max-width: 100%;
 
   &.user      { align-self: flex-end; }
   &.assistant { align-self: flex-start; }
@@ -861,8 +862,14 @@ $header-h: 45px;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 15px;
-  max-width: 680px;
+  max-width: 750px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+}
+
+// Tables don't wrap nicely at bubble width — let a table-bearing bubble grow
+// wider before falling back to horizontal scroll (see .md-table-wrap below).
+.message-content:has(table) {
+  max-width: min(1100px, 100%);
 }
 
 .message.user .message-content {
@@ -1551,10 +1558,17 @@ $header-h: 45px;
     color: $muted;
   }
 
+  // Wrapper (added by mdComponents' table override) is the scroll container —
+  // the table itself sizes to its content so it can overflow and trigger scroll
+  // rather than force-squeezing every column down to fit the bubble.
+  .md-table-wrap {
+    overflow-x: auto;
+    margin: 0.6em 0;
+  }
+
   table {
     border-collapse: collapse;
-    width: 100%;
-    margin: 0.6em 0;
+    min-width: 100%;
     font-size: 0.9em;
 
     th, td {
