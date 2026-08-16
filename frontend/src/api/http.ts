@@ -147,6 +147,19 @@ export interface ModelSettings {
 export const RESEARCH_DEPTHS = ['brief', 'extended', 'deep'] as const
 export type ResearchDepth = typeof RESEARCH_DEPTHS[number]
 
+// GET /api/chats/{chatId}/research — re-sync shape for an active or most-recently-finished
+// Deep Research run; see backend/src/research/CLAUDE.md's "Progress frames and reconnect".
+export interface ResearchRun {
+  runId: string
+  status: 'recon' | 'planning' | 'awaiting_approval' | 'running' | 'done' | 'failed'
+  question: string
+  plan: { subQuestions: { id: string; question: string }[]; clarifyingQuestions: string[] } | null
+  findings: { subQuestionId: string; summary: string; sourceUrls: string[] }[]
+  gapsNotPursued: string[]
+  roundsSpent: number
+  reportText: string | null
+}
+
 export interface UserMemory {
   memId: string
   text: string
@@ -280,6 +293,7 @@ export const api = {
       'GET', `/api/chats/${chatId}/messages${qs ? `?${qs}` : ''}`)
   },
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
+  getResearchRun: (chatId: string) => req<{ run: ResearchRun | null }>('GET', `/api/chats/${chatId}/research`),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
   resummarizeChat: (chatId: string)    => req<{ summary: string; topics: string[] }>('POST', `/api/chats/${chatId}/resummarize`),
