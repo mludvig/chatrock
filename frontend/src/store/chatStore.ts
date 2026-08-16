@@ -140,6 +140,7 @@ interface ChatState {
   cacheOrder: string[]
   getMessagesCache: (chatId: string) => CachedChatMessages | undefined
   setMessagesCache: (chatId: string, data: CachedChatMessages) => void
+  invalidateMessagesCache: (chatId: string) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -436,6 +437,11 @@ export const useChatStore = create<ChatState>()(
           if (evicted) delete messagesCache[evicted]
         }
         return { messagesCache, cacheOrder }
+      }),
+      invalidateMessagesCache: (chatId) => set((s) => {
+        const { [chatId]: _removed, ...messagesCache } = s.messagesCache
+        void _removed
+        return { messagesCache, cacheOrder: s.cacheOrder.filter(id => id !== chatId) }
       }),
     }),
     {
