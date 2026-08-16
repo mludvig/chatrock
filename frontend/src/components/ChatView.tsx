@@ -1533,6 +1533,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               showTokenStats={effectiveShowTokenStats}
             />
           ))}
+          {activeResearchRun && (
+            <div className="message assistant">
+              <ResearchPanel
+                run={activeResearchRun}
+                onApprove={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve', feedback })}
+                onRevise={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'revise', feedback })}
+              />
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
 
@@ -1556,14 +1565,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </button>
         </div>
       </div>
-
-      {activeResearchRun && (
-        <ResearchPanel
-          run={activeResearchRun}
-          onApprove={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve', feedback })}
-          onRevise={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'revise', feedback })}
-        />
-      )}
 
       {errorMsg && (
         <div className="error-banner">
