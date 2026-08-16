@@ -1254,6 +1254,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
+          <select
+            className="model-select"
+            value={effectiveResearchDepth}
+            disabled={sending || creatingChat}
+            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for the rest of this chat session; the chat's stored default is set in Chat details."
+            onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
+          >
+            {RESEARCH_DEPTHS.map(d => (
+              <option key={d} value={d} disabled={d === 'deep'} title={d === 'deep' ? 'Deep Research — coming soon' : undefined}>
+                {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep Research'}
+              </option>
+            ))}
+          </select>
           <button className="btn-icon" onClick={() => setDetailsOpen(true)} title="Chat details">
             <FontAwesomeIcon icon={faGear} />
           </button>
@@ -1472,19 +1485,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               <FontAwesomeIcon icon={faPaperclip} />
             </button>
           )}
-          <select
-            className="btn-research-depth"
-            value={effectiveResearchDepth}
-            disabled={sending || creatingChat}
-            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for the rest of this chat session; the chat's stored default is set in Chat details."
-            onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
-          >
-            {RESEARCH_DEPTHS.map(d => (
-              <option key={d} value={d} disabled={d === 'deep'} title={d === 'deep' ? 'Deep Research — coming soon' : undefined}>
-                {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep Research'}
-              </option>
-            ))}
-          </select>
           {sending ? (
             <button
               className="btn-send btn-stop"
