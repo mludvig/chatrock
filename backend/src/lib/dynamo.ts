@@ -198,6 +198,20 @@ export async function getRun(chatId: string, runId: string) {
   return res.Item
 }
 
+// Mid-flight steering (task #14) needs to know if a Step Functions execution is currently
+// live for this chat before treating an incoming sendMessage as a normal turn vs. a
+// steering note. At most one run is ever active per chat by product design, so the first
+// non-terminal row found is authoritative.
+export async function getActiveRun(chatId: string) {
+  const res = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `CHAT#${chatId}`, ':prefix': 'RUN#' },
+  }))
+  const items = res.Items ?? []
+  return items.find(item => item.status !== 'done' && item.status !== 'failed')
+}
+
 // Generic partial update — every field is aliased via ExpressionAttributeNames so callers
 // never have to worry about DynamoDB reserved words (status/plan/etc. are all safe today,
 // but a future field might not be).

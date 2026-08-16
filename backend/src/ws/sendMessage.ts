@@ -3,7 +3,7 @@ import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import type { Block, NeutralMessage } from '../lib/llm/blocks'
-import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats, getActiveRun, appendRunSteeringNote } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
@@ -118,6 +118,37 @@ export const buildHandler = (postFn: PostFn) => async (
       await updateChatActiveLeaf(sub, chatId, msgId)
     } catch (e) {
       console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
+    }
+  }
+
+  // Mid-flight steering (task #14, backend/src/research/CLAUDE.md): a genuine new
+  // message (content present — continue/rerun never carry content, so this already
+  // excludes them) arriving while a Deep Research run is live for this chat does not
+  // start a new turn. It's appended to the run's steeringNotes[] (Researcher/Assess read
+  // it, see research/CLAUDE.md) and echoed as a plain user turn so it's visible in the
+  // transcript, chained under the current leaf regardless of any parentId the client sent
+  // — a steering message talks to the running supervisor, it doesn't branch the tree.
+  if (content) {
+    const activeRun = await getActiveRun(chatId)
+    if (activeRun) {
+      const ts = new Date().toISOString()
+      const userMsgId = uuidv4()
+      await putMessage({
+        ...buildTurnKey(chatId, ts, 0, userMsgId),
+        msgId: userMsgId,
+        parentId: (chat.activeLeafId as string | undefined) ?? null,
+        role: 'user',
+        blocks: buildUserBlocks(content, attachments, undefined),
+        model,
+        createdAt: ts,
+        turnIndex: 0,
+        responseId: uuidv4(),
+      })
+      await advanceLeaf(userMsgId)
+      await appendRunSteeringNote(chatId, activeRun.runId as string, content)
+      console.log(JSON.stringify({ event: 'research_steering_noted', runId: activeRun.runId, chatId }))
+      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'research_steering_noted', runId: activeRun.runId, msgId: userMsgId }) })
+      return { statusCode: 200, body: '' }
     }
   }
 
