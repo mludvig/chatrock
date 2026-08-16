@@ -4,9 +4,6 @@
 // becomes that state's Result — Step Functions passes JSON straight through, no
 // wrapping needed. See docs/adr/0023-deep-research-step-functions-orchestration.md
 // and backend/src/research/CLAUDE.md.
-//
-// Every handler in this directory is still a stub beyond persisting the RunRow — none
-// of them call Bedrock yet.
 
 export interface RunContext {
   chatId: string
@@ -38,6 +35,7 @@ export interface PlanResult {
 }
 
 export interface AwaitApprovalInput extends RunContext {
+  question: string
   plan: PlanResult
   taskToken: string
 }
