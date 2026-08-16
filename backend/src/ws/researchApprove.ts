@@ -81,6 +81,9 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
       gapsNotPursued: [],
       steeringNotes,
       roundsSpent: 0,
+      // ApprovalChoice's Variable path ($.revise) throws States.Runtime if the field is
+      // absent entirely (not merely falsy) — must be explicit here, not just omitted.
+      revise: false,
       // The approving connection, not necessarily the one that started the run — refreshes
       // where Wave/Assess push progress frames if the user reconnected from another tab.
       connId,
