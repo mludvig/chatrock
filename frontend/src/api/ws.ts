@@ -29,18 +29,38 @@ export type WSEvent =
   | { type: 'heartbeat' }
 
 type EventHandler = (evt: WSEvent) => void
+export type ConnectionState = 'open' | 'connecting' | 'closed'
 
 let socket: WebSocket | null = null
 let onEventCb: EventHandler | null = null
+let onConnectionStateCb: ((state: ConnectionState) => void) | null = null
+let lastAccessToken: string | null = null
+let explicitDisconnect = false
+// Set by the caller (ChatView, mirroring its `sending` flag) so onclose knows whether a
+// drop is worth chasing. Kept out of the store to avoid ws.ts <-> chatStore coupling.
+let turnInFlight = false
+let reconnectAttempt = 0
+let reconnectTimer: number | null = null
 
 export function setWSHandlers(onEvent: EventHandler) {
   onEventCb = onEvent
 }
 
+export function setConnectionStateHandler(onState: (state: ConnectionState) => void) {
+  onConnectionStateCb = onState
+}
+
+export function setTurnInFlight(active: boolean) {
+  turnInFlight = active
+}
+
 export function connect(accessToken: string): Promise<void> {
+  lastAccessToken = accessToken
+  explicitDisconnect = false
   if (socket && socket.readyState === WebSocket.OPEN) {
     return Promise.resolve()
   }
+  onConnectionStateCb?.('connecting')
   return new Promise((resolve, reject) => {
     let attempts = 0
     const MAX_ATTEMPTS = 3
@@ -51,6 +71,8 @@ export function connect(accessToken: string): Promise<void> {
 
       ws.onopen = () => {
         socket = ws
+        reconnectAttempt = 0
+        onConnectionStateCb?.('open')
         resolve()
       }
       ws.onerror = () => {
@@ -72,6 +94,13 @@ export function connect(accessToken: string): Promise<void> {
       // so a concurrent reconnect attempt doesn't get wiped by a stale onclose.
       ws.onclose = () => {
         if (socket === ws) socket = null
+        // Backgrounding the tab (iOS in particular) drops the socket outright. Chase it
+        // only while a turn is in flight — an idle drop can reconnect lazily on next send.
+        if (!explicitDisconnect && turnInFlight) {
+          scheduleReconnect()
+        } else {
+          onConnectionStateCb?.('closed')
+        }
       }
     }
 
@@ -79,9 +108,27 @@ export function connect(accessToken: string): Promise<void> {
   })
 }
 
+function scheduleReconnect() {
+  if (reconnectTimer !== null || !lastAccessToken) return
+  onConnectionStateCb?.('connecting')
+  const delay = Math.min(1000 * 2 ** reconnectAttempt, 10000)
+  reconnectAttempt++
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null
+    if (explicitDisconnect || !lastAccessToken) return
+    connect(lastAccessToken).catch(() => {})
+  }, delay)
+}
+
 export function disconnect() {
+  explicitDisconnect = true
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
   socket?.close()
   socket = null
+  onConnectionStateCb?.('closed')
 }
 
 export function sendMessage(payload: {

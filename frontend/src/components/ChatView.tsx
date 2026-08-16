@@ -7,8 +7,8 @@ import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
-import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers } from '../api/ws'
-import type { WSEvent } from '../api/ws'
+import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight } from '../api/ws'
+import type { WSEvent, ConnectionState } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
@@ -82,6 +82,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // (draftModelSettings.researchDepth). Reset to null on chat switch so a different chat
   // doesn't inherit a one-off escalation. See docs/adr/0020-research-depth-and-budget-pacing.md.
   const [composerResearchDepth, setComposerResearchDepth] = useState<ResearchDepth | null>(null)
+
+  // Only used to surface a "Reconnecting…" banner while ws.ts is chasing a dropped socket
+  // during an in-flight turn — see docs/adr/0021-websocket-reconnect-and-refocus-catchup.md.
+  const [wsConnectionState, setWsConnectionState] = useState<ConnectionState>('open')
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -307,9 +311,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   // Reload messages for a given chatId, applying tool-result enrichment.
   // Used both by the load effect and the post-stream done-handler refetch.
-  const reloadMessages = useCallback((id: string) => {
+  // `force` bypasses the sending-guard and clears the stream/sending state itself — used by
+  // the refocus catch-up below, where the answer already finished server-side while the tab
+  // was backgrounded and there's no live stream left to protect.
+  const reloadMessages = useCallback((id: string, opts?: { force?: boolean }) => {
     api.listMessages(id).then(r => {
-      if (useChatStore.getState().sending) return
+      if (useChatStore.getState().sending && !opts?.force) return
       const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
@@ -318,8 +325,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       useChatStore.getState().setMessagesCache(id, {
         messages: enriched, conversationUsage: r.conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
       })
+      if (opts?.force) {
+        clearStream()
+        setSending(false)
+      }
     }).catch(() => {})
-  }, [setMessages])
+  }, [setMessages, clearStream, setSending])
 
   // Fetch the page immediately before the oldest loaded bubble and prepend it. Preserves
   // scroll position by measuring the height added and adjusting scrollTop by the same
@@ -641,6 +652,42 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Close the Chat details dialog when switching chats so it doesn't linger open across
   // navigation to a different chat.
   useEffect(() => { setDetailsOpen(false) }, [chatId])
+
+  // Mirror `sending` into ws.ts so its onclose handler knows whether a dropped socket is
+  // worth chasing with backoff (a turn in flight) or can reconnect lazily on next send.
+  useEffect(() => { setTurnInFlight(sending) }, [sending])
+
+  // Surface reconnect attempts so the user isn't left staring at a stalled turn with no
+  // explanation — see docs/adr/0021-websocket-reconnect-and-refocus-catchup.md.
+  useEffect(() => {
+    setConnectionStateHandler(setWsConnectionState)
+    return () => setConnectionStateHandler(() => {})
+  }, [])
+
+  // The iPhone bug this fixes: backgrounding the app drops the WebSocket, but the backend
+  // has already persisted every turn and advanced activeLeafId by the time the tab comes
+  // back — so catching up is a refetch, not a resend. On refocus/tab-visible, reconnect the
+  // socket, and if a turn was still marked `sending` when we left, refetch messages for the
+  // active chat and reconcile instead of leaving a stale streaming bubble stuck forever.
+  useEffect(() => {
+    function handleRefocus() {
+      if (document.visibilityState === 'hidden') return
+      ensureConnected(accessToken).catch(() => {})
+      const id = chatIdRef.current
+      if (useChatStore.getState().sending && id && id !== 'new') {
+        clearAckTimer()
+        clearIdleTimer()
+        reloadMessages(id, { force: true })
+      }
+    }
+    document.addEventListener('visibilitychange', handleRefocus)
+    window.addEventListener('focus', handleRefocus)
+    return () => {
+      document.removeEventListener('visibilitychange', handleRefocus)
+      window.removeEventListener('focus', handleRefocus)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, reloadMessages])
 
   function handleMessagesScroll() {
     const el = messagesRef.current
@@ -1272,6 +1319,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </button>
         </div>
       </div>
+
+      {wsConnectionState === 'connecting' && (
+        <div className="error-banner warning">
+          <span>
+            <FontAwesomeIcon icon={faSpinner} spin /> Connection lost, reconnecting…
+          </span>
+        </div>
+      )}
 
       {!isNew && activeChat?.modelMigratedFrom && (
         <div className="error-banner warning">
