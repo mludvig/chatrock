@@ -59,8 +59,7 @@ Retry, timeout, and resume become the platform's job instead of hand-rolled poll
   object rather than a Terraform-native DSL — this is normal for `aws_sfn_state_machine`
   (there is no first-class ASL resource type) and keeps the whole pipeline visible in one
   file, at the cost of no compile-time checking of state names/transitions until `apply`.
-- The six Lambda handlers in `backend/src/research/` are stubs as of this ADR (task #8) —
-  they validate their input shape and return a minimally-correct empty result so the state
-  machine itself deploys and can be exercised end-to-end (Recon → Plan → approval-wait →
-  Wave → Assess → Report, each state actually transitioning) before any research logic
-  exists. Filling them in is tasks #10, #12, #13, #15.
+- The six Lambda handlers in `backend/src/research/` each validate their input shape and
+  return a well-formed result for their state — Recon → Plan → approval-wait → Wave →
+  Assess → Report all transition end to end, with the Choice-state round cap above as the
+  backstop against a runaway wave loop.
