@@ -143,6 +143,7 @@ locals {
             "sub.$"       = "$.sub"
             "question.$"  = "$.question"
             "plan.$"      = "$.plan"
+            "connId.$"    = "$.connId"
           }
         }
         TimeoutSeconds = 86400
@@ -169,6 +170,7 @@ locals {
           "runId.$"         = "$.runId"
           "sub.$"           = "$.sub"
           "steeringNotes.$" = "$.steeringNotes"
+          "connId.$"        = "$.connId"
         }
         Iterator = local.research_wave_iterator
         Next     = "Assess"
@@ -192,6 +194,7 @@ locals {
           "gapsNotPursued.$" = "$.gapsNotPursued"
           "steeringNotes.$"  = "$.steeringNotes"
           "roundsSpent.$"    = "$.roundsSpent"
+          "connId.$"         = "$.connId"
         }
         Next = "AssessChoice"
       }
@@ -222,6 +225,32 @@ locals {
       }
     }
   }
+}
+
+# WS action "startResearch" (backend/src/ws/startResearch.ts) — the only Lambda that needs
+# the state machine's ARN, since it's the one that calls StartExecution; every other
+# research Lambda above just runs as a Task the state machine invokes.
+resource "aws_lambda_function" "ws_start_research" {
+  function_name    = "chatrock-ws-startResearch-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/ws-startResearch.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/ws-startResearch.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 10
+  environment {
+    variables = merge(local.lambda_env_base, {
+      RESEARCH_STATE_MACHINE_ARN = aws_sfn_state_machine.research.arn
+    })
+  }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "ws_start_research_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ws_start_research.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
 }
 
 resource "aws_sfn_state_machine" "research" {

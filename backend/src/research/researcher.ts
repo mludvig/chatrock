@@ -4,6 +4,7 @@ import type { ModelSettings } from '../config/models'
 import { DEFAULT_CHAT_MODEL } from '../config/models'
 import { safeParse } from '../lib/enrichment'
 import type { ToolContext } from '../lib/tools'
+import { notifyConnection } from '../lib/wsNotify'
 import RESEARCH_RESEARCHER_SYSTEM_PROMPT from '../../prompts/research-researcher.txt'
 
 // Only web_search/web_fetch — a researcher has no chat/memory/project context to draw on,
@@ -55,5 +56,13 @@ export const handler = async (event: ResearcherInput): Promise<ResearcherResult>
     : { subQuestionId: event.subQuestion.id, summary: finalText, sourceUrls: [] }
 
   console.log(JSON.stringify({ event: 'research_researcher_done', runId: event.runId, subQuestionId: event.subQuestion.id, sourceCount: finding.sourceUrls.length }))
+  await notifyConnection(event.connId, {
+    type: 'research_finding',
+    runId: event.runId,
+    chatId: event.chatId,
+    subQuestionId: finding.subQuestionId,
+    summary: finding.summary,
+    sourceUrls: finding.sourceUrls,
+  })
   return { finding }
 }

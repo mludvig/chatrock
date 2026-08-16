@@ -3,6 +3,7 @@ import { converseOnce } from '../lib/bedrock'
 import { DEFAULT_CHAT_MODEL } from '../config/models'
 import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
+import { notifyConnection } from '../lib/wsNotify'
 import RESEARCH_PLAN_SYSTEM_PROMPT from '../../prompts/research-plan.txt'
 
 interface RawSubQuestion {
@@ -49,5 +50,6 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
     : []
 
   console.log(JSON.stringify({ event: 'research_plan_done', runId: event.runId, chatId: event.chatId, subQuestionCount: subQuestions.length, clarifyingCount: clarifyingQuestions.length }))
+  await notifyConnection(event.connId, { type: 'research_plan', runId: event.runId, chatId: event.chatId, plan: { subQuestions, clarifyingQuestions } })
   return { subQuestions, clarifyingQuestions }
 }

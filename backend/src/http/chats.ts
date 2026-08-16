@@ -1,7 +1,7 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
-import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, updateChatSensitive, updateChatEphemeral, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary, putSharePair, listChatShares, deleteSharePair, buildShareLookupKey, buildShareIndexKey } from '../lib/dynamo'
+import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, updateChatSensitive, updateChatEphemeral, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary, putSharePair, listChatShares, deleteSharePair, buildShareLookupKey, buildShareIndexKey, getActiveRun, listRuns } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
 import { TITLE_MODEL, DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
@@ -559,6 +559,33 @@ export const handler = async (
       },
       body: markdown,
     }
+  }
+
+  if (route === 'GET /api/chats/{chatId}/research') {
+    const chat = await getChat(sub, chatId)
+    if (!chat) return err(404, 'Not found')
+
+    // Re-sync for a client that reconnects mid-run or after a lost WS frame (research/
+    // CLAUDE.md's "Progress frames and reconnect") — the RUN# row is the source of truth,
+    // WS pushes are best-effort. Prefer the active run; fall back to the most recent one so
+    // a client that reconnects just after completion still sees the final report.
+    const active = await getActiveRun(chatId)
+    const run = active ?? (await listRuns(chatId)).sort((a, b) =>
+      (b.createdAt as string).localeCompare(a.createdAt as string))[0]
+    if (!run) return ok({ run: null })
+
+    return ok({
+      run: {
+        runId: run.runId,
+        status: run.status,
+        question: run.question,
+        plan: run.plan ?? null,
+        findings: run.findings ?? [],
+        gapsNotPursued: run.gapsNotPursued ?? [],
+        roundsSpent: run.roundsSpent ?? 0,
+        reportText: run.reportText ?? null,
+      },
+    })
   }
 
   return err(404, 'Not found')

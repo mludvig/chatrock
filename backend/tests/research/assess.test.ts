@@ -1,9 +1,13 @@
 import { handler } from '../../src/research/assess'
 import * as bedrock from '../../src/lib/bedrock'
+import * as dynamo from '../../src/lib/dynamo'
 
 jest.mock('../../src/lib/bedrock')
+jest.mock('../../src/lib/dynamo', () => ({ updateRun: jest.fn() }))
+jest.mock('../../src/lib/wsNotify', () => ({ notifyConnection: jest.fn() }))
 
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
+const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
 beforeEach(() => jest.clearAllMocks())
 
@@ -11,6 +15,7 @@ const BASE_INPUT = {
   chatId: 'chat-1',
   runId: 'run-1',
   sub: 'user-1',
+  connId: 'conn-1',
   question: 'What is the history of X?',
   plan: { subQuestions: [{ id: 'sq1', question: 'Origins of X?' }], clarifyingQuestions: [] },
   findings: [] as { subQuestionId: string; summary: string; sourceUrls: string[] }[],
@@ -43,6 +48,12 @@ test('assess handler — merges wave findings into the running total and reports
     steeringNotes: [],
     roundsSpent: 1,
     done: true,
+    connId: 'conn-1',
+  })
+  expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', {
+    findings: [{ subQuestionId: 'sq1', summary: 'X originated in Y.', sourceUrls: ['https://example.com'] }],
+    gapsNotPursued: [],
+    roundsSpent: 1,
   })
 })
 
