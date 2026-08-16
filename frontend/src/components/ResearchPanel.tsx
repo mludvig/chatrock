@@ -3,6 +3,10 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMagnifyingGlass, faSpinner, faCheck, faPenToSquare } from '@fortawesome/free-solid-svg-icons'
 import type { ActiveResearch } from '../store/chatStore'
 
+// Feedback that doesn't change the plan — "OK", "looks good", etc. Anything else typed is
+// treated as intent to revise. See docs/adr/0026-plan-approval-single-button.md.
+const INCONSEQUENTIAL_FEEDBACK = /^(ok(ay)?|sounds? good|looks? good|good|fine|yes|yep|sure|approved?|go(\s*ahead)?|start|proceed|lgtm)[.!]?$/i
+
 // Deep Research's plan-approval + live-progress panel. Rendered by ChatView while a run is
 // active for the current chat (cleared on research_done). No "Reject" action — a user who
 // dislikes the plan just abandons the chat; the backend's 24h AwaitApproval timeout handles
@@ -15,15 +19,14 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
   const [feedback, setFeedback] = useState('')
 
   const trimmed = feedback.trim()
+  const isRevision = trimmed !== '' && !INCONSEQUENTIAL_FEEDBACK.test(trimmed)
 
-  function handleApprove() {
-    onApprove(trimmed || undefined)
-    setFeedback('')
-  }
-
-  function handleRevise() {
-    if (!trimmed) return
-    onRevise(trimmed)
+  function handleSubmit() {
+    if (isRevision) {
+      onRevise(trimmed)
+    } else {
+      onApprove(trimmed || undefined)
+    }
     setFeedback('')
   }
 
@@ -59,16 +62,13 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
           </div>
           <textarea
             className="research-panel-feedback"
-            placeholder="Optional feedback — e.g. &quot;Change point 2 to XYZ and also consider ABC&quot;. Leave blank and click Approve to start as-is, or add feedback and click Revise for an updated plan."
+            placeholder="Optional feedback — e.g. &quot;Change point 2 to XYZ and also consider ABC&quot;. Leave blank (or type OK) to start as-is; add feedback that changes the plan to revise it."
             value={feedback}
             onChange={e => setFeedback(e.target.value)}
           />
           <div className="research-panel-actions">
-            <button className="btn-primary" onClick={handleApprove}>
-              <FontAwesomeIcon icon={faCheck} /> Approve
-            </button>
-            <button className="btn-secondary" onClick={handleRevise} disabled={!trimmed} title={trimmed ? undefined : 'Add feedback above to revise the plan'}>
-              <FontAwesomeIcon icon={faPenToSquare} /> Revise
+            <button className="btn-primary" onClick={handleSubmit}>
+              <FontAwesomeIcon icon={isRevision ? faPenToSquare : faCheck} /> {isRevision ? 'Revise' : 'Approve'}
             </button>
           </div>
         </div>
