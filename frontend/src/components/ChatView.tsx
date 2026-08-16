@@ -926,7 +926,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettingsForSend, startStream])
 
-  const handleContinue = useCallback(async (msgId: string) => {
+  const handleContinue = useCallback(async (msgId: string, researchDepthOverride?: ResearchDepth) => {
     if (!activeChat || useChatStore.getState().sending || creatingChat) return
     streamCancelledRef.current = false
     setSending(true)
@@ -944,7 +944,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         chatId: chatId!,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
-        modelSettings: modelSettingsForSend,
+        modelSettings: researchDepthOverride
+          ? { ...modelSettingsForSend, researchDepth: researchDepthOverride }
+          : modelSettingsForSend,
         parentId: msgId,
         continue: true,
       })
@@ -954,6 +956,35 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
   }, [activeChat, creatingChat, chatId, accessToken, modelSettingsForSend, startStream])
+
+  // "Go deeper" on a shallow answer. Extended reuses the continue path (builds on the
+  // research already done); Deep Research can't continue a turn — it starts a run, seeded
+  // with the nearest ancestor user message's text.
+  const handleEscalate = useCallback(async (msgId: string, nextDepth: ResearchDepth) => {
+    if (nextDepth === 'extended') {
+      await handleContinue(msgId, 'extended')
+      return
+    }
+    if (!activeChat || useChatStore.getState().sending || creatingChat) return
+    const assistantMsg = messages.find(m => 'msgId' in m && m.msgId === msgId) as Message | undefined
+    const ancestorUser = assistantMsg ? messages.find(m => 'msgId' in m && m.msgId === assistantMsg.parentId) as Message | undefined : undefined
+    const questionText = ancestorUser?.content
+    if (!questionText) return
+    setSending(true)
+    setErrorMsg(null)
+    try {
+      await ensureConnected(accessToken)
+      startResearch({ chatId: chatId!, question: questionText })
+      setActiveResearch(chatId!, {
+        runId: '', status: 'recon', question: questionText, plan: null,
+        waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+      })
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSending(false)
+    }
+  }, [activeChat, creatingChat, chatId, accessToken, messages, handleContinue])
 
   const stepHasContent = (st: Step) =>
     (st.kind === 'text' && st.text.trim() !== '') ||
@@ -1526,6 +1557,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               message={m}
               onRerun={!isNew ? handleRerun : undefined}
               onContinue={!isNew ? handleContinue : undefined}
+              onEscalate={!isNew ? handleEscalate : undefined}
               onNavigate={!isNew ? handleNavigate : undefined}
               onEditRequest={!isNew ? handleEditRequest : undefined}
               onForkToHere={!isNew ? handleForkToHere : undefined}
