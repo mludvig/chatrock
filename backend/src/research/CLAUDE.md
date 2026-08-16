@@ -4,9 +4,11 @@ Status as of this file: the state machine deploys and all six states transition,
 `RUN#` DynamoDB row + cascade-delete are wired up, Recon/Plan are implemented, the plan
 approval gate works end to end over WebSocket, each Wave researcher runs a real bounded
 investigation, the supervisor Assess handler drives the wave loop (more waves, or done)
-with a working round cap, and `ws/sendMessage.ts` intercepts mid-flight steering messages
-for an active run. `report` is still a stub. Read this file before touching anything in
-this directory; it is kept up to date as each handler is filled in.
+with a working round cap, `ws/sendMessage.ts` intercepts mid-flight steering messages for
+an active run, and `report` synthesises the cited final answer and persists it as a normal
+assistant turn. Writing the findings dossier as a project file is not yet implemented.
+Read this file before touching anything in this directory; it is kept up to date as each
+handler is filled in.
 
 See root `CLAUDE.md`'s "Architecture decisions" pointer and
 `docs/adr/0023-deep-research-step-functions-orchestration.md` for why this is a Step
@@ -40,7 +42,7 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 | `awaitApproval.ts` | `AwaitApproval` | Persists `question`/`plan`/`taskToken` onto the `RUN#` row (via `updateRun`, upserting the row on its first write) with `status: 'awaiting_approval'` and the `findings`/`gapsNotPursued`/`steeringNotes`/`roundsSpent` defaults the downstream states need. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation, `ws/researchApprove.ts`, does. |
 | `researcher.ts` | `Wave` (Map iterator) | Runs one bounded `converseStream` (`lib/llm/loop.ts`, `extended`/8-round budget) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with only `web_search`/`web_fetch` enabled (no memory/project/image tools — a researcher has no chat context to draw on) and no WS connection to stream to. The system prompt (`prompts/research-researcher.txt`) asks for one final JSON turn — `{summary, sourceUrls}` — which is `safeParse`d the same way `plan.ts` parses its JSON; malformed output falls back to `{summary: <raw text>, sourceUrls: []}` rather than throwing. Steering notes, if any, are appended to the sub-question in the initial user message. |
 | `assess.ts` | `Assess` | Flattens this wave's raw `waveFindings` into `Finding[]` (`item.result.finding`), merges into the running `findings` total, then calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out, prompt in `prompts/research-assess.txt`) to decide `done` vs. `nextSubQuestions` for another wave. `gapsNotPursued` accumulates across rounds; `steeringNotes` are cleared every round (consumed, not carried forward). Malformed model output falls back to `done: true` rather than looping forever. Like `AwaitApproval`, this state has no `ResultPath` — the handler's return value (`AssessResult`) is the *entire* next state, so it must re-emit every field `Wave`/`Report` need, not just its own verdict. |
-| `report.ts` | `Report` | Stub. Synthesises the final cited answer, persists it as a normal assistant turn, and later writes the full dossier — plan, every wave's findings with sources, every assessment, gaps deliberately dropped — as a project file. |
+| `report.ts` | `Report` | Calls Bedrock once (`DEFAULT_CHAT_MODEL`, plain markdown out — no `safeParse`, this is prose not JSON — prompt in `prompts/research-report.txt`) over the accumulated `findings`/`gapsNotPursued` to write the cited final answer, then persists it as a normal assistant turn: `getChat` for the chat's current `activeLeafId` (used as `parentId`, `null` if unset), `putMessage` with a fresh `msgId`/`responseId` (same `uuidv4()` convention `ws/sendMessage.ts` uses for turn ids, not `newId()`), then `updateChatActiveLeaf` so it becomes the new leaf. `updateRun` sets `status: 'done'` and stores `reportText` on the `RUN#` row in the same call. Writing the findings dossier as a project file is a separate, not-yet-implemented step (task #16). |
 
 ## Data model
 
@@ -48,7 +50,8 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 `lib/dynamo.ts`'s `putRun`/`getRun`/`getActiveRun`/`updateRun`/`appendRunSteeringNote`/
 `deleteChatRuns`:
 `status` (`recon|planning|awaiting_approval|running|done|failed`), `plan`, findings,
-`steeringNotes[]`, `roundsSpent`, `connId`, the approval task token, timestamps.
+`steeringNotes[]`, `roundsSpent`, `connId`, the approval task token, `reportText` (set by
+`report.ts` alongside `status: 'done'`), timestamps.
 `updateRun` is a generic partial-update (every field aliased via
 `ExpressionAttributeNames`, so any field name is safe to pass without checking DynamoDB
 reserved words). Large researcher findings go to S3 under the existing

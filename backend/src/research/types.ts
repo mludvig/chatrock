@@ -120,6 +120,7 @@ export interface RunRow {
   roundsSpent: number
   connId?: string
   taskToken?: string
+  reportText?: string
   createdAt: string
   updatedAt: string
 }
