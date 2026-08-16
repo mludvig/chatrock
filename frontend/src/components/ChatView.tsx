@@ -7,11 +7,12 @@ import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
-import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight } from '../api/ws'
+import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove } from '../api/ws'
 import type { WSEvent, ConnectionState } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
+import ResearchPanel from './ResearchPanel'
 import { describeChatPrivacy } from '../lib/privacyDescription'
 
 interface Props {
@@ -63,6 +64,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     updateChatSettings, updateChatSystemPrompt,
     projects, mergeProjectFiles,
     newChatTick,
+    activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding,
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
@@ -181,6 +183,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // so a one-off escalation never becomes the chat's permanent default.
   const effectiveResearchDepth = composerResearchDepth ?? draftModelSettings.researchDepth ?? 'brief'
   const modelSettingsForSend: ModelSettings = { ...draftModelSettings, researchDepth: effectiveResearchDepth }
+
+  // Live Deep Research run for the chat currently being viewed, if any — see ResearchPanel.
+  const activeResearchRun = chatId ? activeResearch[chatId] : undefined
 
   const ALLOWED_TYPES: Record<string, 'image' | 'document'> = {
     'image/png': 'image', 'image/jpeg': 'image', 'image/gif': 'image', 'image/webp': 'image',
@@ -456,6 +461,21 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
 
+  // Re-sync Deep Research run state on chat load/reconnect — WS progress frames are
+  // best-effort (see api/ws.ts), this is the source of truth. Only an active run (not
+  // done/failed) is worth holding in state; a finished run's report is a normal turn,
+  // already covered by the message-load path.
+  useEffect(() => {
+    if (isNew || !chatId) return
+    api.getResearchRun(chatId).then(({ run }) => {
+      if (!run || run.status === 'done' || run.status === 'failed') return
+      setActiveResearch(chatId, {
+        runId: run.runId, status: run.status, question: run.question, plan: run.plan,
+        waveSubQuestions: [], findings: run.findings, findingCount: run.findings.length, done: false,
+      })
+    }).catch(() => {})
+  }, [chatId, isNew, setActiveResearch])
+
   // Backfill: if chats were not loaded when the seed effect ran (cold navigation),
   // fill draftModelSettings once the chat record arrives in the store.
   useEffect(() => {
@@ -483,6 +503,32 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       // Allow titleUpdated (title gen runs independently of stream cancel) and
       // error (always show server errors) and cancelled (needed for timely reload
       // after the server persists the partial cancelled turn) to pass through.
+      // Deep Research frames are unrelated to the normal chat stream — a run can be
+      // progressing in the background while a cancelled chat-stream guard is active.
+      if (evt.type.startsWith('research_')) {
+        if (evt.type === 'research_plan') {
+          setActiveResearch(evt.chatId, {
+            runId: evt.runId, status: 'awaiting_approval', question: activeResearch[evt.chatId]?.question ?? '',
+            plan: evt.plan, waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+          })
+        } else if (evt.type === 'research_wave_start') {
+          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: evt.subQuestions, findings: [] })
+        } else if (evt.type === 'research_finding') {
+          addResearchFinding(evt.chatId, { subQuestionId: evt.subQuestionId, summary: evt.summary, sourceUrls: evt.sourceUrls })
+        } else if (evt.type === 'research_assess') {
+          patchActiveResearch(evt.chatId, { findingCount: evt.findingCount, done: evt.done })
+        } else if (evt.type === 'research_done') {
+          setActiveResearch(evt.chatId, null)
+          if (evt.chatId === chatIdRef.current) {
+            reloadMessages(evt.chatId)
+          } else {
+            useChatStore.getState().invalidateMessagesCache(evt.chatId)
+          }
+        } else if (evt.type === 'research_steering_noted') {
+          pushToast({ kind: 'info', text: 'Steering note added — the researcher will pick it up shortly' })
+        }
+        return
+      }
       if (streamCancelledRef.current &&
           evt.type !== 'titleUpdated' &&
           evt.type !== 'error' &&
@@ -565,7 +611,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         }
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding, pushToast])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -1050,11 +1096,48 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     pendingSendRef.current = { content, attachments: readyAttachments, wasNew: isNew }
     optimisticMsgIdRef.current = optimisticUser.msgId
 
+    // Deep Research starts a Step Functions run instead of a normal streamed turn — see
+    // backend/src/research/CLAUDE.md. Not offered on the edit-message path (undesigned:
+    // editing mid-run has no defined semantics), so editMsgId falls through to a normal send.
+    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId
+
     if (isNew) {
       setCreatingChat(true)
       const model = newModel || defaultModel
       const systemPrompt = draftSystemPrompt
       const newChatId = pendingNewChatIdRef.current ?? newId()
+
+      if (isDeepResearch) {
+        setMessages([optimisticUser])
+        try {
+          const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, effectiveProjectId, { sensitive: draftSensitive, ephemeral: draftEphemeral })
+          pendingNewChatIdRef.current = null
+          const now = new Date().toISOString()
+          useChatStore.getState().addChat({
+            chatId: res.chatId,
+            title: 'New Chat',
+            model,
+            systemPrompt,
+            ...(Object.keys(draftModelSettings).length > 0 ? { modelSettings: draftModelSettings } : {}),
+            ...(effectiveProjectId ? { projectId: effectiveProjectId } : {}),
+            createdAt: now,
+            updatedAt: now,
+          })
+          await ensureConnected(accessToken)
+          startResearch({ chatId: res.chatId, question: content })
+          setActiveResearch(res.chatId, {
+            runId: '', status: 'recon', question: content, plan: null,
+            waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+          })
+          navigate(`/c/${res.chatId}`, { replace: true })
+        } catch (err) {
+          setMessages([])
+          setErrorMsg(err instanceof Error ? err.message : String(err))
+        } finally {
+          setCreatingChat(false)
+        }
+        return
+      }
 
       streamingChatIdRef.current = newChatId
       streamingBaseMessagesRef.current = [optimisticUser]
@@ -1130,6 +1213,24 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       } catch (err) {
         setSending(false)
         setErrorMsg(err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+
+    if (isDeepResearch) {
+      const researchMessages = [...messages, optimisticUser]
+      setMessages(researchMessages)
+      try {
+        await ensureConnected(accessToken)
+        startResearch({ chatId: chatId!, question: content })
+        setActiveResearch(chatId!, {
+          runId: '', status: 'recon', question: content, plan: null,
+          waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+        })
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : String(err))
+      } finally {
+        setSending(false)
       }
       return
     }
@@ -1365,7 +1466,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
           >
             {RESEARCH_DEPTHS.map(d => (
-              <option key={d} value={d} disabled={d === 'deep'} title={d === 'deep' ? 'Deep Research — coming soon' : undefined}>
+              <option key={d} value={d}>
                 {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep Research'}
               </option>
             ))}
@@ -1455,6 +1556,14 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           </button>
         </div>
       </div>
+
+      {activeResearchRun && (
+        <ResearchPanel
+          run={activeResearchRun}
+          onApprove={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve', feedback })}
+          onRevise={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'revise', feedback })}
+        />
+      )}
 
       {errorMsg && (
         <div className="error-banner">

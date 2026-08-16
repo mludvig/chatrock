@@ -931,6 +931,84 @@ $header-h: 45px;
   }
 }
 
+// ── Deep Research panel ───────────────────────────────────────────────────────
+.research-panel {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 24px;
+  background: $accent-light;
+  border-top: 1px solid $border;
+}
+
+.research-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: $accent-h;
+
+  .research-panel-question {
+    font-weight: 400;
+    color: $muted;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.research-panel-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: $muted;
+  font-size: 14px;
+
+  &.research-panel-status--error { color: $danger; }
+}
+
+.research-panel-section {
+  h4 {
+    font-size: 13px;
+    color: $muted;
+    margin-bottom: 4px;
+  }
+  ul {
+    list-style: disc;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+}
+
+.research-panel-feedback {
+  width: 100%;
+  min-height: 44px;
+  resize: vertical;
+  border: 1px solid $border;
+  border-radius: $radius;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.research-panel-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.research-panel-findings {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+
+  svg { color: $accent; margin-right: 4px; }
+}
+
 // ── Input area (stats bar + input bar) ───────────────────────────────────────
 .input-area {
   flex-shrink: 0;
