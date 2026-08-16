@@ -259,3 +259,22 @@ resource "aws_lambda_permission" "ws_cancel_apigw" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
 }
+
+resource "aws_lambda_function" "ws_research_approve" {
+  function_name    = "chatrock-ws-researchApprove-${var.env}"
+  role             = aws_iam_role.lambda.arn
+  filename         = "${path.module}/dist/ws-researchApprove.zip"
+  source_code_hash = filebase64sha256("${path.module}/dist/ws-researchApprove.zip")
+  handler          = "index.handler"
+  runtime          = local.lambda_runtime
+  timeout          = 10
+  environment { variables = local.lambda_env_base }
+  tags = { Env = var.env }
+}
+
+resource "aws_lambda_permission" "ws_research_approve_apigw" {
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.ws_research_approve.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
+}

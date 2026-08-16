@@ -19,6 +19,7 @@ const handlers = [
   { name: 'ws-disconnect',    entry: 'src/ws/disconnect.ts' },
   { name: 'ws-sendMessage',      entry: 'src/ws/sendMessage.ts' },
   { name: 'ws-cancelMessage',    entry: 'src/ws/cancelMessage.ts' },
+  { name: 'ws-researchApprove',  entry: 'src/ws/researchApprove.ts' },
   { name: 'stream-chatCleanup',  entry: 'src/streams/chatTtlCleanup.ts' },
   { name: 'research-recon',          entry: 'src/research/recon.ts' },
   { name: 'research-plan',           entry: 'src/research/plan.ts' },

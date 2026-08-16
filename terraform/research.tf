@@ -141,6 +141,7 @@ locals {
             "runId.$"     = "$.runId"
             "chatId.$"    = "$.chatId"
             "sub.$"       = "$.sub"
+            "question.$"  = "$.question"
             "plan.$"      = "$.plan"
           }
         }
