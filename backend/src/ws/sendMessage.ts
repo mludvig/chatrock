@@ -301,6 +301,7 @@ export const buildHandler = (postFn: PostFn) => async (
     ...(projectId ? { projectId } : {}),
     ...(effectiveModelSettings.webSearchProvider ? { webSearchProvider: effectiveModelSettings.webSearchProvider } : {}),
     ...(search ? { searchScope: search.scope } : {}),
+    ...(chat.sensitive ? { sensitive: true } : {}),
   }
 
   // Timestamp block: prepended to new user turns when injectCurrentDate is enabled.

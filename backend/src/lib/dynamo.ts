@@ -212,6 +212,18 @@ export async function getActiveRun(chatId: string) {
   return items.find(item => item.status !== 'done' && item.status !== 'failed')
 }
 
+// The read_research_findings tool (sensitive-chat carve-out — backend/src/research/CLAUDE.md)
+// needs every run for a chat, not just the active one, so it can find the most recently
+// completed run to read findings back from.
+export async function listRuns(chatId: string) {
+  const res = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `CHAT#${chatId}`, ':prefix': 'RUN#' },
+  }))
+  return res.Items ?? []
+}
+
 // Generic partial update — every field is aliased via ExpressionAttributeNames so callers
 // never have to worry about DynamoDB reserved words (status/plan/etc. are all safe today,
 // but a future field might not be).

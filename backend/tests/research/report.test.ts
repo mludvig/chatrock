@@ -133,4 +133,16 @@ describe('research dossier', () => {
     expect(body).toContain('https://example.com')
     expect(body).toContain('Did not verify the exact date')
   })
+
+  test('sensitive chat — no project is created and no dossier file is written', async () => {
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', activeLeafId: 'leaf-9', sensitive: true })
+    mockBedrock.converseOnce.mockResolvedValue('answer')
+
+    await handler(BASE_INPUT)
+
+    expect(mockDynamo.putProject).not.toHaveBeenCalled()
+    expect(mockDynamo.updateChatProject).not.toHaveBeenCalled()
+    expect(mockDynamo.putProjectFile).not.toHaveBeenCalled()
+    expect(mockProjectFiles.summarizeFile).not.toHaveBeenCalled()
+  })
 })

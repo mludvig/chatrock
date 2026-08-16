@@ -5,11 +5,11 @@ Status as of this file: the state machine deploys and all six states transition,
 approval gate works end to end over WebSocket, each Wave researcher runs a real bounded
 investigation, the supervisor Assess handler drives the wave loop (more waves, or done)
 with a working round cap, `ws/sendMessage.ts` intercepts mid-flight steering messages for
-an active run, and `report` synthesises the cited final answer, persists it as a normal
-assistant turn, and writes the findings dossier as a project file. The sensitive-chat
-carve-out for dossier writing (no project, no dossier for a sensitive chat) is not yet
-implemented. Read this file before touching anything in this directory; it is kept up to
-date as each handler is filled in.
+an active run, `report` synthesises the cited final answer, persists it as a normal
+assistant turn, and writes the findings dossier as a project file, and a sensitive chat
+gets neither — its findings stay chat-scoped and are read back via the
+`read_research_findings` tool. Read this file before touching anything in this directory;
+it is kept up to date as each handler is filled in.
 
 See root `CLAUDE.md`'s "Architecture decisions" pointer and
 `docs/adr/0023-deep-research-step-functions-orchestration.md` for why this is a Step
@@ -138,9 +138,13 @@ exactly like an uploaded file, and written straight to `status: 'ready'` (no
 path doesn't have). `inclusion: 'auto'`, so it costs only a manifest line until something
 reads it.
 
-No sensitive-chat guard exists yet here — that carve-out (no project, no dossier for a
-sensitive chat; findings stay chat-scoped, read back via a small
-`read_research_findings` tool) is a separate follow-up, not yet implemented.
+`writeDossier()` is skipped outright for a sensitive chat (`chat?.sensitive` check ahead
+of the call in `handler`, not a branch buried inside `writeDossier` itself) — no project,
+no dossier file. Its findings stay reachable only from within the chat, via
+`read_research_findings` (`lib/researchFindings.ts`): gated on `ToolContext.sensitive` in
+`toolGating.ts` (offered only when `ctx.chatId && ctx.sensitive`), it pulls the most
+recently completed run for the chat via `listRuns(chatId)` (`lib/dynamo.ts`) and renders
+the same report/plan/findings/gaps shape as the dossier, at `summary` or `full` detail.
 
 ## Plan approval gate
 
