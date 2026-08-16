@@ -20,6 +20,12 @@ const handlers = [
   { name: 'ws-sendMessage',      entry: 'src/ws/sendMessage.ts' },
   { name: 'ws-cancelMessage',    entry: 'src/ws/cancelMessage.ts' },
   { name: 'stream-chatCleanup',  entry: 'src/streams/chatTtlCleanup.ts' },
+  { name: 'research-recon',          entry: 'src/research/recon.ts' },
+  { name: 'research-plan',           entry: 'src/research/plan.ts' },
+  { name: 'research-awaitApproval',  entry: 'src/research/awaitApproval.ts' },
+  { name: 'research-researcher',     entry: 'src/research/researcher.ts' },
+  { name: 'research-assess',         entry: 'src/research/assess.ts' },
+  { name: 'research-report',         entry: 'src/research/report.ts' },
 ]
 
 const distDir = path.join(__dirname, '..', 'terraform', 'dist')
