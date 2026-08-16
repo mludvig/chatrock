@@ -139,6 +139,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
   const pendingNewChatIdRef = useRef<string | null>(null)
+  // Set right before navigate() when a /c/new send creates its own chat, so the
+  // chatId-seed effect below can tell "still the same session, just got its real URL"
+  // apart from "the user switched to a different chat" and skip resetting
+  // composerResearchDepth in the former case — see its own comment.
+  const justCreatedChatIdRef = useRef<string | null>(null)
   // The chatId the in-flight stream actually belongs to — distinct from the chatId
   // currently being *viewed*, which can diverge the moment the user navigates to a
   // different chat mid-stream. Everything stream-related (applying deltas, finalizing,
@@ -419,7 +424,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Seed draftModelSettings when chatId changes
   useEffect(() => {
     setCurrentChatId(chatId ?? null)
-    setComposerResearchDepth(null)  // reset per-turn depth override — see its declaration above
+    if (chatId && justCreatedChatIdRef.current === chatId) {
+      justCreatedChatIdRef.current = null  // our own /c/new -> /c/:chatId navigation, not a chat switch
+    } else {
+      setComposerResearchDepth(null)  // reset per-turn depth override — see its declaration above
+    }
     if (isNew) {
       setDraftSystemPrompt('')
       if (currentModelDef) {
@@ -1160,6 +1169,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             runId: '', status: 'recon', question: content, plan: null,
             waveSubQuestions: [], findings: [], findingCount: 0, done: false,
           })
+          justCreatedChatIdRef.current = res.chatId
           navigate(`/c/${res.chatId}`, { replace: true })
         } catch (err) {
           setMessages([])
@@ -1203,6 +1213,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           ...(search ? { search } : {}),
         })
         armAckWatchdog()
+        justCreatedChatIdRef.current = res.chatId
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
         setSending(false)
