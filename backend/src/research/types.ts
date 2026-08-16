@@ -2,13 +2,11 @@
 // (terraform/research.tf). Each Task state in the ASL invokes exactly one of the
 // handlers in this directory with one of these Input types, and its return value
 // becomes that state's Result — Step Functions passes JSON straight through, no
-// wrapping needed. See docs/adr/0023-deep-research-step-functions-orchestration.md.
+// wrapping needed. See docs/adr/0023-deep-research-step-functions-orchestration.md
+// and backend/src/research/CLAUDE.md.
 //
-// Filled in by later tasks: the RUN# DynamoDB row shape (backend/CLAUDE.md's data
-// model section, task #9), and the real bodies of each handler (#10, #12, #13, #15).
-// For now every handler in this directory is a stub that validates its input and
-// returns a minimally-shaped stub result, so the state machine itself can be
-// deployed and exercised end-to-end before the research logic exists.
+// Every handler in this directory is still a stub beyond persisting the RunRow — none
+// of them call Bedrock yet.
 
 export interface RunContext {
   chatId: string
@@ -81,4 +79,27 @@ export interface ReportInput extends RunContext {
 
 export interface ReportResult {
   reportText: string
+}
+
+export type RunStatus = 'recon' | 'planning' | 'awaiting_approval' | 'running' | 'done' | 'failed'
+
+// The PK=CHAT#<chatId> / SK=RUN#<runId> DynamoDB row — see backend/src/research/CLAUDE.md's
+// "Data model" section. Built/read via lib/dynamo.ts's putRun/getRun/updateRun.
+export interface RunRow {
+  PK: string
+  SK: string
+  runId: string
+  chatId: string
+  sub: string
+  status: RunStatus
+  question: string
+  plan?: PlanResult
+  findings: Finding[]
+  gapsNotPursued: string[]
+  steeringNotes: string[]
+  roundsSpent: number
+  connId?: string
+  taskToken?: string
+  createdAt: string
+  updatedAt: string
 }

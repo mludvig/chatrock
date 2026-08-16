@@ -175,6 +175,78 @@ export async function deleteChatItem(sub: string, chatId: string) {
   }))
 }
 
+// ── Deep Research run rows (PK=CHAT#<chatId> / SK=RUN#<runId>) ──────────────────
+// See backend/src/research/CLAUDE.md and docs/adr/0023-deep-research-step-functions-
+// orchestration.md. One row per Step Functions execution, tracking status/plan/findings/
+// steering notes/the approval task token so the run can be re-synced after a disconnect
+// (task #18) without re-querying Step Functions state.
+
+export const buildRunKey = (chatId: string, runId: string) => ({
+  PK: `CHAT#${chatId}`,
+  SK: `RUN#${runId}`,
+})
+
+export async function putRun(item: Record<string, unknown>) {
+  await ddb.send(new PutCommand({ TableName: TABLE, Item: item }))
+}
+
+export async function getRun(chatId: string, runId: string) {
+  const res = await ddb.send(new GetCommand({
+    TableName: TABLE,
+    Key: buildRunKey(chatId, runId),
+  }))
+  return res.Item
+}
+
+// Generic partial update — every field is aliased via ExpressionAttributeNames so callers
+// never have to worry about DynamoDB reserved words (status/plan/etc. are all safe today,
+// but a future field might not be).
+export async function updateRun(chatId: string, runId: string, fields: Record<string, unknown>) {
+  const names: Record<string, string> = {}
+  const values: Record<string, unknown> = { ':u': new Date().toISOString() }
+  const sets: string[] = ['updatedAt = :u']
+  for (const [k, v] of Object.entries(fields)) {
+    names[`#${k}`] = k
+    values[`:${k}`] = v
+    sets.push(`#${k} = :${k}`)
+  }
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildRunKey(chatId, runId),
+    UpdateExpression: `SET ${sets.join(', ')}`,
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+  }))
+}
+
+// Mid-flight steering (task #14): appends without a read-modify-write race, since two
+// steering messages could otherwise arrive close together.
+export async function appendRunSteeringNote(chatId: string, runId: string, note: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildRunKey(chatId, runId),
+    UpdateExpression: 'SET steeringNotes = list_append(if_not_exists(steeringNotes, :empty), :n), updatedAt = :u',
+    ExpressionAttributeValues: { ':n': [note], ':empty': [], ':u': new Date().toISOString() },
+  }))
+}
+
+// Deletes all RUN# rows under CHAT#<chatId> — the DynamoDB half of Deep Research cascade
+// delete, called alongside deleteChatMessages from the cascade-delete cleanup Lambda
+// (streams/chatTtlCleanup.ts). S3 findings need no separate sweep: they live under the
+// same attachments/<sub>/<chatId>/research/<runId>/... prefix deleteChatObjects already
+// sweeps (S3 prefix listing is naturally recursive, no separate delimiter walk needed).
+export async function deleteChatRuns(chatId: string): Promise<void> {
+  const res = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': `CHAT#${chatId}`, ':prefix': 'RUN#' },
+    ProjectionExpression: 'PK, SK',
+  }))
+  const items = res.Items ?? []
+  if (items.length === 0) return
+  await batchDeleteMessages(items.map(item => ({ PK: item.PK as string, SK: item.SK as string })))
+}
+
 export async function listMessages(chatId: string) {
   const items: Record<string, unknown>[] = []
   let lastKey: Record<string, unknown> | undefined

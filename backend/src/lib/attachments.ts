@@ -98,6 +98,13 @@ export function projectFilePrefix(sub: string, projectId: string): string {
   return `attachments/${sub}/project/${projectId}/`
 }
 
+// Deep Research findings live under the chat's own attachment prefix, so deleteChatObjects'
+// unqualified prefix listing already sweeps them on chat delete with no extra code — see
+// backend/src/research/CLAUDE.md.
+export function researchFindingsPrefix(sub: string, chatId: string, runId: string): string {
+  return `${s3KeyPrefix(sub, chatId)}research/${runId}/`
+}
+
 export async function deleteProjectObjects(sub: string, projectId: string): Promise<void> {
   const prefix = projectFilePrefix(sub, projectId)
   const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix }))

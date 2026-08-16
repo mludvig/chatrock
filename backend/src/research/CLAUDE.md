@@ -1,16 +1,15 @@
-# Deep Research (Phase 3)
+# Deep Research
 
-Status as of this file: **skeleton only** (task #8 done, #9 in progress). The state
-machine deploys and all six states actually transition, but every handler is a stub —
-none of them touch DynamoDB, Bedrock, or S3 yet. Read this file before touching anything
-in this directory; it will be kept up to date as later tasks fill each handler in.
+Status as of this file: the state machine deploys and all six states transition, and the
+`RUN#` DynamoDB row + cascade-delete are wired up. The six handlers below are otherwise
+still stubs — none of them touch Bedrock yet. Read this file before touching anything in
+this directory; it is kept up to date as each handler is filled in.
 
-See root `CLAUDE.md`'s "Architecture decisions" pointer, `docs/adr/0023-deep-research-step-functions-orchestration.md`
-for why this is a Step Functions state machine rather than a self-reinvoking Lambda, and
-the plan doc (`docs/adr/` numbering continues from there — 0024 is the dossier ADR, not
-yet written) for the full Phase 3 design. This file is the "how it works" companion to
-those — it documents mechanics, not rationale; when the two would drift, the ADR wins and
-this file should be corrected to match.
+See root `CLAUDE.md`'s "Architecture decisions" pointer and
+`docs/adr/0023-deep-research-step-functions-orchestration.md` for why this is a Step
+Functions state machine rather than a self-reinvoking Lambda. This file is the "how it
+works" companion to that ADR — it documents mechanics, not rationale; when the two would
+drift, the ADR wins and this file should be corrected to match.
 
 ## Shape
 
@@ -32,33 +31,38 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 
 | File | State(s) | Status |
 |------|----------|--------|
-| `types.ts` | — | Shared `*Input`/`*Result` types, one pair per state. Every handler's signature is `(event: XInput) => Promise<XResult>` — Step Functions passes each state's `ResultPath`-merged JSON straight through as the next state's input, no envelope. |
-| `recon.ts` | `Recon` | Stub. Will run 1-2 cheap `web_search`/`web_fetch` calls (reuse `lib/tools.ts`'s existing executors) to ground the Plan step in something more than the raw question. Task #10. |
-| `plan.ts` | `Plan` | Stub. Will call Bedrock once (Sonnet, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`) to produce `clarifyingQuestions` + `subQuestions` from the question + Recon's notes. Task #10. |
-| `awaitApproval.ts` | `AwaitApproval` | Stub. Real job: persist `event.taskToken` onto the `RUN#` row (task #9) so the WS `researchApprove` action (task #11) can find it later and call `SendTaskSuccess`/`SendTaskFailure`. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation (the WS handler, not this one) does. Also worth emitting a WS frame here so the frontend shows the plan immediately (task #18). |
-| `researcher.ts` | `Wave` (Map iterator) | Stub. Will run one bounded `converseStream` (`lib/llm/loop.ts`) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with no WS connection — no delta streaming, just the final result. Reads `steeringNotes` at start (task #14). Task #12. |
-| `assess.ts` | `Assess` | Stub. Supervisor call: reads all findings-so-far + pending steering notes, decides `done` or which gaps need another wave (`nextSubQuestions`). Also where steering notes get cleared once consumed (task #14). Task #13. |
-| `report.ts` | `Report` | Stub. Synthesises the final cited answer, persists it as a normal assistant turn (task #15), and later (task #16) writes the full dossier — plan, every wave's findings with sources, every assessment, gaps deliberately dropped — as a project file. |
+| `types.ts` | — | Shared `*Input`/`*Result` types, one pair per state, plus `RunRow` (the `RUN#` DynamoDB row shape). Every handler's signature is `(event: XInput) => Promise<XResult>` — Step Functions passes each state's `ResultPath`-merged JSON straight through as the next state's input, no envelope. |
+| `recon.ts` | `Recon` | Stub. Runs 1-2 cheap `web_search`/`web_fetch` calls (reuse `lib/tools.ts`'s existing executors) to ground the Plan step in something more than the raw question. |
+| `plan.ts` | `Plan` | Stub. Calls Bedrock once (Sonnet, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`) to produce `clarifyingQuestions` + `subQuestions` from the question + Recon's notes. |
+| `awaitApproval.ts` | `AwaitApproval` | Stub. Real job: persist `event.taskToken` onto the `RUN#` row so the WS `researchApprove` action can find it later and call `SendTaskSuccess`/`SendTaskFailure`. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation (the WS handler, not this one) does. Also worth emitting a WS frame here so the frontend shows the plan immediately. |
+| `researcher.ts` | `Wave` (Map iterator) | Stub. Runs one bounded `converseStream` (`lib/llm/loop.ts`) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with no WS connection — no delta streaming, just the final result. Reads `steeringNotes` at start. |
+| `assess.ts` | `Assess` | Stub. Supervisor call: reads all findings-so-far + pending steering notes, decides `done` or which gaps need another wave (`nextSubQuestions`). Also where steering notes get cleared once consumed. |
+| `report.ts` | `Report` | Stub. Synthesises the final cited answer, persists it as a normal assistant turn, and later writes the full dossier — plan, every wave's findings with sources, every assessment, gaps deliberately dropped — as a project file. |
 
-## Data model (not yet built — task #9)
+## Data model
 
-Per the plan doc: `PK=CHAT#<chatId>` / `SK=RUN#<runId>` row carrying `status`
-(`recon|planning|awaiting_approval|running|done|failed`), `plan`, wave/finding refs,
-budget spent, `steeringNotes[]`, `connId`, the approval task token, timestamps. Large
-researcher findings go to S3 under the existing `attachments/<sub>/<chatId>/…` prefix
-(already covered by chat-delete/fork cascade) — only refs live in the row, to stay clear
-of DynamoDB's 400 KB item limit. `deleteChatMessages` in `lib/dynamo.ts` currently only
-sweeps `SK` begins_with `MSG#`; the cascade-delete cleanup Lambda
-(`streams/chatTtlCleanup.ts`) needs to also sweep `RUN#` rows and their S3 findings, or
-they leak on chat delete — this is part of task #9, not yet done.
+`PK=CHAT#<chatId>` / `SK=RUN#<runId>` row (`RunRow` in `types.ts`), managed by
+`lib/dynamo.ts`'s `putRun`/`getRun`/`updateRun`/`appendRunSteeringNote`/`deleteChatRuns`:
+`status` (`recon|planning|awaiting_approval|running|done|failed`), `plan`, findings,
+`steeringNotes[]`, `roundsSpent`, `connId`, the approval task token, timestamps.
+`updateRun` is a generic partial-update (every field aliased via
+`ExpressionAttributeNames`, so any field name is safe to pass without checking DynamoDB
+reserved words). Large researcher findings go to S3 under the existing
+`attachments/<sub>/<chatId>/research/<runId>/…` prefix — only refs live in the row, to
+stay clear of DynamoDB's 400 KB item limit.
+
+**Cascade delete**: `streams/chatTtlCleanup.ts` calls `deleteChatRuns(chatId)` alongside
+`deleteChatMessages`/`deleteChatObjects`/`deleteChatShares`. The S3 side needs no separate
+sweep — `deleteChatObjects`'s prefix listing (`attachments/<sub>/<chatId>/…`) is
+unqualified and therefore already recursive, so it picks up anything under the
+`research/<runId>/` subpath for free.
 
 ## Invocation
 
 Nothing starts a `chatrock-research-<env>` execution yet — that wiring (the composer's
 Deep Research picker choice -> `StartExecution`, `terraform/iam.tf`'s
-`StartResearchExecution` statement is the permission, not the call site) is task #19
-(frontend) driving a not-yet-written WS action, most likely alongside task #11's
-`researchApprove`.
+`StartResearchExecution` statement is the permission, not the call site) is a
+not-yet-written WS action, most likely alongside `researchApprove`.
 
 ## Env vars available to every handler
 
