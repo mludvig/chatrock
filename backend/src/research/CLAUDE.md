@@ -1,9 +1,9 @@
 # Deep Research
 
-Status as of this file: the state machine deploys and all six states transition, and the
-`RUN#` DynamoDB row + cascade-delete are wired up. The six handlers below are otherwise
-still stubs — none of them touch Bedrock yet. Read this file before touching anything in
-this directory; it is kept up to date as each handler is filled in.
+Status as of this file: the state machine deploys and all six states transition, the
+`RUN#` DynamoDB row + cascade-delete are wired up, and Recon/Plan are implemented.
+`awaitApproval`/`researcher`/`assess`/`report` are still stubs. Read this file before
+touching anything in this directory; it is kept up to date as each handler is filled in.
 
 See root `CLAUDE.md`'s "Architecture decisions" pointer and
 `docs/adr/0023-deep-research-step-functions-orchestration.md` for why this is a Step
@@ -32,8 +32,8 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 | File | State(s) | Status |
 |------|----------|--------|
 | `types.ts` | — | Shared `*Input`/`*Result` types, one pair per state, plus `RunRow` (the `RUN#` DynamoDB row shape). Every handler's signature is `(event: XInput) => Promise<XResult>` — Step Functions passes each state's `ResultPath`-merged JSON straight through as the next state's input, no envelope. |
-| `recon.ts` | `Recon` | Stub. Runs 1-2 cheap `web_search`/`web_fetch` calls (reuse `lib/tools.ts`'s existing executors) to ground the Plan step in something more than the raw question. |
-| `plan.ts` | `Plan` | Stub. Calls Bedrock once (Sonnet, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`) to produce `clarifyingQuestions` + `subQuestions` from the question + Recon's notes. |
+| `recon.ts` | `Recon` | Runs one `web_search` call (via `lib/tools.ts`'s `executeTool`) to ground the Plan step in something more than the raw question. Notes are the search result's text entries; an error result yields `notes: []` rather than throwing. |
+| `plan.ts` | `Plan` | Calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`, prompt in `prompts/research-plan.txt`) to produce `clarifyingQuestions` + `subQuestions` from the question + Recon's notes. Sub-questions with no `question` text are dropped; a missing or duplicate `id` is replaced with a fresh `newId()`. |
 | `awaitApproval.ts` | `AwaitApproval` | Stub. Real job: persist `event.taskToken` onto the `RUN#` row so the WS `researchApprove` action can find it later and call `SendTaskSuccess`/`SendTaskFailure`. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation (the WS handler, not this one) does. Also worth emitting a WS frame here so the frontend shows the plan immediately. |
 | `researcher.ts` | `Wave` (Map iterator) | Stub. Runs one bounded `converseStream` (`lib/llm/loop.ts`) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with no WS connection — no delta streaming, just the final result. Reads `steeringNotes` at start. |
 | `assess.ts` | `Assess` | Stub. Supervisor call: reads all findings-so-far + pending steering notes, decides `done` or which gaps need another wave (`nextSubQuestions`). Also where steering notes get cleared once consumed. |
