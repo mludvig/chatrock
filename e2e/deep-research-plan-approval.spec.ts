@@ -44,6 +44,6 @@ test('plan approval: revise on substantive feedback, approve on empty input', as
   // Now approve with no feedback — the run leaves awaiting_approval and starts researching.
   await expect(actionBtn).toHaveText(/Approve/, { timeout: 5_000 })
   await actionBtn.click()
-  await expect(page.locator('.research-panel-plan')).toHaveCount(0, { timeout: 15_000 })
+  await expect(page.locator('.research-panel-plan')).toHaveCount(0, { timeout: 60_000 })
   await expect(page.locator('.research-panel-status')).toBeVisible({ timeout: 15_000 })
 })

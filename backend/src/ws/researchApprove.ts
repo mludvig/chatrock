@@ -30,14 +30,12 @@ interface ApproveBody {
 // AwaitApproval has no ResultPath, so a successful SendTaskSuccess payload entirely
 // replaces the state machine's state ($) — it must reconstruct every field the rest of
 // the pipeline (ApprovalChoice/Replan/Wave/Assess/Report) needs, not just the plan.
-// A revise loops AwaitApproval -> Replan -> AwaitApproval, minting a fresh task token —
-// but `plan.ts` pushes the `research_plan` WS frame (which is what the client reacts to)
-// *before* the state machine transitions into the new AwaitApproval and `awaitApproval.ts`
-// persists that fresh token onto the RUN# row. A client that approves fast enough (an
-// automated test, or just a quick click) can read the row before that write lands and
-// retry with its still-stale, already-consumed token, which SendTaskSuccess rejects as
-// TaskTimedOut/TaskDoesNotExist. Retry against a freshly re-read row rather than failing
-// the request outright — awaitApproval.ts's write typically lands within a second.
+// A revise loops AwaitApproval -> Replan -> AwaitApproval, minting a fresh task token.
+// The frontend (ResearchPanel.tsx) disables its action button for the duration of a
+// submission, so a second click can't race a still-in-flight revise against its own
+// token rotation — but retry once against a freshly re-read row on a stale-token error
+// anyway, as a defense-in-depth for any other path (e.g. a reconnect) that could still
+// deliver a second decision before awaitApproval.ts's rewrite lands.
 const STALE_TOKEN_RETRY_DELAYS_MS = [300, 600, 1000, 1500]
 
 function isStaleTaskTokenError(err: unknown): boolean {

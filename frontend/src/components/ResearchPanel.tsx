@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faMagnifyingGlass, faSpinner, faCheck, faPenToSquare } from '@fortawesome/free-solid-svg-icons'
 import type { ActiveResearch } from '../store/chatStore'
@@ -17,11 +17,22 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
   onRevise: (feedback: string) => void
 }) {
   const [feedback, setFeedback] = useState('')
+  // Disables the action button between a click and the run's next state change (a revised
+  // plan, or status leaving awaiting_approval) — otherwise clearing feedback on submit flips
+  // the button straight to "Approve" while the revise is still in flight, letting a second
+  // click send a second decision on the same connection before the first's task token has
+  // rotated. See backend/src/ws/researchApprove.ts's comment on the same race.
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    setSubmitting(false)
+  }, [run])
 
   const trimmed = feedback.trim()
   const isRevision = trimmed !== '' && !INCONSEQUENTIAL_FEEDBACK.test(trimmed)
 
   function handleSubmit() {
+    setSubmitting(true)
     if (isRevision) {
       onRevise(trimmed)
     } else {
@@ -67,7 +78,7 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
             onChange={e => setFeedback(e.target.value)}
           />
           <div className="research-panel-actions">
-            <button className="btn-primary" onClick={handleSubmit}>
+            <button className="btn-primary" onClick={handleSubmit} disabled={submitting}>
               <FontAwesomeIcon icon={isRevision ? faPenToSquare : faCheck} /> {isRevision ? 'Revise' : 'Approve'}
             </button>
           </div>
