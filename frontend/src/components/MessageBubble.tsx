@@ -47,9 +47,9 @@ import {
   faChevronDown, faChevronRight, faChevronLeft, faGlobe, faLink, faSpinner,
   faCircleCheck, faCircleXmark, faBrain, faLightbulb, faRotateRight, faPenToSquare,
   faCodeBranch, faCopy, faCheck, faTrash, faRobot, faCoins, faClock, faFile, faPlay,
-  faComments, faMagnifyingGlass, faMemory, faImage,
+  faComments, faMagnifyingGlass, faMemory, faImage, faAnglesUp,
 } from '@fortawesome/free-solid-svg-icons'
-import type { Message, Step, TokenUsage } from '../api/http'
+import type { Message, Step, TokenUsage, ResearchDepth } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import type { StreamingMsg } from '../store/chatStore'
 import type { SearchResult, SearchHistoryResult } from '../lib/toolResults'
@@ -427,6 +427,7 @@ interface Props {
   message: Message | StreamingMsg
   onRerun?: (parentId: string) => void
   onContinue?: (msgId: string) => void
+  onEscalate?: (msgId: string, nextDepth: ResearchDepth) => void
   onNavigate?: (targetMsgId: string) => void
   onEditRequest?: (message: Message) => void
   onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
@@ -443,7 +444,7 @@ interface Props {
  * This preserves the think → search → think → answer interleaved structure.
  */
 const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBubble(
-  { message, onRerun, onContinue, onNavigate, onEditRequest, onForkToHere, onDeleteBranch, showTokenStats }, ref,
+  { message, onRerun, onContinue, onEscalate, onNavigate, onEditRequest, onForkToHere, onDeleteBranch, showTokenStats }, ref,
 ) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
@@ -599,12 +600,20 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
         const hasContinue = isAssistant && onContinue && 'msgId' in message &&
           !!((message as Message).errored || (message as Message).truncated)
+        // Offered on any research-bearing answer below the top tier, not only truncated
+        // ones — a turn can wrap up cleanly inside its budget and simply not dig deep enough.
+        const escalateDepth: ResearchDepth | null =
+          (message as Message).researchDepth === 'brief' ? 'extended'
+          : (message as Message).researchDepth === 'extended' ? 'deep'
+          : null
+        const hasEscalate = isAssistant && onEscalate && 'msgId' in message && escalateDepth !== null &&
+          ((message as Message).steps ?? []).some(s => s.kind === 'tool')
         const hasForkCopy = 'msgId' in message
         // A root message (parentId null) is only deletable when it has a sibling root to
         // fall back to — mirrors the backend's "sole root" guard in DELETE /messages/{msgId}.
         const hasDelete = onDeleteBranch && 'msgId' in message &&
           ((message as Message).parentId != null || ((message as Message).siblingCount ?? 0) > 1)
-        if (!hasSiblings && !hasEdit && !hasRerun && !hasContinue && !hasForkCopy && !hasDelete) return null
+        if (!hasSiblings && !hasEdit && !hasRerun && !hasContinue && !hasEscalate && !hasForkCopy && !hasDelete) return null
 
         const msg = message as Message
         // Concatenate text steps for copy/fork
@@ -663,6 +672,15 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
                 onClick={() => onContinue!(msg.msgId)}
               >
                 <FontAwesomeIcon icon={faPlay} />
+              </button>
+            )}
+            {hasEscalate && (
+              <button
+                className="action-btn"
+                title={escalateDepth === 'deep' ? 'Escalate to Deep Research' : 'Go deeper (Extended)'}
+                onClick={() => onEscalate!(msg.msgId, escalateDepth!)}
+              >
+                <FontAwesomeIcon icon={faAnglesUp} />
               </button>
             )}
             {hasForkCopy && onForkToHere && (
