@@ -508,6 +508,41 @@ test('part4b: assistant bubble has no errored field when no turns have incomplet
   expect(asstBubble!.errored).toBeUndefined()
 })
 
+// ── Part 4c: truncated turn → truncated bubble ────────────────────────────────
+//
+// An assistant turn row with truncated:true marks the round-budget-exhaustion path
+// (a complete answer, just budget-limited) — distinct from incomplete/errored.
+// See docs/adr/0020-research-depth-and-budget-pacing.md.
+
+test('part4c: assistant bubble has truncated:true when any of its turns has truncated:true', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'question' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'budget-limited answer' }], responseId: 'r0', turnIndex: 1, truncated: true }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  const asstBubble = body.bubbles.find(b => b.role === 'assistant')
+  expect(asstBubble).toBeDefined()
+  expect(asstBubble!.truncated).toBe(true)
+  expect(asstBubble!.errored).toBeUndefined()
+})
+
+test('part4d: assistant bubble has no truncated field on a clean stop', async () => {
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'a1' })
+  mockDynamo.listMessages.mockResolvedValue([
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'question' }], responseId: 'r0', turnIndex: 0 }),
+    row({ SK: `MSG#${TS}#0001#a1`, msgId: 'a1', parentId: 'u1', role: 'assistant', blocks: [{ kind: 'text', text: 'complete answer' }], responseId: 'r0', turnIndex: 1 }),
+  ])
+
+  const res = result(await handler(makeEvent('c1')))
+  const body = JSON.parse(res.body ?? '{}') as { bubbles: Array<Record<string, unknown>> }
+  const asstBubble = body.bubbles.find(b => b.role === 'assistant')
+  expect(asstBubble).toBeDefined()
+  expect(asstBubble!.truncated).toBeUndefined()
+})
+
 describe('browse_web screenshot steps in tool results', () => {
   test('toolResult row with an image s3Location entry produces a plain-text result plus a first-class screenshotUrls field', async () => {
     const responseId = 'resp-browse'

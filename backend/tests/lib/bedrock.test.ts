@@ -140,6 +140,11 @@ test('assembles verbatim turn chunk with reasoning text+signature, text, toolUse
     name: 'web_search',
     input: { query: 'foo' },
   })
+
+  // Round 1's assistant turn stopped cleanly (end_turn), well within budget — not truncated.
+  const secondAssistantTurn = (turnChunks as Array<{type: string; role: string; turnIndex: number; truncated?: boolean}>)
+    .find(t => t.role === 'assistant' && t.turnIndex === 2)
+  expect(secondAssistantTurn?.truncated).toBeUndefined()
 })
 
 // ── Test 2: redactedContent is captured as Uint8Array ────────────────────────
@@ -327,7 +332,7 @@ test('handles missing contentBlockStart for a text block (creates acc on-the-fly
 // with no tools (forced answer), ensuring a text response always follows.
 
 test('after max tool-use rounds, does one final forced-answer call with no tools', async () => {
-  const MAX = 8 // must match the constant in bedrock.ts
+  const MAX = 8 // ROUND_BUDGETS.extended — this test exercises the 'extended' depth
 
   // Mock MAX rounds of pure tool_use responses
   for (let i = 0; i < MAX; i++) {
@@ -354,7 +359,7 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { researchDepth: 'extended' })) {
     chunks.push(chunk)
   }
 
@@ -370,8 +375,94 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
   expect(stopChunk).toBeDefined()
   expect(stopChunk!.stopReason).toBe('end_turn')
 
+  // The final forced-answer turn is marked truncated:true — a distinct signal from
+  // stopReason: the round budget was exhausted even though this particular call ended
+  // cleanly. See docs/adr/0020-research-depth-and-budget-pacing.md.
+  const assistantTurnChunks = chunks.filter(c => (c as { type: string; role?: string }).type === 'turn' && (c as { role?: string }).role === 'assistant') as
+    Array<{ truncated?: boolean }>
+  const finalAssistantTurnChunk = assistantTurnChunks[assistantTurnChunks.length - 1]
+  expect(finalAssistantTurnChunk?.truncated).toBe(true)
+
   // send() should have been called MAX + 1 times (MAX tool rounds + 1 forced answer)
   expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
+})
+
+test('absent researchDepth defaults to brief (3 rounds), not the old 8-round default', async () => {
+  const MAX = 3 // ROUND_BUDGETS.brief
+
+  for (let i = 0; i < MAX; i++) {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: `tu-${i}`, name: 'web_search' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"x"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({ entries: [{ kind: 'text', text: 'result' }], isError: false })
+  }
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Final forced answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 50, outputTokens: 10 } } },
+  ]))
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('test-model', '', [], {})) { /* settings: {} — no researchDepth */ }
+
+  expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
+})
+
+test('budget-pacing note is injected into the live replay but never into the persisted tool-result turn', async () => {
+  const MAX = 3 // ROUND_BUDGETS.brief — pacingThreshold = max(1, ceil(3/3)) = 1
+
+  for (let i = 0; i < MAX; i++) {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: `tu-${i}`, name: 'web_search' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"x"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 2 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({ entries: [{ kind: 'text', text: 'result' }], isError: false })
+  }
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Final forced answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 50, outputTokens: 10 } } },
+  ]))
+
+  const chunks: unknown[] = []
+  for await (const chunk of converseStream('test-model', '', [], {})) {
+    chunks.push(chunk)
+  }
+
+  // Round 1's request (call index 1) replays round 0's tool result — no pacing note yet
+  // (roundsRemaining after round 0 is 2, above the threshold of 1).
+  const round1Input = JSON.stringify(getMockSend().mock.calls[1][0].input)
+  expect(round1Input).not.toMatch(/Research budget/)
+  expect(round1Input).not.toMatch(/last tool round/)
+
+  // Round 2's request (call index 2) replays round 1's tool result, which crossed the
+  // threshold (roundsRemaining === 1) — the warning variant must be present.
+  const round2Input = JSON.stringify(getMockSend().mock.calls[2][0].input)
+  expect(round2Input).toMatch(/Research budget: 1 of 3 tool rounds remain/)
+
+  // The forced-final call (call index 3) replays round 2's tool result, which was the
+  // last round (roundsRemaining === 0) — the final-round variant must be present.
+  const finalInput = JSON.stringify(getMockSend().mock.calls[3][0].input)
+  expect(finalInput).toMatch(/last tool round/)
+
+  // Neither pacing variant may leak into the persisted tool-result turns — they're
+  // steering for this invocation only (docs/adr/0005-dual-tool-result-representation.md).
+  const persistedUserTurns = (chunks as Array<{ type: string; role?: string; content?: unknown[] }>)
+    .filter(c => c.type === 'turn' && c.role === 'user')
+  const persistedText = JSON.stringify(persistedUserTurns)
+  expect(persistedText).not.toMatch(/Research budget/)
+  expect(persistedText).not.toMatch(/last tool round/)
 })
 
 // ── Option 2 fix: final call still requests tool_use with no text ────────────
@@ -409,7 +500,7 @@ test('final forced call itself returns tool_use with no text: toolUse stripped, 
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { researchDepth: 'extended' })) {
     chunks.push(chunk)
   }
 
@@ -778,7 +869,7 @@ test('part1a: forced-final call after max rounds has non-empty toolConfig in its
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {})) { /* drain */ }
+  for await (const _chunk of converseStream('test-model', '', [], { researchDepth: 'extended' })) { /* drain */ }
 
   // The final (MAX+1-th) send call must have toolConfig defined with real tools
   const finalCallInput = getMockSend().mock.calls[MAX][0].input as Record<string, unknown>

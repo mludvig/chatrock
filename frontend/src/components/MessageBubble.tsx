@@ -597,7 +597,8 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
           (message as Message).siblingCount! > 1
         const hasEdit = !isAssistant && onEditRequest && 'msgId' in message
         const hasRerun = isAssistant && onRerun && 'parentId' in message && message.parentId != null
-        const hasContinue = isAssistant && onContinue && 'msgId' in message && !!(message as Message).errored
+        const hasContinue = isAssistant && onContinue && 'msgId' in message &&
+          !!((message as Message).errored || (message as Message).truncated)
         const hasForkCopy = 'msgId' in message
         // A root message (parentId null) is only deletable when it has a sibling root to
         // fall back to — mirrors the backend's "sole root" guard in DELETE /messages/{msgId}.
@@ -658,7 +659,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
             {hasContinue && (
               <button
                 className="action-btn"
-                title="Continue this answer"
+                title={msg.truncated ? 'Continue research' : 'Continue this answer'}
                 onClick={() => onContinue!(msg.msgId)}
               >
                 <FontAwesomeIcon icon={faPlay} />

@@ -150,6 +150,7 @@ export const buildHandler = (postFn: PostFn) => async (
     imageGenerationEnabled: modelSettings.imageGenerationEnabled,
     answerLength:           modelSettings.answerLength as UserPreferences['answerLength'],
     injectCurrentDate:      modelSettings.injectCurrentDate,
+    researchDepth:          modelSettings.researchDepth,
   }
 
   const effectivePrefs = resolvePreferences({ user: userPrefs, project: projectPrefs, chat: chatPrefs })
@@ -164,6 +165,7 @@ export const buildHandler = (postFn: PostFn) => async (
     memoryEnabled:          effectivePrefs.memoryEnabled,
     searchEnabled:          effectivePrefs.searchEnabled,
     imageGenerationEnabled: effectivePrefs.imageGenerationEnabled,
+    researchDepth:          effectivePrefs.researchDepth,
   }
 
   // Build project manifest and forced files (project chats only)
@@ -541,6 +543,8 @@ export const buildHandler = (postFn: PostFn) => async (
               ? { thinkingEffort: effectiveModelSettings.thinkingEffort } : {}),
             ...(chunk.role === 'assistant' && effectiveModelSettings.webSearchEnabled !== undefined
               ? { webSearchEnabled: effectiveModelSettings.webSearchEnabled } : {}),
+            ...(chunk.role === 'assistant' ? { researchDepth: effectiveModelSettings.researchDepth ?? 'brief' } : {}),
+            ...(chunk.truncated ? { truncated: true } : {}),
           }
 
           const hasToolUse = chunk.role === 'assistant' && chunk.content.some(b => b.kind === 'tool_call')
