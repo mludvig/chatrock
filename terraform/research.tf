@@ -147,7 +147,42 @@ locals {
           }
         }
         TimeoutSeconds = 86400
-        Next           = "Wave"
+        Next           = "ApprovalChoice"
+      }
+      # "Revise" (researchApprove.ts) resolves the same waitForTaskToken with
+      # {revise: true, feedback, plan: <prior plan>}, entirely replacing $ like every other
+      # no-ResultPath state here. There's no "Reject" — a user who abandons the plan just
+      # leaves it hanging (AwaitApproval's 24h TimeoutSeconds above fails the run cleanly on
+      # its own; cleanup doesn't need a button click to depend on).
+      ApprovalChoice = {
+        Type = "Choice"
+        Choices = [
+          {
+            Variable      = "$.revise"
+            BooleanEquals = true
+            Next          = "Replan"
+          }
+        ]
+        Default = "Wave"
+      }
+      # Reuses the Plan lambda (plan.ts branches on priorPlan/feedback vs recon — see its
+      # header comment) rather than a dedicated handler. ResultPath="$.plan" merges the
+      # revised plan back in and preserves chatId/runId/sub/question/connId for the next
+      # AwaitApproval visit, which mints a fresh task token.
+      Replan = {
+        Type     = "Task"
+        Resource = aws_lambda_function.research["plan"].arn
+        Parameters = {
+          "chatId.$"    = "$.chatId"
+          "runId.$"     = "$.runId"
+          "sub.$"       = "$.sub"
+          "connId.$"    = "$.connId"
+          "question.$"  = "$.question"
+          "priorPlan.$" = "$.plan"
+          "feedback.$"  = "$.feedback"
+        }
+        ResultPath = "$.plan"
+        Next       = "AwaitApproval"
       }
       # ItemsPath points at $.nextSubQuestions, not $.plan.subQuestions — the first wave
       # researches the approved plan's sub-questions (researchApprove.ts seeds

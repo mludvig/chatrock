@@ -28,9 +28,14 @@ export interface ReconResult {
   notes: string[]
 }
 
+// `recon` is set for the initial Plan (fresh from Recon's notes); `priorPlan`/`feedback` are
+// set instead for a Replan (the user hit "Revise" — see researchApprove.ts/CLAUDE.md's
+// "Plan approval gate"). plan.ts's handler branches on which pair is present.
 export interface PlanInput extends RunContext {
   question: string
-  recon: ReconResult
+  recon?: ReconResult
+  priorPlan?: PlanResult
+  feedback?: string
 }
 
 export interface PlanResult {
