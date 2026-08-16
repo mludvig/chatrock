@@ -1938,19 +1938,6 @@ $mobile: 720px;
   &:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
-// Composer's per-turn research depth picker — see docs/adr/0020-research-depth-and-budget-pacing.md
-.btn-research-depth {
-  background: none;
-  border: 1px solid $border;
-  color: #888;
-  cursor: pointer;
-  padding: 6px 8px;
-  font-size: 12px;
-  border-radius: 6px;
-  &:hover:not(:disabled) { color: #ccc; }
-  &:disabled { opacity: 0.4; cursor: not-allowed; }
-}
-
 // ── Preferences Panel ──────────────────────────────────────────────────────
 .prefs-panel {
   display: flex;
