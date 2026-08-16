@@ -55,14 +55,23 @@ function parseMemItems(raw: unknown): MemItem[] {
 // Exported for reuse by other defensive-JSON-parsing callers (e.g. lib/search.ts) — single
 // implementation of "strip code fences, parse, require a plain object" rather than duplicating it.
 export function safeParse(response: string | null | undefined): Record<string, unknown> | null {
-  try {
-    const cleaned = (response ?? '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
-    const parsed = JSON.parse(cleaned)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
-    return parsed as Record<string, unknown>
-  } catch {
-    return null
+  const cleaned = (response ?? '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+  const tryParse = (text: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(text)
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
+    } catch {
+      return null
+    }
   }
+  const direct = tryParse(cleaned)
+  if (direct) return direct
+  // Some models prepend a sentence of reasoning before the JSON object instead of
+  // emitting JSON-only output as instructed — fall back to the outermost {...} span
+  // rather than treating the whole prose+JSON string as unparseable.
+  const start = cleaned.indexOf('{')
+  const end = cleaned.lastIndexOf('}')
+  return start >= 0 && end > start ? tryParse(cleaned.slice(start, end + 1)) : null
 }
 
 // ── enrichUserFacts ───────────────────────────────────────────────────────────
