@@ -27,6 +27,15 @@ export type WSEvent =
   | { type: 'error';          message: string; responseId?: string; leafId?: string }
   | { type: 'warning';        message: string }
   | { type: 'heartbeat' }
+  // Deep Research progress frames — see backend/src/research/CLAUDE.md's "Progress
+  // frames and reconnect". Best-effort; GET /api/chats/{chatId}/research re-syncs.
+  | { type: 'research_plan';       runId: string; chatId: string; plan: { subQuestions: { id: string; question: string }[]; clarifyingQuestions: string[] } }
+  | { type: 'research_wave_start'; runId: string; chatId: string; subQuestions: { id: string; question: string }[] }
+  | { type: 'research_finding';    runId: string; chatId: string; subQuestionId: string; summary: string; sourceUrls: string[] }
+  | { type: 'research_assess';     runId: string; chatId: string; findingCount: number; done: boolean }
+  | { type: 'research_done';       runId: string; chatId: string; msgId: string; projectId?: string }
+  // Mid-flight steering ack — see ws/sendMessage.ts's active-run interception.
+  | { type: 'research_steering_noted'; runId: string; msgId: string }
 
 type EventHandler = (evt: WSEvent) => void
 export type ConnectionState = 'open' | 'connecting' | 'closed'
@@ -158,6 +167,27 @@ export function sendMessage(payload: {
 export function cancelMessage() {
   if (!socket || socket.readyState !== WebSocket.OPEN) return
   socket.send(JSON.stringify({ action: 'cancelMessage' }))
+}
+
+// Starts a Deep Research run — see backend/src/research/CLAUDE.md's "Invocation".
+// Returns {runId} via the WS route's Lambda response, not a pushed frame; the caller
+// awaits it like an HTTP call (see ChatView.tsx's handleSend deep-research branch).
+export function startResearch(payload: { chatId: string; question: string }) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    throw new Error('WebSocket not connected')
+  }
+  socket.send(JSON.stringify({ action: 'startResearch', ...payload }))
+}
+
+// Resolves the AwaitApproval task token — see "Plan approval gate" in
+// backend/src/research/CLAUDE.md. No "reject" decision; only approve/revise. `decision`,
+// not `action`, since the WS envelope's own `action: 'researchApprove'` is what API
+// Gateway's route selection matches on.
+export function researchApprove(payload: { chatId: string; runId: string; decision: 'approve' | 'revise'; feedback?: string }) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    throw new Error('WebSocket not connected')
+  }
+  socket.send(JSON.stringify({ action: 'researchApprove', ...payload }))
 }
 
 export function isConnected() {

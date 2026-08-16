@@ -52,6 +52,30 @@ export interface PendingSearch {
   projectId?: string
 }
 
+// Ephemeral (not persisted, see partialize below) live state for a chat's active Deep
+// Research run — mirrors backend/src/research/CLAUDE.md's WS progress frames. Hydrated
+// either from a `startResearch` response or `api.getResearchRun` on chat load/reconnect,
+// then updated in place as `research_*` WS frames arrive. Cleared on `research_done`.
+export interface ResearchPlan {
+  subQuestions: { id: string; question: string }[]
+  clarifyingQuestions: string[]
+}
+export interface ResearchFinding {
+  subQuestionId: string
+  summary: string
+  sourceUrls: string[]
+}
+export interface ActiveResearch {
+  runId: string
+  status: 'recon' | 'planning' | 'awaiting_approval' | 'running' | 'done' | 'failed'
+  question: string
+  plan: ResearchPlan | null
+  waveSubQuestions: { id: string; question: string }[]
+  findings: ResearchFinding[]
+  findingCount: number
+  done: boolean
+}
+
 interface ChatState {
   chats: Chat[]
   activeChatId: string | null
@@ -141,6 +165,11 @@ interface ChatState {
   getMessagesCache: (chatId: string) => CachedChatMessages | undefined
   setMessagesCache: (chatId: string, data: CachedChatMessages) => void
   invalidateMessagesCache: (chatId: string) => void
+
+  activeResearch: Record<string, ActiveResearch>
+  setActiveResearch: (chatId: string, run: ActiveResearch | null) => void
+  patchActiveResearch: (chatId: string, patch: Partial<ActiveResearch>) => void
+  addResearchFinding: (chatId: string, finding: ResearchFinding) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -208,6 +237,7 @@ export const useChatStore = create<ChatState>()(
       pendingSearch: null,
       messagesCache: {},
       cacheOrder: [],
+      activeResearch: {},
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -442,6 +472,30 @@ export const useChatStore = create<ChatState>()(
         const { [chatId]: _removed, ...messagesCache } = s.messagesCache
         void _removed
         return { messagesCache, cacheOrder: s.cacheOrder.filter(id => id !== chatId) }
+      }),
+
+      setActiveResearch: (chatId, run) => set((s) => {
+        if (run === null) {
+          const { [chatId]: _removed, ...activeResearch } = s.activeResearch
+          void _removed
+          return { activeResearch }
+        }
+        return { activeResearch: { ...s.activeResearch, [chatId]: run } }
+      }),
+      patchActiveResearch: (chatId, patch) => set((s) => {
+        const existing = s.activeResearch[chatId]
+        if (!existing) return {}
+        return { activeResearch: { ...s.activeResearch, [chatId]: { ...existing, ...patch } } }
+      }),
+      addResearchFinding: (chatId, finding) => set((s) => {
+        const existing = s.activeResearch[chatId]
+        if (!existing) return {}
+        return {
+          activeResearch: {
+            ...s.activeResearch,
+            [chatId]: { ...existing, findings: [...existing.findings, finding] },
+          },
+        }
       }),
     }),
     {

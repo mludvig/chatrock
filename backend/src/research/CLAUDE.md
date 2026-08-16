@@ -159,10 +159,14 @@ the same report/plan/findings/gaps shape as the dossier, at `summary` or `full` 
 `ResultPath`, so whatever `ws/researchApprove.ts` sends via `SendTaskSuccess` becomes the
 *entire* state for whatever comes next — not a merge with what came before.
 
-The WS `researchApprove` action takes `action: 'approve' | 'revise'` plus an optional
-freetext `feedback`. There is no "reject" — a user who dislikes the plan just abandons the
-chat; `AwaitApproval`'s 24h `TimeoutSeconds` fails the run cleanly on its own, so cleanup
-doesn't depend on a button click nobody reliably presses.
+The WS `researchApprove` action takes `decision: 'approve' | 'revise'` plus an optional
+freetext `feedback` — named `decision`, not `action`, since the envelope's own
+`action: 'researchApprove'` is what API Gateway's `route_selection_expression`
+(`$request.body.action`, `terraform/apigw_ws.tf`) matches on; reusing that key for the
+approve/revise choice would collide with routing. There is no "reject" — a user who
+dislikes the plan just abandons the chat; `AwaitApproval`'s 24h `TimeoutSeconds` fails the
+run cleanly on its own, so cleanup doesn't depend on a button click nobody reliably
+presses.
 
 - **`approve`** reconstructs `chatId`/`runId`/`sub`/`question`/`plan` plus fresh
   `findings: []`/`nextSubQuestions: plan.subQuestions`/`gapsNotPursued: []`/

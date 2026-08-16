@@ -13,7 +13,10 @@ interface WSEvent {
 interface ApproveBody {
   chatId: string
   runId: string
-  action: 'approve' | 'revise'
+  // Named "decision", not "action" — the WS envelope's own `action: 'researchApprove'`
+  // is what API Gateway's route_selection_expression ($request.body.action) matches on
+  // (terraform/apigw_ws.tf); reusing that key here would collide with routing.
+  decision: 'approve' | 'revise'
   // Freetext feedback. Required for "revise" (drives a Replan). Optional for "approve" —
   // if present it's folded in as steering for the first wave instead of triggering a
   // replan, per the plan's "approve, or revise, or go from there" design.
@@ -33,13 +36,13 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
   if (!conn) return { statusCode: 410, body: 'Gone' }
 
   const body = JSON.parse(event.body ?? '{}') as ApproveBody
-  const { chatId, runId, action, feedback } = body
+  const { chatId, runId, decision, feedback } = body
 
   const run = await getRun(chatId, runId)
   if (!run || run.sub !== conn.userSub) return { statusCode: 404, body: 'Not found' }
   if (run.status !== 'awaiting_approval' || !run.taskToken) return { statusCode: 409, body: 'Not awaiting approval' }
 
-  if (action === 'revise') {
+  if (decision === 'revise') {
     const trimmed = feedback?.trim()
     if (!trimmed) return { statusCode: 400, body: 'feedback is required to revise' }
 

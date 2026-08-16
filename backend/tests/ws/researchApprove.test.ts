@@ -37,14 +37,14 @@ beforeEach(() => jest.clearAllMocks())
 
 test('returns 410 when the connection is gone', async () => {
   mockDynamo.getConnection.mockResolvedValue(undefined)
-  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', action: 'approve' }))
+  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', decision: 'approve' }))
   expect((res as { statusCode: number }).statusCode).toBe(410)
 })
 
 test('returns 404 when the run belongs to a different user', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-2' })
   mockDynamo.getRun.mockResolvedValue(BASE_RUN)
-  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', action: 'approve' }))
+  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', decision: 'approve' }))
   expect((res as { statusCode: number }).statusCode).toBe(404)
   expect(mockSend).not.toHaveBeenCalled()
 })
@@ -52,7 +52,7 @@ test('returns 404 when the run belongs to a different user', async () => {
 test('returns 409 when the run is not awaiting approval', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
   mockDynamo.getRun.mockResolvedValue({ ...BASE_RUN, status: 'running' })
-  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', action: 'approve' }))
+  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', decision: 'approve' }))
   expect((res as { statusCode: number }).statusCode).toBe(409)
 })
 
@@ -60,7 +60,7 @@ test('approve: sends SendTaskSuccess with the full reconstructed state and trans
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
   mockDynamo.getRun.mockResolvedValue(BASE_RUN)
 
-  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', action: 'approve' }))
+  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', decision: 'approve' }))
 
   expect((res as { statusCode: number }).statusCode).toBe(200)
   expect(mockSend).toHaveBeenCalledTimes(1)
@@ -87,7 +87,7 @@ test('approve with feedback: feedback seeds steeringNotes instead of triggering 
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
   mockDynamo.getRun.mockResolvedValue(BASE_RUN)
 
-  await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', action: 'approve', feedback: '  Focus on 1990s  ' }))
+  await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', decision: 'approve', feedback: '  Focus on 1990s  ' }))
 
   const call = mockSend.mock.calls[0][0]
   expect(JSON.parse(call.input.output).steeringNotes).toEqual(['Focus on 1990s'])
@@ -97,7 +97,7 @@ test('revise: sends SendTaskSuccess with revise:true and feedback, and leaves st
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
   mockDynamo.getRun.mockResolvedValue(BASE_RUN)
 
-  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', action: 'revise', feedback: 'Change point 2 to XYZ' }))
+  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', decision: 'revise', feedback: 'Change point 2 to XYZ' }))
 
   expect((res as { statusCode: number }).statusCode).toBe(200)
   const call = mockSend.mock.calls[0][0]
@@ -119,7 +119,7 @@ test('revise without feedback returns 400 and sends nothing', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
   mockDynamo.getRun.mockResolvedValue(BASE_RUN)
 
-  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', action: 'revise', feedback: '   ' }))
+  const res = await handler(makeEvent({ chatId: 'chat-1', runId: 'run-1', decision: 'revise', feedback: '   ' }))
 
   expect((res as { statusCode: number }).statusCode).toBe(400)
   expect(mockSend).not.toHaveBeenCalled()
