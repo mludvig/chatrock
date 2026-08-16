@@ -44,3 +44,23 @@ test('plan handler — de-duplicates a repeated or missing sub-question id', asy
   expect(new Set(ids).size).toBe(3)
   expect(result.subQuestions.map(sq => sq.question)).toEqual(['First', 'Second', 'Third'])
 })
+
+test('plan handler — revise mode (priorPlan + feedback) sends the plan and feedback instead of recon notes', async () => {
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    clarifyingQuestions: [],
+    subQuestions: [{ id: 'sq1', question: 'Revised question?' }],
+  }))
+  const priorPlan = { subQuestions: [{ id: 'sq1', question: 'Original question?' }], clarifyingQuestions: [] }
+
+  const result = await handler({
+    chatId: 'chat-1', runId: 'run-1', sub: 'user-1', question: 'what is X',
+    priorPlan, feedback: 'Change point 2 to XYZ',
+  })
+
+  expect(result.subQuestions).toEqual([{ id: 'sq1', question: 'Revised question?' }])
+  const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content[0] as { text: string }).text
+  expect(userMsg).toContain('CURRENT PLAN')
+  expect(userMsg).toContain('Original question?')
+  expect(userMsg).toContain('USER FEEDBACK ON THE PLAN: Change point 2 to XYZ')
+  expect(userMsg).not.toContain('RECON NOTES')
+})

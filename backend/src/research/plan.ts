@@ -11,18 +11,32 @@ interface RawSubQuestion {
   question?: unknown
 }
 
-// Step Functions Task state "Plan" (terraform/research.tf) — proposes clarifying
-// questions and sub-questions from the question + Recon's notes; shown in chat and
-// blocks on user approval (the following "AwaitApproval" state).
+// Step Functions Task state "Plan" and "Replan" (terraform/research.tf) share this
+// handler. "Plan" proposes clarifying questions and sub-questions from the question +
+// Recon's notes; "Replan" runs when the user hits "Revise" on the approval gate
+// (event.priorPlan/event.feedback set instead of event.recon) and produces an updated
+// plan from the same free-text feedback. Either way the result is shown in chat and
+// blocks on user approval (the "AwaitApproval" state).
 export const handler = async (event: PlanInput): Promise<PlanResult> => {
-  console.log(JSON.stringify({ event: 'research_plan_start', runId: event.runId, chatId: event.chatId }))
+  console.log(JSON.stringify({ event: 'research_plan_start', runId: event.runId, chatId: event.chatId, revise: !!event.priorPlan }))
 
-  const userMsg = [
-    `QUESTION: ${event.question}`,
-    ``,
-    `RECON NOTES:`,
-    event.recon.notes.length > 0 ? event.recon.notes.join('\n\n') : '(none)',
-  ].join('\n')
+  const userMsg = event.priorPlan
+    ? [
+        `QUESTION: ${event.question}`,
+        ``,
+        `CURRENT PLAN:`,
+        JSON.stringify(event.priorPlan),
+        ``,
+        `USER FEEDBACK ON THE PLAN: ${event.feedback}`,
+        ``,
+        `Revise the plan to address the feedback.`,
+      ].join('\n')
+    : [
+        `QUESTION: ${event.question}`,
+        ``,
+        `RECON NOTES:`,
+        event.recon && event.recon.notes.length > 0 ? event.recon.notes.join('\n\n') : '(none)',
+      ].join('\n')
 
   const response = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_PLAN_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },

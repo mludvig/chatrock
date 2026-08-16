@@ -24,7 +24,8 @@ drift, the ADR wins and this file should be corrected to match.
 ```
 Recon        cheap searches to find out what the question actually involves
 Plan         clarifying questions + sub-questions, shown in chat
-[approve]    user edits/approves via WS `researchApprove` — resumes the state machine
+[approve]    user approves (optionally with steering feedback) or revises via WS
+             `researchApprove` — revise loops back through Replan into another Plan
 Wave         N researchers in parallel (Step Functions Map, MaxConcurrency 3)
 Assess       supervisor reads all findings + steering notes -> more waves, or done
 Report       synthesised, cited answer -> persisted as a normal assistant turn
@@ -32,8 +33,8 @@ Report       synthesised, cited answer -> persisted as a normal assistant turn
 
 `terraform/research.tf`'s `local.research_definition` is the literal ASL for this — read
 it alongside this file, it's the actual source of truth for state names/transitions.
-State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessChoice`,
-`Report`) are referenced below by the same names.
+State names there (`Recon`, `Plan`, `AwaitApproval`, `ApprovalChoice`, `Replan`, `Wave`,
+`Assess`, `AssessChoice`, `Report`) are referenced below by the same names.
 
 ## Files
 
@@ -41,7 +42,7 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 |------|----------|--------|
 | `types.ts` | — | Shared `*Input`/`*Result` types, one pair per state, plus `RunRow` (the `RUN#` DynamoDB row shape). Every handler's signature is `(event: XInput) => Promise<XResult>` — Step Functions passes each state's `ResultPath`-merged JSON straight through as the next state's input, no envelope. |
 | `recon.ts` | `Recon` | Runs one `web_search` call (via `lib/tools.ts`'s `executeTool`) to ground the Plan step in something more than the raw question. Notes are the search result's text entries; an error result yields `notes: []` rather than throwing. |
-| `plan.ts` | `Plan` | Calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`, prompt in `prompts/research-plan.txt`) to produce `clarifyingQuestions` + `subQuestions` from the question + Recon's notes. Sub-questions with no `question` text are dropped; a missing or duplicate `id` is replaced with a fresh `newId()`. |
+| `plan.ts` | `Plan`, `Replan` | Calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`, prompt in `prompts/research-plan.txt`) to produce `clarifyingQuestions` + `subQuestions`, either from the question + Recon's notes (`Plan`) or from the prior plan + the user's freetext feedback (`Replan`, when `event.priorPlan` is set — see "Plan approval gate" below). Sub-questions with no `question` text are dropped; a missing or duplicate `id` is replaced with a fresh `newId()`. |
 | `awaitApproval.ts` | `AwaitApproval` | Persists `question`/`plan`/`taskToken` onto the `RUN#` row (via `updateRun`, upserting the row on its first write) with `status: 'awaiting_approval'` and the `findings`/`gapsNotPursued`/`steeringNotes`/`roundsSpent` defaults the downstream states need. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation, `ws/researchApprove.ts`, does. |
 | `researcher.ts` | `Wave` (Map iterator) | Runs one bounded `converseStream` (`lib/llm/loop.ts`, `extended`/8-round budget) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with only `web_search`/`web_fetch` enabled (no memory/project/image tools — a researcher has no chat context to draw on) and no WS connection to stream to. The system prompt (`prompts/research-researcher.txt`) asks for one final JSON turn — `{summary, sourceUrls}` — which is `safeParse`d the same way `plan.ts` parses its JSON; malformed output falls back to `{summary: <raw text>, sourceUrls: []}` rather than throwing. Steering notes, if any, are appended to the sub-question in the initial user message. |
 | `assess.ts` | `Assess` | Flattens this wave's raw `waveFindings` into `Finding[]` (`item.result.finding`), merges into the running `findings` total, then calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out, prompt in `prompts/research-assess.txt`) to decide `done` vs. `nextSubQuestions` for another wave. `gapsNotPursued` accumulates across rounds; `steeringNotes` are cleared every round (consumed, not carried forward). Malformed model output falls back to `done: true` rather than looping forever. Like `AwaitApproval`, this state has no `ResultPath` — the handler's return value (`AssessResult`) is the *entire* next state, so it must re-emit every field `Wave`/`Report` need, not just its own verdict. |
@@ -156,18 +157,29 @@ the same report/plan/findings/gaps shape as the dossier, at `summary` or `full` 
 
 `AwaitApproval` (`terraform/research.tf`) uses `.waitForTaskToken` and has no
 `ResultPath`, so whatever `ws/researchApprove.ts` sends via `SendTaskSuccess` becomes the
-*entire* state for `Wave`/`Assess`/`Report` — not a merge with what came before. That's why
-`researchApprove.ts` reconstructs `chatId`/`runId`/`sub`/`question`/`plan` plus fresh
-`findings: []`/`nextSubQuestions: plan.subQuestions`/`gapsNotPursued: []`/
-`steeringNotes: []`/`roundsSpent: 0`, rather than sending just the (possibly user-edited)
-plan.
+*entire* state for whatever comes next — not a merge with what came before.
+
+The WS `researchApprove` action takes `action: 'approve' | 'revise'` plus an optional
+freetext `feedback`. There is no "reject" — a user who dislikes the plan just abandons the
+chat; `AwaitApproval`'s 24h `TimeoutSeconds` fails the run cleanly on its own, so cleanup
+doesn't depend on a button click nobody reliably presses.
+
+- **`approve`** reconstructs `chatId`/`runId`/`sub`/`question`/`plan` plus fresh
+  `findings: []`/`nextSubQuestions: plan.subQuestions`/`gapsNotPursued: []`/
+  `roundsSpent: 0`, transitions the row to `running`, and starts `Wave`. If `feedback` is
+  present it seeds `steeringNotes: [feedback]` instead of `[]` — "approve, but also keep
+  this in mind" doesn't need a full replan.
+- **`revise`** sends `{revise: true, feedback, plan, ...}` and leaves the row at
+  `awaiting_approval`. `ApprovalChoice` (`terraform/research.tf`) branches on `$.revise` to
+  `Replan` — the same `plan.ts` handler, invoked with `priorPlan`/`feedback` instead of
+  `recon` (see plan.ts's header comment) — which produces a revised plan and loops back into
+  `AwaitApproval`, minting a fresh task token for a second wait cycle. `ApprovalChoice`
+  falls through to `Wave` when `$.revise` is absent (the `approve` path never sets it).
 
 `researchApprove.ts` trusts `getConnection(connId).userSub` (the pattern every WS action
-handler post-`$connect` uses) for the ownership check against the `RUN#` row's `sub`, then
-either `SendTaskFailureCommand` (rejected — transitions the row to `failed`) or
-`SendTaskSuccessCommand` (approved, optionally with an edited plan — transitions the row to
-`running`). A `status !== 'awaiting_approval'` or missing `taskToken` on the row is a 409,
-guarding against a stale or replayed approval.
+handler post-`$connect` uses) for the ownership check against the `RUN#` row's `sub`. A
+`status !== 'awaiting_approval'` or missing `taskToken` on the row is a 409, guarding
+against a stale or replayed approval; a `revise` with blank/missing `feedback` is a 400.
 
 ## Progress frames and reconnect
 

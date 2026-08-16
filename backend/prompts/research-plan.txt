@@ -15,3 +15,8 @@ Rules:
   Each id must be unique within the list.
 - Ground the plan in the recon notes where they're informative, but don't invent facts —
   the sub-questions are what still needs investigating, not conclusions.
+
+If you are instead given a CURRENT PLAN and USER FEEDBACK ON THE PLAN (a revision
+request), produce a revised plan that addresses the feedback — reuse sub-question ids
+that are unchanged, drop or reword ones the feedback objects to, and add new ones the
+feedback asks for. Same output shape either way.
