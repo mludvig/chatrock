@@ -1,4 +1,4 @@
-import { enrichUserFacts, enrichProjectFacts, summarizeChat, summarizeChatById, generateChatTitle } from '../../src/lib/enrichment'
+import { enrichUserFacts, enrichProjectFacts, summarizeChat, summarizeChatById, generateChatTitle, safeParse } from '../../src/lib/enrichment'
 import * as bedrock from '../../src/lib/bedrock'
 import * as dynamo from '../../src/lib/dynamo'
 import * as treeLib from '../../src/lib/tree'
@@ -23,6 +23,25 @@ beforeEach(() => jest.clearAllMocks())
 const TRANSCRIPT = 'User: Hi, I am Alice from Wellington.\nAssistant: Nice to meet you!'
 const EXISTING_USER_MEMS = [{ memId: 'mem-1', category: 'identity', text: 'User is a software engineer' }]
 const EXISTING_PROJECT_MEMS = [{ memId: 'proj-1', category: 'decision', text: 'Deploy via ./deploy.sh' }]
+
+// ── safeParse ────────────────────────────────────────────────────────────────
+
+test('safeParse — parses clean JSON directly', () => {
+  expect(safeParse('{"summary": "hi", "sourceUrls": []}')).toEqual({ summary: 'hi', sourceUrls: [] })
+})
+
+test('safeParse — extracts the outermost {...} span when the model prepends a sentence before the JSON', () => {
+  const raw = 'I have sufficient information to answer now.\n\n{"summary": "hi", "sourceUrls": []}'
+  expect(safeParse(raw)).toEqual({ summary: 'hi', sourceUrls: [] })
+})
+
+test('safeParse — returns null when no JSON object is present', () => {
+  expect(safeParse('just plain prose, no braces here')).toBeNull()
+})
+
+test('safeParse — returns null for a bare array even after brace extraction', () => {
+  expect(safeParse('here you go: [1, 2, 3]')).toBeNull()
+})
 
 // ── enrichUserFacts ───────────────────────────────────────────────────────────
 

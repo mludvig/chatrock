@@ -78,6 +78,7 @@ test('approve: sends SendTaskSuccess with the full reconstructed state and trans
     gapsNotPursued: [],
     steeringNotes: [],
     roundsSpent: 0,
+    revise: false,
     connId: 'conn-1',
   })
   expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { status: 'running', plan: BASE_RUN.plan, connId: 'conn-1' })
