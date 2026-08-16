@@ -137,6 +137,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
   const pendingNewChatIdRef = useRef<string | null>(null)
+  // The chatId the in-flight stream actually belongs to — distinct from the chatId
+  // currently being *viewed*, which can diverge the moment the user navigates to a
+  // different chat mid-stream. Everything stream-related (applying deltas, finalizing,
+  // the messages-load effect's optimistic-bubble guard) checks this against the viewed
+  // chatId rather than assuming they're always the same chat.
+  // See docs/adr/0022-per-chat-stream-identity.md.
+  const streamingChatIdRef = useRef<string | null>(null)
   // Debounce refs for the Chat details dialog's system-prompt/model-settings edits
   // (moved here from the old PreferencesPanel "This chat" tab — same 800ms pattern).
   const chatInstructionsDebounceRef = useRef<number | null>(null)
@@ -328,6 +335,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       if (opts?.force) {
         clearStream()
         setSending(false)
+        streamingChatIdRef.current = null
       }
     }).catch(() => {})
   }, [setMessages, clearStream, setSending])
@@ -504,11 +512,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         clearIdleTimer()
         finalizeStream()
         setSending(false)
-        // Hydrate real msgId/parentId on the just-streamed answer so every
-        // bubble is immediately re-runnable without a page reload.
-        const currentId = chatIdRef.current
-        if (currentId && currentId !== 'new') {
-          reloadMessages(currentId)
+        // Hydrate real msgId/parentId on the just-streamed answer so every bubble is
+        // immediately re-runnable without a page reload. Reload the chat the stream
+        // actually belonged to, not whatever chat happens to be viewed right now — if
+        // they differ, just invalidate its cache so the next visit fetches fresh.
+        // See docs/adr/0022-per-chat-stream-identity.md.
+        const streamedId = streamingChatIdRef.current
+        streamingChatIdRef.current = null
+        if (streamedId) {
+          if (streamedId === chatIdRef.current) {
+            reloadMessages(streamedId)
+          } else {
+            useChatStore.getState().invalidateMessagesCache(streamedId)
+          }
         }
       } else if (evt.type === 'titleUpdated') {
         renameChat(evt.chatId, evt.title)
@@ -528,11 +544,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         finalizeStreamErrored()
         setSending(false)
         setErrorMsg(evt.message)
-        // Reload to hydrate the real msgId/parentId/errored flag from DDB
-        // (backend now persists the partial turn and advances activeLeafId on error)
-        const currentId = chatIdRef.current
-        if (currentId && currentId !== 'new') {
-          reloadMessages(currentId)
+        // Reload to hydrate the real msgId/parentId/errored flag from DDB (backend now
+        // persists the partial turn and advances activeLeafId on error) — targeting the
+        // chat the stream belonged to, same as the done/cancelled branch above.
+        const streamedId = streamingChatIdRef.current
+        streamingChatIdRef.current = null
+        if (streamedId) {
+          if (streamedId === chatIdRef.current) {
+            reloadMessages(streamedId)
+          } else {
+            useChatStore.getState().invalidateMessagesCache(streamedId)
+          }
         }
       }
     })
@@ -553,9 +575,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setOldestMsgId(null)
       return
     }
-    // Don't clobber the optimistic messages while a stream is in flight
-    // (e.g. new-chat navigate fires this effect with sending=true)
-    if (useChatStore.getState().sending) return
+    // Don't clobber the optimistic messages while a stream is in flight *for this chat*
+    // (e.g. new-chat navigate fires this effect with sending=true). If some other chat is
+    // streaming, this chat's own cache/fetch below is unaffected — see
+    // docs/adr/0022-per-chat-stream-identity.md.
+    if (useChatStore.getState().sending && streamingChatIdRef.current === chatId) return
 
     // Cache hit (this chat was opened earlier in the session): show it instantly, no
     // spinner, no network round trip — this is the common "switch back and forth
@@ -580,7 +604,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setLoadingMessages(true)
     let cancelled = false
     api.listMessages(chatId).then(r => {
-      if (cancelled || useChatStore.getState().sending) return
+      if (cancelled || (useChatStore.getState().sending && streamingChatIdRef.current === chatId)) return
       const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
@@ -674,7 +698,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       if (document.visibilityState === 'hidden') return
       ensureConnected(accessToken).catch(() => {})
       const id = chatIdRef.current
-      if (useChatStore.getState().sending && id && id !== 'new') {
+      // Only force a reconcile when this tab is actually looking at the chat the
+      // in-flight stream belongs to — refocusing on an unrelated chat shouldn't touch it.
+      if (useChatStore.getState().sending && id && id !== 'new' && streamingChatIdRef.current === id) {
         clearAckTimer()
         clearIdleTimer()
         reloadMessages(id, { force: true })
@@ -813,6 +839,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // drop the old answer and any later messages from view.
     const cut = messages.findIndex(m => m.msgId === parentId)
     if (cut >= 0) setMessages(messages.slice(0, cut + 1))
+    streamingChatIdRef.current = chatId!
     startStream()
     pendingScrollTopRef.current = true
 
@@ -839,6 +866,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setSending(true)
     setErrorMsg(null)
     setLastTurnUsage(null)
+    streamingChatIdRef.current = chatId!
     startStream()
     pendingScrollTopRef.current = true
 
@@ -1005,14 +1033,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setCreatingChat(true)
       const model = newModel || defaultModel
       const systemPrompt = draftSystemPrompt
+      const newChatId = pendingNewChatIdRef.current ?? newId()
 
+      streamingChatIdRef.current = newChatId
       setSending(true)
       setMessages([optimisticUser])
       startStream()
       pendingScrollTopRef.current = true
 
       try {
-        const newChatId = pendingNewChatIdRef.current ?? newId()
         const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, effectiveProjectId, { sensitive: draftSensitive, ephemeral: draftEphemeral })
         pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
@@ -1059,6 +1088,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       const idx = messages.findIndex(m => 'msgId' in m && m.msgId === editMsgId)
       const base = idx >= 0 ? messages.slice(0, idx) : messages
       setMessages([...base, optimisticUser])
+      streamingChatIdRef.current = chatId!
       startStream()
       pendingScrollTopRef.current = true
       try {
@@ -1085,6 +1115,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       ...messages,
       optimisticUser,
     ])
+    streamingChatIdRef.current = chatId!
     startStream()
     pendingScrollTopRef.current = true
 
@@ -1224,7 +1255,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
   }
 
-  const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
+  // streamingMsg is a single global slot — only splice it into this chat's view when
+  // this is actually the chat the in-flight stream belongs to (see streamingChatIdRef).
+  const allMessages = [...messages, ...(streamingMsg && streamingChatIdRef.current === chatId ? [streamingMsg] : [])]
 
   const sensitive = isNew ? draftSensitive : !!activeChat?.sensitive
   const ephemeral = isNew ? draftEphemeral : !!activeChat?.ephemeral
@@ -1541,13 +1574,26 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             </button>
           )}
           {sending ? (
-            <button
-              className="btn-send btn-stop"
-              onClick={handleStop}
-              title="Stop generating"
-            >
-              <FontAwesomeIcon icon={faStop} />
-            </button>
+            // A stream in flight is global (one at a time app-wide), but it may belong to
+            // a chat other than the one currently viewed — don't let Stop here cancel some
+            // other chat's answer. See docs/adr/0022-per-chat-stream-identity.md.
+            streamingChatIdRef.current === chatId ? (
+              <button
+                className="btn-send btn-stop"
+                onClick={handleStop}
+                title="Stop generating"
+              >
+                <FontAwesomeIcon icon={faStop} />
+              </button>
+            ) : (
+              <button
+                className="btn-send btn-stop"
+                disabled
+                title="Another chat is still generating a response"
+              >
+                <FontAwesomeIcon icon={faStop} />
+              </button>
+            )
           ) : (
             <button
               className="btn-send"
