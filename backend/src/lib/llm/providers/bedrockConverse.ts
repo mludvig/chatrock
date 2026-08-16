@@ -282,15 +282,22 @@ export async function converseOnce(
   messages: Message[],
   options?: { maxTokens?: number },
 ): Promise<string> {
+  const caps = getCapabilities(modelId)
+  // This is a one-shot deterministic-output helper (title/summary/JSON extraction) —
+  // never reasoning. On the 5-series models, Bedrock auto-emits a reasoningContent
+  // block even when `thinking` is never requested, which both eats the maxTokens
+  // budget and shifts the real text block off index 0 — explicitly disable it.
+  const additionalModelRequestFields = caps.thinking !== 'none' ? { thinking: { type: 'disabled' } } : undefined
   const cmd = new ConverseCommand({
     modelId,
     system: systemPrompt ? [{ text: systemPrompt }] : undefined,
     messages,
     inferenceConfig: { maxTokens: options?.maxTokens ?? 64 },
+    additionalModelRequestFields,
   })
   await ensureBedrockAuth()
   const res = await bedrockClient.send(cmd)
-  const block = res.output?.message?.content?.[0]
+  const block = res.output?.message?.content?.find(b => 'text' in b)
   if (block && 'text' in block) return (block.text ?? '').trim()
   return ''
 }
