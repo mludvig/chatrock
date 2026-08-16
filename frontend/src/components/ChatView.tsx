@@ -589,6 +589,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // content with the live streaming bubble wrongly appended underneath. See
     // docs/adr/0022-per-chat-stream-identity.md.
     if (useChatStore.getState().sending && streamingChatIdRef.current === chatId) {
+      // idleTimerRef is local to this mount and died with whatever component instance
+      // was showing this chat before we navigated away — restart it now so a still-idle
+      // wait (e.g. mid tool-call) shows "Processing…" again instead of looking stalled
+      // until the next WS event happens to fire.
+      bumpIdleTimer()
       setMessages(streamingBaseMessagesRef.current)
       setLoadingMessages(false)
       return
