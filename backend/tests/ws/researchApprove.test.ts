@@ -17,6 +17,8 @@ jest.mock('../../src/lib/dynamo', () => ({
   updateRun: jest.fn(),
 }))
 
+jest.mock('../../src/lib/wsNotify', () => ({ notifyConnection: jest.fn() }))
+
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
 const makeEvent = (body: object, connId = 'conn-1') => ({
@@ -77,8 +79,9 @@ test('approved: sends SendTaskSuccess with the full reconstructed state and tran
     gapsNotPursued: [],
     steeringNotes: [],
     roundsSpent: 0,
+    connId: 'conn-1',
   })
-  expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { status: 'running', plan: BASE_RUN.plan })
+  expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { status: 'running', plan: BASE_RUN.plan, connId: 'conn-1' })
 })
 
 test('approved with an edited plan: the edited plan is what gets sent and persisted', async () => {
@@ -90,7 +93,7 @@ test('approved with an edited plan: the edited plan is what gets sent and persis
 
   const call = mockSend.mock.calls[0][0]
   expect(JSON.parse(call.input.output).plan).toEqual(editedPlan)
-  expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { status: 'running', plan: editedPlan })
+  expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { status: 'running', plan: editedPlan, connId: 'conn-1' })
 })
 
 test('rejected: sends SendTaskFailure and transitions to failed', async () => {

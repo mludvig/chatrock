@@ -8,8 +8,10 @@ with a working round cap, `ws/sendMessage.ts` intercepts mid-flight steering mes
 an active run, `report` synthesises the cited final answer, persists it as a normal
 assistant turn, and writes the findings dossier as a project file, and a sensitive chat
 gets neither — its findings stay chat-scoped and are read back via the
-`read_research_findings` tool. Read this file before touching anything in this directory;
-it is kept up to date as each handler is filled in.
+`read_research_findings` tool. The WS `startResearch` action starts a run, every state
+pushes a best-effort progress frame, and `GET /api/chats/{chatId}/research` re-syncs a
+client that missed one. Read this file before touching anything in this directory; it is
+kept up to date as each handler is filled in.
 
 See root `CLAUDE.md`'s "Architecture decisions" pointer and
 `docs/adr/0023-deep-research-step-functions-orchestration.md` for why this is a Step
@@ -44,6 +46,7 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 | `researcher.ts` | `Wave` (Map iterator) | Runs one bounded `converseStream` (`lib/llm/loop.ts`, `extended`/8-round budget) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with only `web_search`/`web_fetch` enabled (no memory/project/image tools — a researcher has no chat context to draw on) and no WS connection to stream to. The system prompt (`prompts/research-researcher.txt`) asks for one final JSON turn — `{summary, sourceUrls}` — which is `safeParse`d the same way `plan.ts` parses its JSON; malformed output falls back to `{summary: <raw text>, sourceUrls: []}` rather than throwing. Steering notes, if any, are appended to the sub-question in the initial user message. |
 | `assess.ts` | `Assess` | Flattens this wave's raw `waveFindings` into `Finding[]` (`item.result.finding`), merges into the running `findings` total, then calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out, prompt in `prompts/research-assess.txt`) to decide `done` vs. `nextSubQuestions` for another wave. `gapsNotPursued` accumulates across rounds; `steeringNotes` are cleared every round (consumed, not carried forward). Malformed model output falls back to `done: true` rather than looping forever. Like `AwaitApproval`, this state has no `ResultPath` — the handler's return value (`AssessResult`) is the *entire* next state, so it must re-emit every field `Wave`/`Report` need, not just its own verdict. |
 | `report.ts` | `Report` | Calls Bedrock once (`DEFAULT_CHAT_MODEL`, plain markdown out — no `safeParse`, this is prose not JSON — prompt in `prompts/research-report.txt`) over the accumulated `findings`/`gapsNotPursued` to write the cited final answer, then persists it as a normal assistant turn: `getChat` for the chat's current `activeLeafId` (used as `parentId`, `null` if unset), `putMessage` with a fresh `msgId`/`responseId` (same `uuidv4()` convention `ws/sendMessage.ts` uses for turn ids, not `newId()`), then `updateChatActiveLeaf` so it becomes the new leaf. `updateRun` sets `status: 'done'` and stores `reportText` on the `RUN#` row in the same call. Then `writeDossier()` writes the findings as a project file — see "The research dossier" below. |
+| `ws/startResearch.ts` | — (starts the execution) | WS action `startResearch`, outside the state machine itself. Mints a `runId` (`newId()`), writes the initial `RUN#` row (`status: 'recon'`), and calls `StartExecutionCommand` with `{chatId, runId, sub, question, connId}` as the execution input — see "Invocation" below. |
 
 ## Data model
 
@@ -67,10 +70,13 @@ unqualified and therefore already recursive, so it picks up anything under the
 
 ## Invocation
 
-Nothing starts a `chatrock-research-<env>` execution yet — that wiring (the composer's
-Deep Research picker choice -> `StartExecution`; `terraform/iam.tf`'s
-`StartResearchExecution` statement is the permission, not the call site) is a
-not-yet-written WS action.
+The composer's Deep Research picker sends WS action `startResearch` — `{chatId, question}`
+— to `ws/startResearch.ts` (`terraform/iam.tf`'s `StartResearchExecution` statement is
+what lets it call `StartExecutionCommand`). It 410s on a gone connection and 400s on a
+missing/blank `chatId`/`question`; on success it writes the `RUN#` row and starts the
+`chatrock-research-<env>` execution at `Recon`, returning `{runId}`. The connecting
+Lambda's own `connId` is threaded into the execution input from here (see "Progress frames
+and reconnect" below) — no other Lambda originates it.
 
 ## The wave loop
 
@@ -163,18 +169,59 @@ either `SendTaskFailureCommand` (rejected — transitions the row to `failed`) o
 `running`). A `status !== 'awaiting_approval'` or missing `taskToken` on the row is a 409,
 guarding against a stale or replayed approval.
 
+## Progress frames and reconnect
+
+Every state pushes a best-effort WS frame via `lib/wsNotify.ts`'s `notifyConnection(connId,
+data)`, which swallows any failure (dead/expired connection, etc.) — the `RUN#` row is
+always the source of truth, these frames are a live-UI convenience only:
+
+| `type` | Pushed by | Payload |
+|--------|-----------|---------|
+| `research_plan` | `plan.ts` | `runId`, `chatId`, `plan: {subQuestions, clarifyingQuestions}` |
+| `research_wave_start` | `researchApprove.ts` (first wave), `assess.ts` (subsequent waves) | `runId`, `chatId`, `subQuestions` |
+| `research_finding` | `researcher.ts`, once per sub-question | `runId`, `chatId`, `subQuestionId`, `summary`, `sourceUrls` |
+| `research_assess` | `assess.ts`, every round | `runId`, `chatId`, `findingCount`, `done` |
+| `research_done` | `report.ts` | `runId`, `chatId`, `msgId`, `projectId` |
+
+**`connId` provenance**: `startResearch.ts` sets it initially from the connection that
+started the run. `researchApprove.ts` refreshes it to whichever connection performed the
+approval, since that may be a different tab/reconnect than the original starter — both
+persist it back to the `RUN#` row via `updateRun` and re-emit it in their state output.
+Because `AwaitApproval`'s `SendTaskSuccess` and `Assess`'s return value both replace the
+*entire* next state (no `ResultPath` — see "Plan approval gate" above and "The wave loop"),
+omitting `connId` from either would silently drop it from every downstream state; both
+`researchApprove.ts` and every branch of `assess.ts` explicitly re-emit it for this reason.
+`awaitApproval.ts`'s own `updateRun` call does not touch `connId` — it passively inherits
+whatever `startResearch.ts` originally wrote, which is what's wanted since no connection
+has re-approved anything at that point yet.
+
+**Re-sync**: `assess.ts` also writes `findings`/`gapsNotPursued`/`roundsSpent` to the
+`RUN#` row via `updateRun` on every round (both the parse-error and success branches) —
+without this, the row only changes at `awaitApproval.ts` (first write) and `report.ts`
+(terminal), leaving every intermediate wave invisible to a client that reconnects mid-run.
+`GET /api/chats/{chatId}/research` (`http/chats.ts`) reads that row back: it prefers
+`getActiveRun(chatId)` (the in-flight run, if any), falling back to the most recently
+created row from `listRuns(chatId)` so a client that reconnects just after a run finished
+still sees the completed report rather than `{run: null}`. Phase 2's refocus handler
+(`frontend/src/api/ws.ts`) calls this route to catch up on anything a dropped WS frame
+missed.
+
 ## Env vars available to every handler
 
 Same `local.lambda_env_base` every other backend Lambda gets (`terraform/lambda.tf`) —
 `DYNAMO_TABLE`, Bedrock creds/region, `ATTACHMENTS_BUCKET`, etc. — since these Lambdas
 share `aws_iam_role.lambda`, the same execution role as `ws/sendMessage.ts` and the HTTP
-handlers. No research-specific env vars exist yet; the state machine's own ARN is not
-currently injected into any Lambda's environment (not needed until something needs to
-call `DescribeExecution`/`StopExecution` on itself, which no handler does today).
+handlers. `lib/wsNotify.ts` additionally reads `WS_MANAGEMENT_ENDPOINT` (part of
+`lambda_env_base`) to construct its `ApiGatewayManagementApiClient` — every research
+handler that calls `notifyConnection` relies on this. `ws/startResearch.ts` is the only
+Lambda in this directory with its own extra env var, `RESEARCH_STATE_MACHINE_ARN`, since
+it's the one that calls `StartExecution`; every other research Lambda just runs as a Task
+the state machine invokes and never needs its own ARN.
 
 ## Build
 
 Each handler is its own esbuild entry point in `backend/esbuild.config.mjs`
 (`research-recon`, `research-plan`, `research-awaitApproval`, `research-researcher`,
-`research-assess`, `research-report`), bundled to `terraform/dist/<name>.zip` exactly like
-every other Lambda in this repo — nothing special about these six.
+`research-assess`, `research-report`, plus `ws-startResearch` for the WS action that
+starts the execution), bundled to `terraform/dist/<name>.zip` exactly like every other
+Lambda in this repo — nothing special about these.

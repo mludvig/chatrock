@@ -9,6 +9,10 @@ export interface RunContext {
   chatId: string
   runId: string
   sub: string
+  // The WS connection that started the run, threaded through every state so a handler can
+  // push a best-effort progress frame (lib/wsNotify.ts) without a round-trip to the RUN# row.
+  // Optional: a handler invoked without it (e.g. a stale/reconnected run) just skips the push.
+  connId?: string
 }
 
 export interface SubQuestion {

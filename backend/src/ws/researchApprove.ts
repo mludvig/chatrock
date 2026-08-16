@@ -1,6 +1,7 @@
 import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { SFNClient, SendTaskSuccessCommand, SendTaskFailureCommand } from '@aws-sdk/client-sfn'
 import { getConnection, getRun, updateRun } from '../lib/dynamo'
+import { notifyConnection } from '../lib/wsNotify'
 import type { PlanResult } from '../research/types'
 
 const sfn = new SFNClient({})
@@ -59,9 +60,13 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
       gapsNotPursued: [],
       steeringNotes: [],
       roundsSpent: 0,
+      // The approving connection, not necessarily the one that started the run — refreshes
+      // where Wave/Assess push progress frames if the user reconnected from another tab.
+      connId,
     }),
   }))
-  await updateRun(chatId, runId, { status: 'running', plan })
+  await updateRun(chatId, runId, { status: 'running', plan, connId })
+  await notifyConnection(connId, { type: 'research_wave_start', runId, chatId, subQuestions: plan.subQuestions })
   console.log(JSON.stringify({ event: 'research_approve_started', runId, chatId }))
   return { statusCode: 200, body: '' }
 }

@@ -10,6 +10,7 @@ import { projectFilePrefix } from '../lib/attachments'
 import { summarizeFile } from '../lib/projectFiles'
 import { summarizeChatById, enrichProjectFactsByChatId } from '../lib/enrichment'
 import { newId } from '../lib/ids'
+import { notifyConnection } from '../lib/wsNotify'
 import { v4 as uuidv4 } from 'uuid'
 import RESEARCH_REPORT_SYSTEM_PROMPT from '../../prompts/research-report.txt'
 
@@ -64,6 +65,7 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
   const projectId = chat?.sensitive ? undefined : await writeDossier(event, reportText, chat)
 
   console.log(JSON.stringify({ event: 'research_report_done', runId: event.runId, chatId: event.chatId, msgId, projectId }))
+  await notifyConnection(event.connId, { type: 'research_done', runId: event.runId, chatId: event.chatId, msgId, projectId })
   return { reportText }
 }
 

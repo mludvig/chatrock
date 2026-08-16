@@ -18,6 +18,9 @@ locals {
     EPHEMERAL_CHAT_TTL_SECONDS          = tostring(var.ephemeral_chat_ttl_seconds)
     BEDROCK_BEARER_TOKEN_SSM            = aws_ssm_parameter.bedrock_bearer_token.name
     BEDROCK_REGION                      = var.bedrock_region != "" ? var.bedrock_region : var.aws_region
+    # Deep Research state-machine handlers (backend/src/lib/wsNotify.ts) have no API Gateway
+    # event of their own to derive a management-API endpoint from, unlike ws/sendMessage.ts.
+    WS_MANAGEMENT_ENDPOINT = "https://${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com/${aws_apigatewayv2_stage.ws.name}"
   }
 }
 
