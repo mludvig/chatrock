@@ -46,14 +46,30 @@ export const handler = async (event: ResearcherInput): Promise<ResearcherResult>
     }
   }
 
-  const obj = safeParse(finalText)
-  const finding: Finding = obj && typeof obj.summary === 'string'
-    ? {
-        subQuestionId: event.subQuestion.id,
-        summary: obj.summary,
-        sourceUrls: Array.isArray(obj.sourceUrls) ? obj.sourceUrls.filter((u): u is string => typeof u === 'string') : [],
-      }
-    : { subQuestionId: event.subQuestion.id, summary: finalText, sourceUrls: [] }
+  // See docs/adr/0025-researcher-finding-plain-text-summary.md — still falls back to the
+  // legacy nested-JSON shape for robustness against a model that ignores the format.
+  const sourcesLine = /\nSOURCES:\s*(\[[\s\S]*\])\s*$/
+  const match = finalText.match(sourcesLine)
+  let finding: Finding
+  if (match) {
+    let sourceUrls: string[] = []
+    try {
+      const parsed = JSON.parse(match[1])
+      if (Array.isArray(parsed)) sourceUrls = parsed.filter((u): u is string => typeof u === 'string')
+    } catch {
+      // leave sourceUrls empty — a malformed SOURCES array shouldn't drop the summary
+    }
+    finding = { subQuestionId: event.subQuestion.id, summary: finalText.slice(0, match.index).trim(), sourceUrls }
+  } else {
+    const obj = safeParse(finalText)
+    finding = obj && typeof obj.summary === 'string'
+      ? {
+          subQuestionId: event.subQuestion.id,
+          summary: obj.summary,
+          sourceUrls: Array.isArray(obj.sourceUrls) ? obj.sourceUrls.filter((u): u is string => typeof u === 'string') : [],
+        }
+      : { subQuestionId: event.subQuestion.id, summary: finalText, sourceUrls: [] }
+  }
 
   console.log(JSON.stringify({ event: 'research_researcher_done', runId: event.runId, subQuestionId: event.subQuestion.id, sourceCount: finding.sourceUrls.length }))
   await notifyConnection(event.connId, {

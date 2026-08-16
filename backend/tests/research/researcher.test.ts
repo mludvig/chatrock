@@ -33,6 +33,25 @@ test('researcher handler — parses the final JSON turn into a Finding', async (
   expect(result).toEqual({ finding: { subQuestionId: 'sq1', summary: 'X has a long history.', sourceUrls: ['https://example.com/x'] } })
 })
 
+test('researcher handler — parses plain-text summary + trailing SOURCES line', async () => {
+  async function* fakeStream() {
+    yield {
+      type: 'turn' as const,
+      role: 'assistant' as const,
+      content: [{ kind: 'text' as const, text: 'X has a "storied" history, per multiple sources.\n\nSOURCES: ["https://example.com/x"]' }],
+      turnIndex: 0,
+    }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  const result = await handler(BASE_INPUT)
+
+  expect(result).toEqual({
+    finding: { subQuestionId: 'sq1', summary: 'X has a "storied" history, per multiple sources.', sourceUrls: ['https://example.com/x'] },
+  })
+})
+
 test('researcher handler — malformed final JSON falls back to raw text with no sources', async () => {
   async function* fakeStream() {
     yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'not json, just prose' }], turnIndex: 0 }
