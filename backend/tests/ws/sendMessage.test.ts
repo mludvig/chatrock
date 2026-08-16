@@ -35,6 +35,8 @@ jest.mock('../../src/lib/dynamo', () => ({
   updateChatSummary: jest.fn().mockResolvedValue(undefined),
   listProjectFiles: jest.fn().mockResolvedValue([]),
   listChats: jest.fn().mockResolvedValue([]),
+  getActiveRun: jest.fn().mockResolvedValue(undefined),
+  appendRunSteeringNote: jest.fn().mockResolvedValue(undefined),
 }))
 
 jest.mock('../../src/lib/projectFiles', () => ({
@@ -2421,5 +2423,48 @@ describe('Search (forced search_history turn)', () => {
     const toolCtxArg = mockBedrock.converseStream.mock.calls[0][4]
     expect(toolCtxArg?.searchScope).toBe('project')
     expect(toolCtxArg?.projectId).toBeUndefined()
+  })
+})
+
+describe('mid-flight steering (Deep Research)', () => {
+  const ACTIVE_RUN = { PK: 'CHAT#c1', SK: 'RUN#run-1', runId: 'run-1', status: 'running' }
+
+  test('a content-bearing send while a run is active appends a steering note instead of starting a turn', async () => {
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'leaf-0' })
+    mockDynamo.getActiveRun.mockResolvedValue(ACTIVE_RUN)
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'focus on the 1990s', model: MODEL, systemPrompt: '' }))
+
+    expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+    expect(mockDynamo.putMessage).toHaveBeenCalledTimes(1)
+    const userCall = mockDynamo.putMessage.mock.calls[0][0] as Record<string, unknown>
+    expect(userCall.role).toBe('user')
+    expect(userCall.blocks).toEqual([{ kind: 'text', text: 'focus on the 1990s' }])
+    expect(userCall.parentId).toBe('leaf-0')
+    expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledWith('user-1', 'c1', userCall.msgId)
+    expect(mockDynamo.appendRunSteeringNote).toHaveBeenCalledWith('c1', 'run-1', 'focus on the 1990s')
+    expect(mockPost).toHaveBeenCalledWith(expect.objectContaining({
+      Data: expect.stringContaining('"type":"research_steering_noted"'),
+    }))
+  })
+
+  test('a content-bearing send with no active run behaves as a normal turn', async () => {
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+    mockDynamo.getActiveRun.mockResolvedValue(undefined)
+    mockDynamo.listMessages.mockResolvedValue([])
+
+    async function* fakeStream() {
+      yield { type: 'delta' as const, text: 'ok' }
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'a normal question', model: MODEL, systemPrompt: '' }))
+
+    expect(mockBedrock.converseStream).toHaveBeenCalledTimes(1)
+    expect(mockDynamo.appendRunSteeringNote).not.toHaveBeenCalled()
   })
 })

@@ -3,9 +3,10 @@
 Status as of this file: the state machine deploys and all six states transition, the
 `RUN#` DynamoDB row + cascade-delete are wired up, Recon/Plan are implemented, the plan
 approval gate works end to end over WebSocket, each Wave researcher runs a real bounded
-investigation, and the supervisor Assess handler drives the wave loop (more waves, or
-done) with a working round cap. `report` is still a stub. Read this file before touching
-anything in this directory; it is kept up to date as each handler is filled in.
+investigation, the supervisor Assess handler drives the wave loop (more waves, or done)
+with a working round cap, and `ws/sendMessage.ts` intercepts mid-flight steering messages
+for an active run. `report` is still a stub. Read this file before touching anything in
+this directory; it is kept up to date as each handler is filled in.
 
 See root `CLAUDE.md`'s "Architecture decisions" pointer and
 `docs/adr/0023-deep-research-step-functions-orchestration.md` for why this is a Step
@@ -44,7 +45,8 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 ## Data model
 
 `PK=CHAT#<chatId>` / `SK=RUN#<runId>` row (`RunRow` in `types.ts`), managed by
-`lib/dynamo.ts`'s `putRun`/`getRun`/`updateRun`/`appendRunSteeringNote`/`deleteChatRuns`:
+`lib/dynamo.ts`'s `putRun`/`getRun`/`getActiveRun`/`updateRun`/`appendRunSteeringNote`/
+`deleteChatRuns`:
 `status` (`recon|planning|awaiting_approval|running|done|failed`), `plan`, findings,
 `steeringNotes[]`, `roundsSpent`, `connId`, the approval task token, timestamps.
 `updateRun` is a generic partial-update (every field aliased via
@@ -92,6 +94,23 @@ has to reconstruct the *entire* next state regardless. `AssessChoice` reads `$.d
 `$.roundsSpent` straight off that reconstructed state (both are now genuinely live: `done`
 is the supervisor's verdict, `roundsSpent` increments every Assess call), routing back to
 `Wave` (default) or on to `Report`.
+
+## Mid-flight steering
+
+`ws/sendMessage.ts` intercepts a `content`-bearing send (a genuine new message — `continue`/
+`rerun` never carry `content`, so both are already excluded) by checking
+`dynamo.ts`'s `getActiveRun(chatId)` (queries `PK=CHAT#<chatId>`/`begins_with(SK, 'RUN#')`,
+returns the first row whose `status` isn't `done`/`failed` — at most one run is ever active
+per chat by product design) before doing anything else with it. If a run is active, the
+message does **not** start a normal turn: it's persisted as a plain user turn (chained under
+the chat's current `activeLeafId` regardless of any `parentId` the client sent — a steering
+message talks to the running supervisor, it doesn't branch the tree), `activeLeafId` is
+advanced, and the text is appended to the run's `steeringNotes[]` via
+`appendRunSteeringNote` (list-append, race-safe — see "Data model" above). The client gets a
+`research_steering_noted` WS frame (`runId`, `msgId`) instead of the normal streaming
+sequence; no Bedrock call happens on this path. `researcher.ts` reads pending notes at the
+start of each `Wave` iteration; `assess.ts` reads and clears them when deciding the next
+wave (see "The wave loop" above).
 
 ## Plan approval gate
 
