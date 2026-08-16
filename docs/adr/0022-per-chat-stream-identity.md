@@ -25,6 +25,14 @@ answer.
   `handleSend`, plus `handleRerun`/`handleContinue`) and cleared when that turn finishes.
   This is the one addition needed to disambiguate "viewed" from "streaming" everywhere
   else already assumed they matched.
+- **`streamingBaseMessagesRef`** stashes the streaming chat's message list (history +
+  optimistic user turn, no answer yet) at the same call sites. The messages-load effect's
+  original guard just skipped reloading whenever `sending` was true for the viewed chat,
+  on the assumption `messages` already held that chat's correct content — true the first
+  time, but false after navigating to a second chat and back, since `messages` by then
+  holds the *second* chat's content with the streaming bubble wrongly appended underneath
+  it. The effect now restores from this ref on every visit to the streaming chat instead
+  of trusting whatever `messages` currently holds.
 - **Not concurrent multi-chat streaming.** `sending` stays a single global flag — the
   composer still can't start a second turn while one is in flight anywhere. This is
   scoped down to fixing the two reported symptoms (view doesn't switch; returning shows
