@@ -55,17 +55,39 @@ export interface ResearcherResult {
   finding: Finding
 }
 
+// One entry of the Wave Map state's raw per-item output (terraform/research.tf's
+// research_wave_iterator merges each Researcher's ResultPath="$.result" into the item
+// alongside the item's own subQuestion/steeringNotes fields — see CLAUDE.md's "Wave output
+// shape").
+export interface WaveFindingEntry {
+  subQuestion: SubQuestion
+  steeringNotes: string[]
+  result: ResearcherResult
+}
+
 export interface AssessInput extends RunContext {
   question: string
+  plan: PlanResult
   findings: Finding[]
+  waveFindings: WaveFindingEntry[]
+  gapsNotPursued: string[]
   steeringNotes: string[]
   roundsSpent: number
 }
 
-export interface AssessResult {
-  done: boolean
+// Assess (terraform/research.tf) has ResultPath="$" — like AwaitApproval's SendTaskSuccess
+// (see CLAUDE.md's "Plan approval gate"), the Task's Result entirely replaces the state
+// machine's state, so this must carry every field Wave/Assess/Report need on the next
+// hop, not just the assessment's own verdict.
+export interface AssessResult extends RunContext {
+  question: string
+  plan: PlanResult
+  findings: Finding[]
   nextSubQuestions: SubQuestion[]
   gapsNotPursued: string[]
+  steeringNotes: string[]
+  roundsSpent: number
+  done: boolean
 }
 
 export interface ReportInput extends RunContext {

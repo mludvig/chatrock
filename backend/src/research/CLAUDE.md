@@ -2,9 +2,10 @@
 
 Status as of this file: the state machine deploys and all six states transition, the
 `RUN#` DynamoDB row + cascade-delete are wired up, Recon/Plan are implemented, the plan
-approval gate works end to end over WebSocket, and each Wave researcher runs a real bounded
-investigation. `assess`/`report` are still stubs. Read this file before touching anything in
-this directory; it is kept up to date as each handler is filled in.
+approval gate works end to end over WebSocket, each Wave researcher runs a real bounded
+investigation, and the supervisor Assess handler drives the wave loop (more waves, or
+done) with a working round cap. `report` is still a stub. Read this file before touching
+anything in this directory; it is kept up to date as each handler is filled in.
 
 See root `CLAUDE.md`'s "Architecture decisions" pointer and
 `docs/adr/0023-deep-research-step-functions-orchestration.md` for why this is a Step
@@ -37,7 +38,7 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `Wave`, `Assess`, `AssessCh
 | `plan.ts` | `Plan` | Calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`, prompt in `prompts/research-plan.txt`) to produce `clarifyingQuestions` + `subQuestions` from the question + Recon's notes. Sub-questions with no `question` text are dropped; a missing or duplicate `id` is replaced with a fresh `newId()`. |
 | `awaitApproval.ts` | `AwaitApproval` | Persists `question`/`plan`/`taskToken` onto the `RUN#` row (via `updateRun`, upserting the row on its first write) with `status: 'awaiting_approval'` and the `findings`/`gapsNotPursued`/`steeringNotes`/`roundsSpent` defaults the downstream states need. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation, `ws/researchApprove.ts`, does. |
 | `researcher.ts` | `Wave` (Map iterator) | Runs one bounded `converseStream` (`lib/llm/loop.ts`, `extended`/8-round budget) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with only `web_search`/`web_fetch` enabled (no memory/project/image tools — a researcher has no chat context to draw on) and no WS connection to stream to. The system prompt (`prompts/research-researcher.txt`) asks for one final JSON turn — `{summary, sourceUrls}` — which is `safeParse`d the same way `plan.ts` parses its JSON; malformed output falls back to `{summary: <raw text>, sourceUrls: []}` rather than throwing. Steering notes, if any, are appended to the sub-question in the initial user message. |
-| `assess.ts` | `Assess` | Stub. Supervisor call: reads all findings-so-far + pending steering notes, decides `done` or which gaps need another wave (`nextSubQuestions`). Also where steering notes get cleared once consumed. |
+| `assess.ts` | `Assess` | Flattens this wave's raw `waveFindings` into `Finding[]` (`item.result.finding`), merges into the running `findings` total, then calls Bedrock once (`DEFAULT_CHAT_MODEL`, JSON out, prompt in `prompts/research-assess.txt`) to decide `done` vs. `nextSubQuestions` for another wave. `gapsNotPursued` accumulates across rounds; `steeringNotes` are cleared every round (consumed, not carried forward). Malformed model output falls back to `done: true` rather than looping forever. Like `AwaitApproval`, this state has no `ResultPath` — the handler's return value (`AssessResult`) is the *entire* next state, so it must re-emit every field `Wave`/`Report` need, not just its own verdict. |
 | `report.ts` | `Report` | Stub. Synthesises the final cited answer, persists it as a normal assistant turn, and later writes the full dossier — plan, every wave's findings with sources, every assessment, gaps deliberately dropped — as a project file. |
 
 ## Data model
@@ -65,16 +66,32 @@ Deep Research picker choice -> `StartExecution`; `terraform/iam.tf`'s
 `StartResearchExecution` statement is the permission, not the call site) is a
 not-yet-written WS action.
 
-## Wave output shape
+## The wave loop
 
-The `Wave` Map state's iterator (`local.research_wave_iterator` in `terraform/research.tf`)
-merges each `Researcher` task's `ResearcherResult` (`{finding: Finding}`) into the per-item
-state at `$.result`, preserving the original `subQuestion`/`steeringNotes` item fields
-alongside it. `Wave` then collects the whole per-item state array into `$.findings` — so
-`$.findings` after `Wave` is an array of `{subQuestion, steeringNotes, result: {finding}}`,
-not a plain `Finding[]`. `assess.ts` (the next handler in this pipeline) needs to map
-`item.result.finding` out of each entry rather than assuming `AssessInput.findings` arrives
-pre-shaped.
+`Wave`'s `ItemsPath` is `$.nextSubQuestions`, not `$.plan.subQuestions` — the first wave
+researches the approved plan (`researchApprove.ts` seeds `nextSubQuestions` from
+`plan.subQuestions` in its `SendTaskSuccess` output), but every subsequent wave researches
+whatever `assess.ts` decided still has a gap. A `Map` item is otherwise just the bare
+`SubQuestion` from `ItemsPath`, so `Wave`'s `Parameters` (`terraform/research.tf`) injects
+`chatId`/`runId`/`sub`/`steeringNotes` onto each item to match `ResearcherInput`.
+
+The `Wave` Map state's iterator (`local.research_wave_iterator`) merges each `Researcher`
+task's `ResearcherResult` (`{finding: Finding}`) into the per-item state at `$.result`,
+preserving the item's own `subQuestion`/`steeringNotes` fields alongside it — so `Wave`'s
+`ResultPath` (`$.waveFindings`, deliberately *not* `$.findings`) collects an array of
+`{subQuestion, steeringNotes, result: {finding}}`, not a plain `Finding[]`. Keeping it out
+of `$.findings` matters: `$.findings` is the *accumulated* total across every wave so far,
+and `assess.ts` merges this round's `waveFindings` into it — if `Wave` wrote straight to
+`$.findings`, each wave's `ResultPath` replace-not-merge would clobber every earlier wave's
+findings instead of adding to them.
+
+`Assess` has an explicit `Parameters` payload (chatId/runId/sub/question/plan/findings/
+waveFindings/gapsNotPursued/steeringNotes/roundsSpent) rather than passing the ambient
+state through unshaped — see "Plan approval gate" below for why `assess.ts`'s return value
+has to reconstruct the *entire* next state regardless. `AssessChoice` reads `$.done` and
+`$.roundsSpent` straight off that reconstructed state (both are now genuinely live: `done`
+is the supervisor's verdict, `roundsSpent` increments every Assess call), routing back to
+`Wave` (default) or on to `Report`.
 
 ## Plan approval gate
 
@@ -82,8 +99,9 @@ pre-shaped.
 `ResultPath`, so whatever `ws/researchApprove.ts` sends via `SendTaskSuccess` becomes the
 *entire* state for `Wave`/`Assess`/`Report` — not a merge with what came before. That's why
 `researchApprove.ts` reconstructs `chatId`/`runId`/`sub`/`question`/`plan` plus fresh
-`findings: []`/`gapsNotPursued: []`/`steeringNotes: []`/`roundsSpent: 0`, rather than
-sending just the (possibly user-edited) plan.
+`findings: []`/`nextSubQuestions: plan.subQuestions`/`gapsNotPursued: []`/
+`steeringNotes: []`/`roundsSpent: 0`, rather than sending just the (possibly user-edited)
+plan.
 
 `researchApprove.ts` trusts `getConnection(connId).userSub` (the pattern every WS action
 handler post-`$connect` uses) for the ownership check against the `RUN#` row's `sub`, then
