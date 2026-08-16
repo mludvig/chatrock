@@ -41,7 +41,7 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
 
   const reportText = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_REPORT_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },
-  ])
+  ], { maxTokens: 4096 })
 
   const chat = await getChat(event.sub, event.chatId)
   const ts = new Date().toISOString()

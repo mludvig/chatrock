@@ -35,7 +35,7 @@ export const handler = async (event: AssessInput): Promise<AssessResult> => {
 
   const response = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_ASSESS_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },
-  ])
+  ], { maxTokens: 1024 })
 
   const obj = safeParse(response)
   if (!obj) {
