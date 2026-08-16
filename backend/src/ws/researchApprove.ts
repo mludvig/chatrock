@@ -30,6 +30,25 @@ interface ApproveBody {
 // AwaitApproval has no ResultPath, so a successful SendTaskSuccess payload entirely
 // replaces the state machine's state ($) — it must reconstruct every field the rest of
 // the pipeline (ApprovalChoice/Replan/Wave/Assess/Report) needs, not just the plan.
+// A revise loops AwaitApproval -> Replan -> AwaitApproval, minting a fresh task token —
+// but `plan.ts` pushes the `research_plan` WS frame (which is what the client reacts to)
+// *before* the state machine transitions into the new AwaitApproval and `awaitApproval.ts`
+// persists that fresh token onto the RUN# row. A client that approves fast enough (an
+// automated test, or just a quick click) can read the row before that write lands and
+// retry with its still-stale, already-consumed token, which SendTaskSuccess rejects as
+// TaskTimedOut/TaskDoesNotExist. Retry against a freshly re-read row rather than failing
+// the request outright — awaitApproval.ts's write typically lands within a second.
+const STALE_TOKEN_RETRY_DELAYS_MS = [300, 600, 1000, 1500]
+
+function isStaleTaskTokenError(err: unknown): boolean {
+  const name = (err as { name?: string } | undefined)?.name
+  return name === 'TaskTimedOut' || name === 'TaskDoesNotExist'
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> => {
   const connId = event.requestContext.connectionId
   const conn = await getConnection(connId)
@@ -38,59 +57,75 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
   const body = JSON.parse(event.body ?? '{}') as ApproveBody
   const { chatId, runId, decision, feedback } = body
 
-  const run = await getRun(chatId, runId)
-  if (!run || run.sub !== conn.userSub) return { statusCode: 404, body: 'Not found' }
-  if (run.status !== 'awaiting_approval' || !run.taskToken) return { statusCode: 409, body: 'Not awaiting approval' }
-
   if (decision === 'revise') {
     const trimmed = feedback?.trim()
     if (!trimmed) return { statusCode: 400, body: 'feedback is required to revise' }
-
-    await sfn.send(new SendTaskSuccessCommand({
-      taskToken: run.taskToken,
-      output: JSON.stringify({
-        chatId,
-        runId,
-        sub: run.sub,
-        question: run.question,
-        plan: run.plan,
-        feedback: trimmed,
-        revise: true,
-        connId,
-      }),
-    }))
-    // status stays 'awaiting_approval' — ApprovalChoice/Replan loop back into a fresh
-    // AwaitApproval visit. Refresh connId in case the user reconnected from another tab.
-    await updateRun(chatId, runId, { connId })
-    console.log(JSON.stringify({ event: 'research_approve_revise', runId, chatId }))
-    return { statusCode: 200, body: '' }
   }
 
-  const plan = run.plan
-  const steeringNotes = feedback?.trim() ? [feedback.trim()] : []
-  await sfn.send(new SendTaskSuccessCommand({
-    taskToken: run.taskToken,
-    output: JSON.stringify({
-      chatId,
-      runId,
-      sub: run.sub,
-      question: run.question,
-      plan,
-      findings: [],
-      nextSubQuestions: plan?.subQuestions ?? [],
-      gapsNotPursued: [],
-      steeringNotes,
-      roundsSpent: 0,
-      // ApprovalChoice's Variable path ($.revise) throws States.Runtime if the field is
-      // absent entirely (not merely falsy) — must be explicit here, not just omitted.
-      revise: false,
-      // The approving connection, not necessarily the one that started the run — refreshes
-      // where Wave/Assess push progress frames if the user reconnected from another tab.
-      connId,
-    }),
-  }))
-  await updateRun(chatId, runId, { status: 'running', plan, connId })
-  await notifyConnection(connId, { type: 'research_wave_start', runId, chatId, subQuestions: plan?.subQuestions ?? [] })
-  console.log(JSON.stringify({ event: 'research_approve_started', runId, chatId }))
-  return { statusCode: 200, body: '' }
+  let run = await getRun(chatId, runId)
+  if (!run || run.sub !== conn.userSub) return { statusCode: 404, body: 'Not found' }
+
+  for (let attempt = 0; ; attempt++) {
+    if (run.status !== 'awaiting_approval' || !run.taskToken) return { statusCode: 409, body: 'Not awaiting approval' }
+
+    try {
+      if (decision === 'revise') {
+        const trimmed = (feedback as string).trim()
+        await sfn.send(new SendTaskSuccessCommand({
+          taskToken: run.taskToken,
+          output: JSON.stringify({
+            chatId,
+            runId,
+            sub: run.sub,
+            question: run.question,
+            plan: run.plan,
+            feedback: trimmed,
+            revise: true,
+            connId,
+          }),
+        }))
+        // status stays 'awaiting_approval' — ApprovalChoice/Replan loop back into a fresh
+        // AwaitApproval visit. Refresh connId in case the user reconnected from another tab.
+        await updateRun(chatId, runId, { connId })
+        console.log(JSON.stringify({ event: 'research_approve_revise', runId, chatId }))
+        return { statusCode: 200, body: '' }
+      }
+
+      const plan = run.plan
+      const steeringNotes = feedback?.trim() ? [feedback.trim()] : []
+      await sfn.send(new SendTaskSuccessCommand({
+        taskToken: run.taskToken,
+        output: JSON.stringify({
+          chatId,
+          runId,
+          sub: run.sub,
+          question: run.question,
+          plan,
+          findings: [],
+          nextSubQuestions: plan?.subQuestions ?? [],
+          gapsNotPursued: [],
+          steeringNotes,
+          roundsSpent: 0,
+          // ApprovalChoice's Variable path ($.revise) throws States.Runtime if the field is
+          // absent entirely (not merely falsy) — must be explicit here, not just omitted.
+          revise: false,
+          // The approving connection, not necessarily the one that started the run —
+          // refreshes where Wave/Assess push progress frames if the user reconnected from
+          // another tab.
+          connId,
+        }),
+      }))
+      await updateRun(chatId, runId, { status: 'running', plan, connId })
+      await notifyConnection(connId, { type: 'research_wave_start', runId, chatId, subQuestions: plan?.subQuestions ?? [] })
+      console.log(JSON.stringify({ event: 'research_approve_started', runId, chatId }))
+      return { statusCode: 200, body: '' }
+    } catch (err) {
+      if (!isStaleTaskTokenError(err) || attempt >= STALE_TOKEN_RETRY_DELAYS_MS.length) throw err
+      console.log(JSON.stringify({ event: 'research_approve_stale_token_retry', runId, chatId, attempt }))
+      await sleep(STALE_TOKEN_RETRY_DELAYS_MS[attempt])
+      const fresh = await getRun(chatId, runId)
+      if (!fresh) return { statusCode: 404, body: 'Not found' }
+      run = fresh
+    }
+  }
 }
