@@ -58,6 +58,15 @@ test('chat-only without user: returns chat prefs', () => {
   expect(result).toEqual(chat)
 })
 
+test('researchDepth layers chat > project > user', () => {
+  const user: UserPreferences = { researchDepth: 'extended' }
+  const project: UserPreferences = { researchDepth: 'brief' }
+  const chat: UserPreferences = { researchDepth: 'deep' }
+  expect(resolvePreferences({ user }).researchDepth).toBe('extended')
+  expect(resolvePreferences({ user, project }).researchDepth).toBe('brief')
+  expect(resolvePreferences({ user, project, chat }).researchDepth).toBe('deep')
+})
+
 test('resolution order is user < project < chat for each key independently', () => {
   const user: UserPreferences = { persona: 'user-persona', answerLength: 'default', topP: 0.9 }
   const project: UserPreferences = { persona: 'project-persona', answerLength: 'short' }

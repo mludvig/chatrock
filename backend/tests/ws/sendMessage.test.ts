@@ -1024,6 +1024,57 @@ test('f2: webSearchEnabled:false passes empty tools — converseStream called wi
   expect((passedSettings as Record<string, unknown>).webSearchEnabled).toBe(false)
 })
 
+test('f3: a turn chunk with truncated:true persists truncated:true and researchDepth on the assistant turn', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'budget-limited' }], turnIndex: 0, truncated: true }
+    yield { type: 'stop' as const, stopReason: 'max_rounds' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '',
+    modelSettings: { researchDepth: 'extended' },
+  }))
+
+  const assistantPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+
+  expect(assistantPut.truncated).toBe(true)
+  expect(assistantPut.researchDepth).toBe('extended')
+})
+
+test('f4: a clean-stop turn chunk persists no truncated field, and defaults researchDepth to brief when absent', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'complete' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '',
+  }))
+
+  const assistantPut = mockDynamo.putMessage.mock.calls
+    .map(c => c[0] as Record<string, unknown>)
+    .find(r => r.role === 'assistant')!
+
+  expect(assistantPut.truncated).toBeUndefined()
+  expect(assistantPut.researchDepth).toBe('brief')
+})
+
 test('inc2: Bedrock replay uses buildActivePath (linear chat: same as flat history)', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'asst-prev' })

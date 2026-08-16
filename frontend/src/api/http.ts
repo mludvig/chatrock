@@ -95,6 +95,7 @@ export interface Message {
   // Per-turn inference metadata (F1/F2)
   thinkingEffort?: string
   webSearchEnabled?: boolean
+  researchDepth?: string
   // Convenience: a text step's content for the legacy Message.content access pattern
   // (kept so callers that only need the text can still work; derived from steps on load)
   content?: string
@@ -104,6 +105,9 @@ export interface Message {
   siblings?: string[]
   // Set on assistant bubbles that ended due to a stream error (partial answer)
   errored?: boolean
+  // Set on assistant bubbles that hit the round-budget ceiling — a complete answer, just
+  // budget-limited (distinct from errored). See docs/adr/0020-research-depth-and-budget-pacing.md.
+  truncated?: boolean
 }
 
 export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
@@ -137,7 +141,11 @@ export interface ModelSettings {
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
   showTokenStats?: boolean
+  researchDepth?: ResearchDepth
 }
+
+export const RESEARCH_DEPTHS = ['brief', 'extended', 'deep'] as const
+export type ResearchDepth = typeof RESEARCH_DEPTHS[number]
 
 export interface UserMemory {
   memId: string
@@ -184,6 +192,7 @@ export interface UserPreferences {
   topP?: number
   topK?: number
   showTokenStats?: boolean
+  researchDepth?: ResearchDepth
 }
 
 export interface Model {

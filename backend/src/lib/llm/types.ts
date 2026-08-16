@@ -22,7 +22,11 @@ export type StreamChunk =
   | { type: 'stop'; stopReason: string }
   // Backend-only: drives per-turn persistence; never sent raw over WS.
   // `content` is the neutral format — this is what lands in DynamoDB verbatim.
-  | { type: 'turn'; role: 'user' | 'assistant'; content: Block[]; turnIndex: number }
+  // `truncated` is set only on the final forced-answer turn of the round-budget-exhaustion
+  // path (loop.ts) — a distinct signal from `incomplete` (mid-turn abort/error): the model
+  // wrote a complete answer, it just ran out of research budget. See
+  // docs/adr/0020-research-depth-and-budget-pacing.md.
+  | { type: 'turn'; role: 'user' | 'assistant'; content: Block[]; turnIndex: number; truncated?: boolean }
   // Forwarded as a compact WS event for live display
   | { type: 'usage'; usage: TokenUsage }
   // Emitted when manage_memory / manage_project_memory succeeds — triggers memoryUpdated WS

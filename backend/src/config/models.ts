@@ -36,6 +36,8 @@ export interface ModelSettings {
   imageGenerationEnabled?: boolean                  // true enables the generate_image tool (opt-in — costs money per call)
   answerLength?: 'default' | 'short' | 'extensive' // per-chat answer-length override
   injectCurrentDate?: boolean                       // true = prepend timestamp block to user turns
+  // Agentic tool-round budget for this turn. Absent -> 'brief'. See docs/adr/0020-research-depth-and-budget-pacing.md.
+  researchDepth?: 'brief' | 'extended' | 'deep'
 }
 
 // ── Model registry ────────────────────────────────────────────────────────────

@@ -13,8 +13,10 @@ export type { StreamChunk, TokenUsage } from './types'
 export { coalesceMessages, healDanglingToolUse } from './sanitize'
 export { bedrockClient } from './providers/bedrockConverse'
 
-// Maximum number of tool-use rounds before we force a final text answer
-const MAX_TOOL_ROUNDS = 8
+// Tool-round budget per research depth. Absent settings.researchDepth -> 'brief'; 'deep'
+// is accepted by the ModelSettings type but not yet routed to a distinct mode (Phase 3),
+// so it currently runs at the 'extended' budget. See docs/adr/0020-research-depth-and-budget-pacing.md.
+export const ROUND_BUDGETS: Record<'brief' | 'extended', number> = { brief: 3, extended: 8 }
 export const HEARTBEAT_INTERVAL_MS = 4000
 // Max concurrent tool executions within a single round — see docs/adr/0016-parallel-tool-execution.md.
 const TOOL_CONCURRENCY = 5
@@ -35,6 +37,7 @@ export async function* converseStream(
 ): AsyncGenerator<StreamChunk> {
   const provider = getProvider(modelId)
   const tools = buildToolList(settings, ctx)
+  const maxRounds = ROUND_BUDGETS[settings.researchDepth === 'extended' || settings.researchDepth === 'deep' ? 'extended' : 'brief']
 
   // Sanitize the incoming replayed history ONCE per invocation — coalesce/heal plus
   // foreign-opaque filtering are the provider's business (see ChatProvider.sanitizeHistory).
@@ -48,7 +51,7 @@ export async function* converseStream(
 
   let turnIndex = 0
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+  for (let round = 0; round < maxRounds; round++) {
     if (abortSignal?.aborted) return
     const builtMessages = [...sanitized, ...newMessages]
     // Forced toolChoice applies to round 0 only — by round 1 the tool has already run and
@@ -237,6 +240,19 @@ export async function* converseStream(
     yield { type: 'turn', role: 'user', content: toolResultsPersist, turnIndex }
     turnIndex++
 
+    // Budget pacing: the model otherwise has no idea how much room it has left and
+    // researches at full tilt until cut off. Steer it via the live-only replay —
+    // never toolResultsPersist, so this never becomes stored conversation content.
+    // See docs/adr/0020-research-depth-and-budget-pacing.md.
+    const roundsRemaining = maxRounds - round - 1
+    const pacingThreshold = Math.max(1, Math.ceil(maxRounds / 3))
+    if (roundsRemaining <= pacingThreshold) {
+      const pacingText = roundsRemaining <= 0
+        ? "This is your last tool round. After these results you must write your final answer."
+        : `Research budget: ${roundsRemaining} of ${maxRounds} tool rounds remain. Assess whether you have enough to answer. If yes, write your final answer now. If a critical gap remains, spend the remaining rounds only on that gap.`
+      toolResultsLive.push({ kind: 'text', text: pacingText })
+    }
+
     // Continue the loop with the bytes-inline form (this invocation's next round only)
     newMessages.push({ role: 'user', content: toolResultsLive })
     // Loop → next turn with tool results injected
@@ -287,7 +303,7 @@ export async function* converseStream(
     if (!hasText) {
       finalContent.push({ kind: 'text', text: "I've reached my research step limit for this turn. Here's what I found before stopping — let me know if you'd like me to continue." })
     }
-    yield { type: 'turn', role: 'assistant', content: finalContent, turnIndex }
+    yield { type: 'turn', role: 'assistant', content: finalContent, turnIndex, truncated: true }
     yield { type: 'stop', stopReason: finalResult.stopReason === 'tool_use' ? 'max_rounds' : finalResult.stopReason }
   } else {
     yield { type: 'stop', stopReason: 'max_rounds' }

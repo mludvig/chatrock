@@ -15,6 +15,7 @@ export interface UserPreferences {
   topP?: number
   topK?: number
   showTokenStats?: boolean            // UI flag (not prompt-affecting)
+  researchDepth?: 'brief' | 'extended' | 'deep'  // agentic tool-round budget default
 }
 
 export interface ResolveInput {

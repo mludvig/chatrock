@@ -50,6 +50,8 @@ export interface RawBubble {
   thinkingEffort?: string
   webSearchEnabled?: boolean
   errored?: boolean
+  truncated?: boolean
+  researchDepth?: string
 }
 
 export interface RawConversationResponse {
@@ -74,6 +76,8 @@ export interface TurnRow {
   thinkingEffort?: string
   webSearchEnabled?: boolean
   incomplete?: boolean
+  truncated?: boolean
+  researchDepth?: string
 }
 
 // ── groupTurnsToBubbles ───────────────────────────────────────────────────────
@@ -133,6 +137,7 @@ export function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
           createdAt: row.createdAt,
           ...(row.thinkingEffort !== undefined ? { thinkingEffort: row.thinkingEffort } : {}),
           ...(row.webSearchEnabled !== undefined ? { webSearchEnabled: row.webSearchEnabled } : {}),
+          ...(row.researchDepth !== undefined ? { researchDepth: row.researchDepth } : {}),
         }
         currentToolSteps = new Map()
         currentResponseId = row.responseId
@@ -141,6 +146,12 @@ export function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
       // If any turn in this response is incomplete (partial error flush), mark bubble errored
       if (row.incomplete && currentBubble) {
         currentBubble.errored = true
+      }
+      // If any turn in this response hit the round-budget ceiling, mark bubble truncated
+      // (distinct from errored — the answer is complete, just budget-limited). See
+      // docs/adr/0020-research-depth-and-budget-pacing.md.
+      if (row.truncated && currentBubble) {
+        currentBubble.truncated = true
       }
 
       // Map blocks → ordered steps (never expose `opaque`)
