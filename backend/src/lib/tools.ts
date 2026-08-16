@@ -1,6 +1,7 @@
 import type { ToolSpec, ToolResult, ToolResultEntry } from './llm/toolSpec'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
+import { executeReadResearchFindingsTool } from './researchFindings'
 import { executeSearchHistoryTool } from './search'
 import { callGatewayTool } from './agentcore/gateway'
 import type { BrowserStep } from './agentcore/browser'
@@ -25,6 +26,9 @@ export interface ToolContext {
   // Set only for a forced/explicit Search turn (ws/sendMessage.ts) — see SearchHistoryContext
   // in lib/search.ts for why this overrides any model-supplied scope on that turn.
   searchScope?: 'project' | 'global'
+  // Gates read_research_findings — a sensitive chat gets no project/dossier (docs/adr/0024),
+  // so this is its only way back to a completed Deep Research run's findings.
+  sensitive?: boolean
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -296,6 +300,22 @@ export const SEARCH_HISTORY_TOOL: ToolSpec = {
   },
 }
 
+export const READ_RESEARCH_FINDINGS_TOOL: ToolSpec = {
+  name: 'read_research_findings',
+  description: "Read the findings from a completed Deep Research run in this chat. Use detail:'summary' for the final report and the gaps not pursued, or detail:'full' for every finding's summary and source URLs as well.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      detail: {
+        type: 'string',
+        enum: ['summary', 'full'],
+        description: "'summary' = final report + gaps not pursued. 'full' = also every finding's summary and sources.",
+      },
+    },
+    required: ['detail'],
+  },
+}
+
 // ── Tool executors ────────────────────────────────────────────────────────────
 
 const JINA_KEY = process.env.JINA_API_KEY ?? ''
@@ -316,6 +336,10 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     if (name === 'read_project_chat') {
       if (!ctx.projectId) return errorResult('No project context')
       return await executeProjectReadChatTool(input as Record<string, string>, ctx)
+    }
+    if (name === 'read_research_findings') {
+      if (!ctx.chatId) return errorResult('No chat context')
+      return await executeReadResearchFindingsTool(input as Record<string, string>, ctx)
     }
     if (name === 'search_history') {
       return await executeSearchHistoryTool(input, { sub: ctx.sub, projectId: ctx.projectId, chatId: ctx.chatId, searchScope: ctx.searchScope })

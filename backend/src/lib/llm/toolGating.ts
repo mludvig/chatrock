@@ -5,6 +5,7 @@
 import {
   WEB_TOOLS, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL,
   BROWSER_TOOL, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, SEARCH_HISTORY_TOOL, GENERATE_IMAGE_TOOL,
+  READ_RESEARCH_FINDINGS_TOOL,
   type ToolContext,
 } from '../tools'
 import type { ToolSpec } from './toolSpec'
@@ -23,6 +24,9 @@ export function buildToolList(settings: ModelSettings, ctx?: ToolContext): ToolS
   // named tool to be present in the offered tool list.
   if (settings.searchEnabled !== false || ctx?.searchScope) list.push(SEARCH_HISTORY_TOOL)
   if (settings.imageGenerationEnabled === true) list.push(GENERATE_IMAGE_TOOL)
+  // A sensitive chat gets no project/dossier (docs/adr/0024) — this is its only way back
+  // to a completed Deep Research run's findings.
+  if (ctx?.chatId && ctx?.sensitive) list.push(READ_RESEARCH_FINDINGS_TOOL)
   return list
 }
 

@@ -40,6 +40,8 @@ call, for a document that's a fallback read path, not the primary product surfac
   researcher's discarded reasoning or a specific wave's assessment rationale. If that turns
   out to matter in practice, the fix is threading a fuller history through `AssessResult`,
   not changing where the dossier is stored.
-- Sensitive chats need a different path entirely (no project, no dossier) — carved out as a
-  separate follow-up rather than an `if` in this handler, so the exception stays visible at
-  its own call site instead of buried in dossier-writing logic.
+- Sensitive chats need a different path entirely: `report.ts` skips `writeDossier()`
+  outright (`chat?.sensitive` check ahead of the call, not a branch buried inside it), and
+  a `read_research_findings` tool — gated on `ToolContext.sensitive` in `toolGating.ts`,
+  reading straight off the `RUN#` row via the new `listRuns(chatId)` — gives that chat its
+  only way back to the findings, since it never gets a project to read them from.
