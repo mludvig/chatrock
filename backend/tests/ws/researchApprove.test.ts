@@ -73,6 +73,7 @@ test('approved: sends SendTaskSuccess with the full reconstructed state and tran
     question: 'what is X',
     plan: BASE_RUN.plan,
     findings: [],
+    nextSubQuestions: BASE_RUN.plan.subQuestions,
     gapsNotPursued: [],
     steeringNotes: [],
     roundsSpent: 0,

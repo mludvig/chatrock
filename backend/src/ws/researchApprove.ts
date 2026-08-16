@@ -55,6 +55,7 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
       question: run.question,
       plan,
       findings: [],
+      nextSubQuestions: plan.subQuestions,
       gapsNotPursued: [],
       steeringNotes: [],
       roundsSpent: 0,

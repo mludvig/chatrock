@@ -148,28 +148,61 @@ locals {
         TimeoutSeconds = 86400
         Next           = "Wave"
       }
+      # ItemsPath points at $.nextSubQuestions, not $.plan.subQuestions — the first wave
+      # researches the approved plan's sub-questions (researchApprove.ts seeds
+      # nextSubQuestions from plan.subQuestions), but every subsequent wave researches
+      # whatever Assess decided still has a gap. Parameters injects run context onto each
+      # item since a Map item is otherwise just the bare SubQuestion from ItemsPath.
+      # ResultPath="$.waveFindings" (not "$.findings") is deliberate: Wave's raw per-item
+      # output is {subQuestion, steeringNotes, result:{finding}} (see CLAUDE.md's "The wave
+      # loop"), not a plain Finding[], and writing it under a different key than the
+      # accumulated $.findings total lets Assess merge the two instead of one clobbering the
+      # other.
       Wave = {
         Type           = "Map"
-        ItemsPath      = "$.plan.subQuestions"
+        ItemsPath      = "$.nextSubQuestions"
         MaxConcurrency = 3
-        ResultPath     = "$.findings"
-        Iterator       = local.research_wave_iterator
-        Next           = "Assess"
+        ResultPath     = "$.waveFindings"
+        Parameters = {
+          "subQuestion.$"   = "$$.Map.Item.Value"
+          "chatId.$"        = "$.chatId"
+          "runId.$"         = "$.runId"
+          "sub.$"           = "$.sub"
+          "steeringNotes.$" = "$.steeringNotes"
+        }
+        Iterator = local.research_wave_iterator
+        Next     = "Assess"
       }
+      # No ResultPath — Assess's Result entirely replaces the state (same pattern as
+      # AwaitApproval, see CLAUDE.md's "Plan approval gate"), so assess.ts returns every
+      # field the next hop (another Wave, or Report) needs: the merged findings total,
+      # gapsNotPursued, cleared steeringNotes, incremented roundsSpent, and
+      # nextSubQuestions/done for AssessChoice below.
       Assess = {
-        Type       = "Task"
-        Resource   = aws_lambda_function.research["assess"].arn
-        ResultPath = "$.assessment"
-        Next       = "AssessChoice"
+        Type     = "Task"
+        Resource = aws_lambda_function.research["assess"].arn
+        Parameters = {
+          "chatId.$"         = "$.chatId"
+          "runId.$"          = "$.runId"
+          "sub.$"            = "$.sub"
+          "question.$"       = "$.question"
+          "plan.$"           = "$.plan"
+          "findings.$"       = "$.findings"
+          "waveFindings.$"   = "$.waveFindings"
+          "gapsNotPursued.$" = "$.gapsNotPursued"
+          "steeringNotes.$"  = "$.steeringNotes"
+          "roundsSpent.$"    = "$.roundsSpent"
+        }
+        Next = "AssessChoice"
       }
       # Backstop against a runaway supervisor: the supervisor decides when it's satisfied
-      # (assessment.done), but a hard round cap still wins if it never is. See plan's
+      # (assess.ts's done), but a hard round cap still wins if it never is. See plan's
       # "Ceiling" note.
       AssessChoice = {
         Type = "Choice"
         Choices = [
           {
-            Variable      = "$.assessment.done"
+            Variable      = "$.done"
             BooleanEquals = true
             Next          = "Report"
           },
