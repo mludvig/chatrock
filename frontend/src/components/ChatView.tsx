@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
-import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3 } from '../api/http'
-import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat } from '../api/http'
+import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS } from '../api/http'
+import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
@@ -76,6 +76,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // before its first send instead of only via "New chat" from inside a project.
   const [draftProjectId, setDraftProjectId] = useState('')
   const [detailsOpen, setDetailsOpen] = useState(false)
+
+  // Composer's per-turn research depth picker. Sticky within a chat session (survives
+  // across sends) but never persisted — `null` means "use the chat's stored default"
+  // (draftModelSettings.researchDepth). Reset to null on chat switch so a different chat
+  // doesn't inherit a one-off escalation. See docs/adr/0020-research-depth-and-budget-pacing.md.
+  const [composerResearchDepth, setComposerResearchDepth] = useState<ResearchDepth | null>(null)
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -150,6 +156,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Per-chat override wins when set; otherwise fall back to the global default. Usage is
   // always recorded either way — this only gates whether it's rendered.
   const effectiveShowTokenStats = draftModelSettings.showTokenStats ?? userPreferences.showTokenStats ?? false
+
+  // Effective research depth for the *next* send: composerResearchDepth (this session's
+  // sticky override) wins when set, otherwise the chat's stored default. Merged into
+  // modelSettings at send-time only — never written back via handleChatSettingsChange,
+  // so a one-off escalation never becomes the chat's permanent default.
+  const effectiveResearchDepth = composerResearchDepth ?? draftModelSettings.researchDepth ?? 'brief'
+  const modelSettingsForSend: ModelSettings = { ...draftModelSettings, researchDepth: effectiveResearchDepth }
 
   const ALLOWED_TYPES: Record<string, 'image' | 'document'> = {
     'image/png': 'image', 'image/jpeg': 'image', 'image/gif': 'image', 'image/webp': 'image',
@@ -375,6 +388,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Seed draftModelSettings when chatId changes
   useEffect(() => {
     setCurrentChatId(chatId ?? null)
+    setComposerResearchDepth(null)  // reset per-turn depth override — see its declaration above
     if (isNew) {
       setDraftSystemPrompt('')
       if (currentModelDef) {
@@ -762,7 +776,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         chatId: chatId!,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
-        modelSettings: draftModelSettings,
+        modelSettings: modelSettingsForSend,
         parentId,
       })
       armAckWatchdog()
@@ -770,7 +784,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, messages, chatId, accessToken, draftModelSettings, startStream])
+  }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettingsForSend, startStream])
 
   const handleContinue = useCallback(async (msgId: string) => {
     if (!activeChat || useChatStore.getState().sending || creatingChat) return
@@ -788,7 +802,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         chatId: chatId!,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
-        modelSettings: draftModelSettings,
+        modelSettings: modelSettingsForSend,
         parentId: msgId,
         continue: true,
       })
@@ -797,7 +811,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, chatId, accessToken, draftModelSettings, startStream])
+  }, [activeChat, creatingChat, chatId, accessToken, modelSettingsForSend, startStream])
 
   const stepHasContent = (st: Step) =>
     (st.kind === 'text' && st.text.trim() !== '') ||
@@ -973,7 +987,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         }
         await ensureConnected(accessToken)
         sendMessage({
-          chatId: res.chatId, content, model, systemPrompt, modelSettings: draftModelSettings, attachments: attachmentsPayload,
+          chatId: res.chatId, content, model, systemPrompt, modelSettings: modelSettingsForSend, attachments: attachmentsPayload,
           ...(search ? { search } : {}),
         })
         armAckWatchdog()
@@ -1007,7 +1021,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           content,
           model: activeChat.model,
           systemPrompt: activeChat.systemPrompt,
-          modelSettings: draftModelSettings,
+          modelSettings: modelSettingsForSend,
           parentId: editPid,
           attachments: attachmentsPayload,
         })
@@ -1034,7 +1048,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         content,
         model: activeChat.model,
         systemPrompt: activeChat.systemPrompt,
-        modelSettings: draftModelSettings,
+        modelSettings: modelSettingsForSend,
         attachments: attachmentsPayload,
       })
       armAckWatchdog()
@@ -1458,6 +1472,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
               <FontAwesomeIcon icon={faPaperclip} />
             </button>
           )}
+          <select
+            className="btn-research-depth"
+            value={effectiveResearchDepth}
+            disabled={sending || creatingChat}
+            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for the rest of this chat session; the chat's stored default is set in Chat details."
+            onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
+          >
+            {RESEARCH_DEPTHS.map(d => (
+              <option key={d} value={d} disabled={d === 'deep'} title={d === 'deep' ? 'Deep Research — coming soon' : undefined}>
+                {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep Research'}
+              </option>
+            ))}
+          </select>
           {sending ? (
             <button
               className="btn-send btn-stop"

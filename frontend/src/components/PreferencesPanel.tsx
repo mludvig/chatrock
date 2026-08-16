@@ -3,7 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faSlidersH } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
 import type { UserPreferences } from '../api/http'
-import { THINKING_EFFORTS } from '../api/http'
+import { THINKING_EFFORTS, RESEARCH_DEPTHS } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { ToggleRow, EffortRow } from './PrefControls'
 import SaveIndicator from './SaveIndicator'
@@ -95,6 +95,18 @@ export default function PreferencesPanel() {
             format={e => e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}
           />
         )}
+
+        <EffortRow
+          label="Research depth"
+          // 'deep' (Deep Research) isn't routed yet — Phase 3. EffortRow has no per-option
+          // disabled state, so it's simply left out of the default picker until then,
+          // matching the composer/ToolsPanel pickers where it's shown but disabled.
+          options={RESEARCH_DEPTHS.filter(d => d !== 'deep')}
+          value={prefs.researchDepth ?? 'brief'}
+          onChange={v => patch({ researchDepth: v })}
+          format={d => d === 'brief' ? 'Brief' : 'Extended'}
+          title="How many tool rounds the model budgets for research before it must answer. Brief is the default. See docs/adr/0020-research-depth-and-budget-pacing.md."
+        />
 
         <ToggleRow
           label="Web search"
