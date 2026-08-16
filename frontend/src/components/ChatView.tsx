@@ -144,6 +144,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // chatId rather than assuming they're always the same chat.
   // See docs/adr/0022-per-chat-stream-identity.md.
   const streamingChatIdRef = useRef<string | null>(null)
+  // The message list (history + optimistic user turn, no streaming bubble) as of the
+  // moment streamingChatIdRef's turn started — set alongside it at every startStream()
+  // call site. Needed because `messages` itself gets overwritten by whatever chat is
+  // later navigated to; when navigating BACK to the streaming chat, this is what restores
+  // its correct base instead of leaving the other chat's messages on screen with the
+  // streaming bubble wrongly appended underneath. See docs/adr/0022.
+  const streamingBaseMessagesRef = useRef<Message[]>([])
   // Debounce refs for the Chat details dialog's system-prompt/model-settings edits
   // (moved here from the old PreferencesPanel "This chat" tab — same 800ms pattern).
   const chatInstructionsDebounceRef = useRef<number | null>(null)
@@ -575,11 +582,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setOldestMsgId(null)
       return
     }
-    // Don't clobber the optimistic messages while a stream is in flight *for this chat*
-    // (e.g. new-chat navigate fires this effect with sending=true). If some other chat is
-    // streaming, this chat's own cache/fetch below is unaffected — see
+    // If this chat is the one actively streaming, restore its known-good base (history +
+    // optimistic user turn, pre-answer) rather than fetching — the server doesn't have the
+    // finished answer yet. This also covers navigating BACK to it after viewing another
+    // chat in between, when `messages` would otherwise still hold that other chat's
+    // content with the live streaming bubble wrongly appended underneath. See
     // docs/adr/0022-per-chat-stream-identity.md.
-    if (useChatStore.getState().sending && streamingChatIdRef.current === chatId) return
+    if (useChatStore.getState().sending && streamingChatIdRef.current === chatId) {
+      setMessages(streamingBaseMessagesRef.current)
+      setLoadingMessages(false)
+      return
+    }
 
     // Cache hit (this chat was opened earlier in the session): show it instantly, no
     // spinner, no network round trip — this is the common "switch back and forth
@@ -838,8 +851,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // Optimistic truncate: keep everything up to and including the user turn (parentId),
     // drop the old answer and any later messages from view.
     const cut = messages.findIndex(m => m.msgId === parentId)
-    if (cut >= 0) setMessages(messages.slice(0, cut + 1))
+    const base = cut >= 0 ? messages.slice(0, cut + 1) : messages
+    if (cut >= 0) setMessages(base)
     streamingChatIdRef.current = chatId!
+    streamingBaseMessagesRef.current = base
     startStream()
     pendingScrollTopRef.current = true
 
@@ -867,6 +882,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setErrorMsg(null)
     setLastTurnUsage(null)
     streamingChatIdRef.current = chatId!
+    streamingBaseMessagesRef.current = messages
     startStream()
     pendingScrollTopRef.current = true
 
@@ -1036,6 +1052,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       const newChatId = pendingNewChatIdRef.current ?? newId()
 
       streamingChatIdRef.current = newChatId
+      streamingBaseMessagesRef.current = [optimisticUser]
       setSending(true)
       setMessages([optimisticUser])
       startStream()
@@ -1087,8 +1104,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       // Edit branch: truncate display to before the edited message, then stream a sibling
       const idx = messages.findIndex(m => 'msgId' in m && m.msgId === editMsgId)
       const base = idx >= 0 ? messages.slice(0, idx) : messages
-      setMessages([...base, optimisticUser])
+      const nextMessages = [...base, optimisticUser]
+      setMessages(nextMessages)
       streamingChatIdRef.current = chatId!
+      streamingBaseMessagesRef.current = nextMessages
       startStream()
       pendingScrollTopRef.current = true
       try {
@@ -1111,11 +1130,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
 
     // Normal send path
-    setMessages([
-      ...messages,
-      optimisticUser,
-    ])
+    const normalSendMessages = [...messages, optimisticUser]
+    setMessages(normalSendMessages)
     streamingChatIdRef.current = chatId!
+    streamingBaseMessagesRef.current = normalSendMessages
     startStream()
     pendingScrollTopRef.current = true
 
