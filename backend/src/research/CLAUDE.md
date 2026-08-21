@@ -173,8 +173,12 @@ presses.
   `roundsSpent: 0`, transitions the row to `running`, and starts `Wave`. If `feedback` is
   present it seeds `steeringNotes: [feedback]` instead of `[]` — "approve, but also keep
   this in mind" doesn't need a full replan.
-- **`revise`** sends `{revise: true, feedback, plan, ...}` and leaves the row at
-  `awaiting_approval`. `ApprovalChoice` (`terraform/research.tf`) branches on `$.revise` to
+- **`revise`** sends `{revise: true, feedback, plan, ...}` and moves the row to `planning`
+  until the next `AwaitApproval` visit writes `awaiting_approval` back — the superseded plan
+  must stop being offered, and the status guard below is what makes a second decision fail
+  cleanly instead of racing the token rotation. `ResearchPanel.tsx` mirrors that transition
+  optimistically as it sends, for both decisions, so the panel never re-offers a plan the
+  user has already acted on. `ApprovalChoice` (`terraform/research.tf`) branches on `$.revise` to
   `Replan` — the same `plan.ts` handler, invoked with `priorPlan`/`feedback` instead of
   `recon` (see plan.ts's header comment) — which produces a revised plan and loops back into
   `AwaitApproval`, minting a fresh task token for a second wait cycle. `ApprovalChoice`
