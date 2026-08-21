@@ -5,7 +5,7 @@ test('delete branch removes it and its descendants; other branch survives; reloa
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  await page.locator('.model-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Branch test base."')
@@ -75,7 +75,7 @@ test('delete branch: dismissing the confirm dialog does nothing', async ({ page 
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  await page.locator('.model-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "No delete."')

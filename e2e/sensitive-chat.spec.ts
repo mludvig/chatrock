@@ -4,7 +4,7 @@ import { FAST_MODEL_LABEL } from './testConfig'
 test('Private toggle creates a sensitive+ephemeral chat, hidden from the list until revealed', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.model-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
 
   await page.locator('.btn-private-toggle').click()
   await expect(page.locator('.btn-private-toggle')).toHaveClass(/active/)
@@ -32,7 +32,7 @@ test('Private toggle creates a sensitive+ephemeral chat, hidden from the list un
 test('Chat details dialog toggles Sensitive/Auto-delete independently on an existing chat', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.model-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Chat details test answer."')
@@ -68,7 +68,7 @@ test('Chat details dialog toggles Sensitive/Auto-delete independently on an exis
 test('Header "Private" button is a one-click shortcut for both flags together', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.model-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Private shortcut test answer."')
@@ -77,8 +77,8 @@ test('Header "Private" button is a one-click shortcut for both flags together', 
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
 
-  await page.locator('.chat-header .btn-private-toggle').click()
-  await expect(page.locator('.chat-header .btn-private-toggle')).toHaveClass(/active/, { timeout: 10_000 })
+  await page.locator('.composer-toolbar .btn-private-toggle').click()
+  await expect(page.locator('.composer-toolbar .btn-private-toggle')).toHaveClass(/active/, { timeout: 10_000 })
   await expect(page.locator('.chat-header .private-chip')).toContainText('Private')
 
   // Both flags landed independently-verifiable via the dialog.

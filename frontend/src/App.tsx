@@ -34,17 +34,20 @@ function AuthedApp() {
   useEffect(() => {
     if (!auth.isAuthenticated || !accessToken) return
     setLoading(true)
-    Promise.all([api.listChats(), api.listModels(), api.getPreferences(), api.listProjects()])
-      .then(([chatsRes, modelsRes, prefsRes, projectsRes]) => {
+    Promise.all([api.listChats(), api.getPreferences(), api.listProjects()])
+      .then(([chatsRes, prefsRes, projectsRes]) => {
         const sorted = chatsRes.chats.sort(
           (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
         )
         setChats(sorted)
-        setModels(modelsRes.models)
         setUserPreferences(prefsRes.preferences)
         setProjects(projectsRes.projects)
       })
       .finally(() => setLoading(false))
+    // Models are cached in localStorage (see chatStore's partialize) and revalidated here,
+    // outside the loading gate — the pickers render from the cached list immediately rather
+    // than sitting empty until this round-trip lands.
+    api.listModels().then(res => setModels(res.models)).catch(() => { /* keep the cached list */ })
   }, [auth.isAuthenticated, accessToken, setChats, setModels, setLoading, setUserPreferences, setProjects])
 
   // Auto-close sidebar on navigation (mobile)
@@ -60,6 +63,12 @@ function AuthedApp() {
   const chatViewMatch = /^\/c\/([^/]+)/.exec(location.pathname)
   const currentChatProjectId = chatViewMatch ? chats.find(c => c.chatId === chatViewMatch[1])?.projectId : undefined
   const contextProjectId = projectViewMatch?.[1] ?? currentChatProjectId
+
+  function startNewChat() {
+    setActivePanel('chats')
+    bumpNewChatTick()
+    navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new')
+  }
 
   function submitSearch() {
     const query = searchQuery.trim()
@@ -97,7 +106,7 @@ function AuthedApp() {
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}
-      <div className="sidebar-global-header" onClick={() => { setActivePanel('chats'); bumpNewChatTick(); navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new') }} title="New chat">
+      <div className="sidebar-global-header" onClick={startNewChat} title="New chat">
         <span className="sidebar-brand">
           <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
           <span className="sidebar-brand-text">Chatrock</span>
@@ -125,7 +134,7 @@ function AuthedApp() {
         </div>
         <button
           className="btn-new"
-          onClick={e => { e.stopPropagation(); setActivePanel('chats'); bumpNewChatTick(); navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new') }}
+          onClick={e => { e.stopPropagation(); startNewChat() }}
           title="New chat"
           tabIndex={-1}
         >
@@ -158,6 +167,7 @@ function AuthedApp() {
                 defaultModel={defaultModel}
                 onModelChange={setLastModel}
                 onOpenSidebar={() => setSidebarOpen(true)}
+                onNewChat={startNewChat}
               />
             }
           />

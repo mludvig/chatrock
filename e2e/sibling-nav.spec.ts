@@ -16,7 +16,7 @@ test('sibling navigation switches active branch and persists after reload', asyn
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
   // Stable, no data-retention issues
-  await page.locator('.model-select').selectOption({ label: THINKING_MODEL_LABEL })
+  await page.locator('.composer-select').selectOption({ label: THINKING_MODEL_LABEL })
 
   // Send a short prompt
   const input = page.locator('.message-input')
