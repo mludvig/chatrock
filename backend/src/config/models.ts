@@ -71,6 +71,17 @@ export const MODELS: Model[] = [
     name: 'Claude Haiku 4.5',
     capabilities: { provider: 'bedrock-converse', temperature: true, topP: true, topK: true, thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
+  // xAI Grok 4.6 via Bedrock Converse. Verified live against ap-southeast-2 Aug 2026:
+  // rejects temperature/topP (ValidationException), rejects document blocks outright,
+  // and image blocks 500/503 despite the model card listing IMAGE input — not usable yet.
+  // Always emits a reasoningContent/redactedContent block regardless of any thinking
+  // param tried (Anthropic-style thinking.type=adaptive, a plain reasoning_effort) with
+  // no observable effect on output — no confirmed effort dial, so thinking is 'none'.
+  {
+    id: 'global.xai.grok-4.6',
+    name: 'Grok 4.6',
+    capabilities: { provider: 'bedrock-converse', temperature: false, topP: false, topK: false, thinking: 'none', attachments: false, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
+  },
   // Bedrock Mantle (OpenAI Responses API) — no cross-region inference profile, no
   // ap-southeast-2 availability as of Aug 2026: pinned to us-east-1 (see backend/CLAUDE.md's
   // "LLM providers" section). Always reasons (no 'off' level) — thinkingLevels omits it.
