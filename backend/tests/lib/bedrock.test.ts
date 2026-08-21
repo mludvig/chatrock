@@ -13,6 +13,7 @@
  */
 import { converseStream, coalesceMessages, healDanglingToolUse, bedrockClient, HEARTBEAT_INTERVAL_MS } from '../../src/lib/bedrock'
 import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/llm/blocks'
+import { DEFAULT_CHAT_MODEL } from '../../src/config/models'
 import * as tools from '../../src/lib/tools'
 import * as attachmentsLib from '../../src/lib/attachments'
 import { s3KeyPrefix } from '../../src/lib/attachments'
@@ -1066,7 +1067,7 @@ test('project memory: CACHE_POINT_TOOL always last in tool list when project mem
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+  for await (const _chunk of converseStream(DEFAULT_CHAT_MODEL, '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
     // drain
   }
 
@@ -1135,7 +1136,7 @@ test('read tools: cachePoint is always last when read tools present', async () =
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+  for await (const _chunk of converseStream(DEFAULT_CHAT_MODEL, '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
     // drain
   }
 
