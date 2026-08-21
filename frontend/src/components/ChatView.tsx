@@ -543,6 +543,22 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             useChatStore.getState().invalidateMessagesCache(evt.chatId)
           }
         } else if (evt.type === 'research_steering_noted') {
+          // A steering send goes through the normal send path (setSending(true) +
+          // startStream()) since the frontend can't know ahead of time that a run is
+          // active — the backend answers with this frame instead of a delta/done
+          // sequence, so this is the only place that releases the send lock for it.
+          clearIdleTimer()
+          clearStream()
+          setSending(false)
+          const streamedId = streamingChatIdRef.current
+          streamingChatIdRef.current = null
+          if (streamedId) {
+            if (streamedId === chatIdRef.current) {
+              reloadMessages(streamedId)
+            } else {
+              useChatStore.getState().invalidateMessagesCache(streamedId)
+            }
+          }
           pushToast({ kind: 'info', text: 'Steering note added — the researcher will pick it up shortly' })
         }
         return
