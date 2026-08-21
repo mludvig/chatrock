@@ -705,7 +705,12 @@ export const buildHandler = (postFn: PostFn) => async (
 
     // Title — allowed even for a sensitive chat. Own try/catch so a title failure (or a skipped
     // memory pass below) can never suppress the other.
-    const needTitle = !isRerun && !isEdit && !isContinue && chat.title === 'New Chat'
+    // isEdit/isRerun are NOT excluded here: a resend of the chat's first message (e.g. after the
+    // original attempt errored before any assistant turn was persisted) is indistinguishable at
+    // the wire level from editing an established chat's root message, but chat.title === 'New Chat'
+    // already self-disables this permanently once a real title is ever set, so relying on it alone
+    // fixes that retry case without causing repeat title generation later in a chat's life.
+    const needTitle = !isContinue && chat.title === 'New Chat'
     if (needTitle) {
       try {
         const title = await generateChatTitle(transcript, chatId)
