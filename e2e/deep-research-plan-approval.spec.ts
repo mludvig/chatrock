@@ -23,6 +23,10 @@ test('plan approval: revise on substantive feedback, approve on empty input', as
   await page.locator('.btn-send').click()
 
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
+  // The question itself is a normal user turn (ws/startResearch.ts persists it before
+  // starting the execution) and must render as a normal blue bubble above the panel,
+  // not only collapsed into the panel's own search summary line.
+  await expect(page.locator('.message.user', { hasText: 'What are the main causes of coral bleaching?' })).toBeVisible({ timeout: 10_000 })
   await expect(page.locator('.research-panel')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.research-panel-plan')).toBeVisible({ timeout: 120_000 })
 
