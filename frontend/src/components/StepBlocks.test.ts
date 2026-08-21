@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeUrl } from './MessageBubble'
+import { sanitizeUrl } from './StepBlocks'
 
 describe('sanitizeUrl', () => {
   it('allows https URLs', () => {

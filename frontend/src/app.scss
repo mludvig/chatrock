@@ -1006,6 +1006,38 @@ $header-h: 45px;
   li::marker { color: $muted; }
 }
 
+// A researcher's card is headed by the sub-question itself — real content, so it drops the
+// uppercase-label treatment the other sections' headings use.
+.research-panel-researcher {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  h4 {
+    align-items: flex-start;
+    font-size: 14px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: $text;
+    margin-bottom: 0;
+
+    svg { margin-top: 3px; flex-shrink: 0; color: $muted; }
+  }
+}
+
+.research-panel-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.research-panel-finding {
+  font-size: 14px;
+  line-height: 1.45;
+  padding-left: 20px;
+  border-left: 2px solid $accent-light;
+}
+
 .research-panel-count {
   font-size: 11px;
   font-weight: 600;

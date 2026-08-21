@@ -198,6 +198,24 @@ always the source of truth, these frames are a live-UI convenience only:
 | `research_finding` | `researcher.ts`, once per sub-question | `runId`, `chatId`, `subQuestionId`, `summary`, `sourceUrls` |
 | `research_assess` | `assess.ts`, every round | `runId`, `chatId`, `findingCount`, `done` |
 | `research_done` | `report.ts` | `runId`, `chatId`, `msgId`, `projectId` |
+| `research_phase` | `progress.ts`'s `notifyPhase`, called by `recon.ts`/`plan.ts`/`assess.ts`/`report.ts` | `runId`, `chatId`, `phase` (`recon\|planning\|assessing\|reporting\|dossier`), `detail?` |
+| `research_step` | `progress.ts`'s `notifyStep`, called directly by `recon.ts` and via `stepEmitter` by `researcher.ts` | `runId`, `chatId`, `subQuestionId?`, `step` (one `thinking` or `tool` step, shaped as the frontend's own `Step`) |
+
+**Live progress** (`progress.ts`) — why step boundaries rather than forwarding the token
+stream, and why steps are never persisted:
+`docs/adr/0027-research-progress-as-step-boundary-frames.md`. `stepEmitter(ctx,
+subQuestionId)` is the single place a `converseStream` `StreamChunk` is translated into a
+`research_step`: it accumulates `thinking_delta`s and emits one step on `thinking_done`,
+and emits a tool step twice — once on `tool_call`, once complete on `tool_result` (whose
+chunk carries no `name`/`input`, so the in-flight call is held to re-emit the whole step;
+the client upserts by `toolUseId`). Tool results are previewed at `STEP_RESULT_PREVIEW`
+(2000 chars) rather than sent whole. `delta`/`heartbeat`/`stop`/`turn`/`usage` carry
+nothing a pill shows and are ignored. Phases that call `converseOnce` (`plan`, `assess`,
+`report`) yield no chunks at all and so emit only `research_phase`; `recon.ts` makes a bare
+`executeTool` call with no loop around it, so it emits its pending/resolved step pair
+through `notifyStep` directly. `research_step` frames are **not** part of the re-sync
+endpoint's response — a client that reconnects mid-run picks progress up from the next
+frame.
 
 **`connId` provenance**: `startResearch.ts` sets it initially from the connection that
 started the run. `researchApprove.ts` refreshes it to whichever connection performed the

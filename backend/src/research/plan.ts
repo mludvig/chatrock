@@ -4,6 +4,7 @@ import { DEFAULT_CHAT_MODEL } from '../config/models'
 import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { notifyConnection } from '../lib/wsNotify'
+import { notifyPhase } from './progress'
 import RESEARCH_PLAN_SYSTEM_PROMPT from '../../prompts/research-plan.txt'
 
 interface RawSubQuestion {
@@ -19,6 +20,7 @@ interface RawSubQuestion {
 // blocks on user approval (the "AwaitApproval" state).
 export const handler = async (event: PlanInput): Promise<PlanResult> => {
   console.log(JSON.stringify({ event: 'research_plan_start', runId: event.runId, chatId: event.chatId, revise: !!event.priorPlan }))
+  await notifyPhase(event, 'planning', event.priorPlan ? 'Revising the plan' : undefined)
 
   const userMsg = event.priorPlan
     ? [

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
-import type { MemoryUpdateItem } from '../api/ws'
+import type { MemoryUpdateItem, ResearchPhase } from '../api/ws'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
@@ -74,7 +74,20 @@ export interface ActiveResearch {
   findings: ResearchFinding[]
   findingCount: number
   done: boolean
+  // Live progress (research_phase / research_step frames). Ephemeral like the rest of this
+  // slice, and unlike the rest it isn't restored by `api.getResearchRun` — the backend
+  // never persists steps, so a client that reconnects mid-run picks progress back up from
+  // the next frame rather than replaying pills it already missed.
+  phase: ResearchPhase | null
+  // Recon runs before any sub-question exists, so its steps can't be keyed by one.
+  reconSteps: Step[]
+  stepsBySubQuestion: Record<string, Step[]>
 }
+
+// The live-progress half of ActiveResearch, which every construction site starts empty —
+// nothing hydrates it, since steps are never persisted server-side.
+export const initialResearchProgress = (): Pick<ActiveResearch, 'phase' | 'reconSteps' | 'stepsBySubQuestion'> =>
+  ({ phase: null, reconSteps: [], stepsBySubQuestion: {} })
 
 interface ChatState {
   chats: Chat[]
@@ -170,6 +183,7 @@ interface ChatState {
   setActiveResearch: (chatId: string, run: ActiveResearch | null) => void
   patchActiveResearch: (chatId: string, patch: Partial<ActiveResearch>) => void
   addResearchFinding: (chatId: string, finding: ResearchFinding) => void
+  addResearchStep: (chatId: string, step: Step, subQuestionId?: string) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -496,6 +510,19 @@ export const useChatStore = create<ChatState>()(
             [chatId]: { ...existing, findings: [...existing.findings, finding] },
           },
         }
+      }),
+      // A tool step arrives twice — once when the call starts, once with its result — so
+      // it replaces its earlier self by toolUseId rather than appending a duplicate pill.
+      addResearchStep: (chatId, step, subQuestionId) => set((s) => {
+        const existing = s.activeResearch[chatId]
+        if (!existing) return {}
+        const prev = subQuestionId ? (existing.stepsBySubQuestion[subQuestionId] ?? []) : existing.reconSteps
+        const at = step.kind === 'tool' ? prev.findIndex(p => p.kind === 'tool' && p.toolUseId === step.toolUseId) : -1
+        const next = at >= 0 ? prev.map((p, i) => (i === at ? step : p)) : [...prev, step]
+        const patch = subQuestionId
+          ? { stepsBySubQuestion: { ...existing.stepsBySubQuestion, [subQuestionId]: next } }
+          : { reconSteps: next }
+        return { activeResearch: { ...s.activeResearch, [chatId]: { ...existing, ...patch } } }
       }),
     }),
     {

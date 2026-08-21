@@ -20,6 +20,26 @@ export interface SubQuestion {
   question: string
 }
 
+// Live-progress wire shapes (progress.ts). Both are best-effort UI frames like every other
+// research frame — never persisted, never replayed on reconnect; the RUN# row stays the
+// source of truth. See CLAUDE.md's "Progress frames and reconnect".
+
+/**
+ * Which part of the run is currently working. There is deliberately no 'wave' member — a
+ * wave already announces itself with research_wave_start, carrying the sub-questions the
+ * status line needs.
+ */
+export type ResearchPhase = 'recon' | 'planning' | 'assessing' | 'reporting' | 'dossier'
+
+/**
+ * One thinking block or tool call from a research phase that runs a real `converseStream`
+ * loop. Structurally a subset of the frontend's own `Step` union (frontend/src/api/http.ts),
+ * so research progress renders through the same components a normal turn's steps do.
+ */
+export type ResearchStep =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean }
+
 export interface ReconInput extends RunContext {
   question: string
 }

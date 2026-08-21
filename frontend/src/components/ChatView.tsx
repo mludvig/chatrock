@@ -9,7 +9,7 @@ import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove, isConnected } from '../api/ws'
 import type { WSEvent, ConnectionState } from '../api/ws'
-import { useChatStore } from '../store/chatStore'
+import { useChatStore, initialResearchProgress } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
 import ResearchPanel from './ResearchPanel'
@@ -64,7 +64,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     updateChatSettings, updateChatSystemPrompt,
     projects, mergeProjectFiles,
     newChatTick,
-    activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding,
+    activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding, addResearchStep,
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
@@ -481,6 +481,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setActiveResearch(chatId, {
         runId: run.runId, status: run.status, question: run.question, plan: run.plan,
         waveSubQuestions: [], findings: run.findings, findingCount: run.findings.length, done: false,
+        ...initialResearchProgress(),
       })
     }).catch(() => {})
   }, [chatId, isNew, setActiveResearch])
@@ -516,15 +517,25 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       // progressing in the background while a cancelled chat-stream guard is active.
       if (evt.type.startsWith('research_')) {
         if (evt.type === 'research_plan') {
+          // Recon's steps are kept: they are what the plan was drafted from, so they stay
+          // visible above it as the record of how the run scoped the question.
           setActiveResearch(evt.chatId, {
             runId: evt.runId, status: 'awaiting_approval', question: activeResearch[evt.chatId]?.question ?? '',
             plan: evt.plan, waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+            ...initialResearchProgress(),
+            reconSteps: activeResearch[evt.chatId]?.reconSteps ?? [],
           })
+        } else if (evt.type === 'research_phase') {
+          patchActiveResearch(evt.chatId, { phase: evt.phase })
+        } else if (evt.type === 'research_step') {
+          addResearchStep(evt.chatId, evt.step, evt.subQuestionId)
         } else if (evt.type === 'research_wave_start') {
           // Findings accumulate across waves — assess.ts merges each wave into the running
           // total, so clearing them here would make a multi-wave run look like it kept
           // losing the work it had already reported.
-          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: evt.subQuestions })
+          // phase is cleared so the status line drops back to "researching N sub-questions"
+          // rather than keeping the previous round's "reviewing the findings" up.
+          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: evt.subQuestions, phase: null })
         } else if (evt.type === 'research_finding') {
           addResearchFinding(evt.chatId, { subQuestionId: evt.subQuestionId, summary: evt.summary, sourceUrls: evt.sourceUrls })
         } else if (evt.type === 'research_assess') {
@@ -648,7 +659,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         }
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding, pushToast])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding, addResearchStep, pushToast])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -1021,6 +1032,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setActiveResearch(chatId!, {
         runId: '', status: 'recon', question: questionText, plan: null,
         waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+        ...initialResearchProgress(),
       })
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err))
@@ -1206,6 +1218,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           setActiveResearch(res.chatId, {
             runId: '', status: 'recon', question: content, plan: null,
             waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+            ...initialResearchProgress(),
           })
           justCreatedChatIdRef.current = res.chatId
           navigate(`/c/${res.chatId}`, { replace: true })
@@ -1306,6 +1319,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         setActiveResearch(chatId!, {
           runId: '', status: 'recon', question: content, plan: null,
           waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+          ...initialResearchProgress(),
         })
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : String(err))
