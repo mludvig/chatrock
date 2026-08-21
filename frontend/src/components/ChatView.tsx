@@ -1139,7 +1139,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // Deep Research starts a Step Functions run instead of a normal streamed turn — see
     // backend/src/research/CLAUDE.md. Not offered on the edit-message path (undesigned:
     // editing mid-run has no defined semantics), so editMsgId falls through to a normal send.
-    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId
+    // Also not offered while a run is already active for this chat — the depth picker stays
+    // on "Deep Research" for the run's duration (sticky), so a follow-up sent mid-run must
+    // fall through to the normal sendMessage path, where the backend recognizes the active
+    // run and appends the message as a steering note instead of starting a second run.
+    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId && !activeResearchRun
 
     if (isNew) {
       setCreatingChat(true)
