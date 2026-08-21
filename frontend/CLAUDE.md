@@ -4,7 +4,17 @@ See root `CLAUDE.md` for commands, architecture overview, and key gotchas.
 
 ## Layout
 
-CSS grid (`display: grid`, columns `48px var(--sidebar-w, 260px) 1fr`, rows `45px 1fr`). Variables: `$activity-bar-w: 48px`, `$header-h: 45px`, `$sidebar-w: 260px`. The global header spans both LHS columns (`grid-column: 1 / 3`). Sidebar width is resizable (drag `.sidebar-resizer`, clamped 180–480 px). Mobile (`max-width: 720px`) switches to `display: flex; flex-direction: column` and the activity bar + sidebar become a fixed slide-in drawer toggled by `.sidebar-open`.
+CSS grid (`display: grid`, columns `48px var(--sidebar-w, 260px) 1fr`, rows `45px 1fr`). Variables: `$activity-bar-w: 48px`, `$header-h: 45px`, `$sidebar-w: 260px`. The global header spans both LHS columns (`grid-column: 1 / 3`). Sidebar width is resizable (drag `.sidebar-resizer`, clamped 180–480 px). Mobile (`max-width: 720px`) switches to `display: flex; flex-direction: column` and the global header + activity bar + sidebar become a fixed slide-in drawer toggled by `.sidebar-open` — the chat header is the only chrome row on a phone, and it grows its own "+ new chat" button (`.btn-header-new-chat`, mobile-only like `.btn-hamburger`) since the global header's is inside the drawer.
+
+`.layout` is `position: fixed` with `height: var(--app-h, 100dvh)`; `lib/viewportHeight.ts` keeps `--app-h` in sync with `window.visualViewport.height` and resets `window.scrollTo(0, 0)`, so an iOS keyboard can't scroll the app chrome off-screen. `index.html`'s viewport meta carries `interactive-widget=resizes-content` for the Android Chrome equivalent.
+
+## Where a control lives
+
+Why per-send controls were moved out of the chat header: `docs/adr/0028-composer-owns-per-send-controls.md`. Three surfaces, split by what the control is *about*:
+
+- **`.composer-toolbar`** (in `ChatView.tsx`, above the textarea) — decisions about the message you're about to send: model select, research depth, project picker (drafts only), Private quick-toggle. Scrolls horizontally rather than wrapping. Controls use `.composer-select` (pill-shaped); `.model-select` is the squarer variant still used inside dialogs and panels.
+- **`.chat-header`** — identity + navigation only: hamburger (mobile), title, project chip (width-capped and ellipsised — 180px desktop, 120px mobile), "+ new chat" (mobile), details cog.
+- **`ChatDetailsDialog` / `ProjectDetailsDialog`** — everything item-scoped and infrequent, unchanged.
 
 ## Frontend structure
 
@@ -12,7 +22,8 @@ CSS grid (`display: grid`, columns `48px var(--sidebar-w, 260px) 1fr`, rows `45p
 frontend/src/
   api/http.ts             — REST client; types: Model/ModelCapabilities/ModelSettings/UserPreferences/UserMemory/Project/ProjectMemory/ProjectFile; migrateSettings(); requestUpload/uploadToS3; project + file API methods
   api/ws.ts               — WebSocket client (connect/send/cancelMessage/event routing); routes 'warning' frame → error toast
-  store/chatStore.ts      — Zustand store; persists lastModel, sidebarWidth, activePanel, userPreferences; projects[] slice
+  store/chatStore.ts      — Zustand store; persists lastModel, sidebarWidth, activePanel, userPreferences, models; projects[] slice
+  lib/viewportHeight.ts   — keeps --app-h in sync with visualViewport so a mobile keyboard can't push the chrome off-screen
   lib/toolResults.ts      — shared helpers: parses web_search JSON into SearchResult[], and search_history JSON into SearchHistoryResult[], for cards
   lib/useAsyncAction.ts   — hook: wraps async fn → {run, pending}; errors auto-push to toast store
   components/
@@ -29,7 +40,7 @@ frontend/src/
     PrefControls.tsx       — ToggleRow / EffortRow — shared row primitives used by PreferencesPanel, ChatDetailsDialog, ProjectDetailsDialog so a toggle looks identical everywhere
     ChatDetailsDialog.tsx  — two tabs on a saved chat (Settings, default open; Info — title/summary/topics), no tabs on a /c/new draft (Info has nothing to show pre-send); same component either way (see below)
     ProjectDetailsDialog.tsx — description, instructions, project memory toggle, default model, ToolsPanel, ModelTuningPanel
-    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; "Private" quick-toggle + model select + cog (opens ChatDetailsDialog)/tint/footer (see below)
+    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; header cog opens ChatDetailsDialog; model/depth/project/"Private" live in the composer toolbar (see "Where a control lives")/tint/footer
     ToolsPanel.tsx          — what the model may call out to: web search, browser core/extended, memory, search history, inject-timestamp (all always shown, none capability-gated)
     ModelTuningPanel.tsx    — how the model reasons/writes: answer length, thinking effort (capability-gated), temperature (capability-gated). No Top P control — dropped as rarely-worth-tuning clutter.
     StepBlocks.tsx         — ThinkingBlock / ToolCallPill (+ search-result cards, sanitizeUrl): how one step of a turn renders. Shared by MessageBubble and ResearchPanel so Deep Research progress looks identical to any other tool use
@@ -41,7 +52,7 @@ frontend/src/
 
 React Router v6: `/` → `/c/new`, `/c/:chatId` for chats, `/p/:projectId` for project views. Navigation is URL-driven — `useParams` replaces a global active-chat store entry.
 
-Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `sidebarWidth`, `activePanel`, `userPreferences`. Everything else is ephemeral.
+Persisted Zustand state (localStorage via `persist` middleware): `lastModel`, `sidebarWidth`, `activePanel`, `userPreferences`, `models`. Everything else is ephemeral. `models` is cached so the pickers render populated on first paint; `App.tsx` revalidates it via `api.listModels()` outside the `setLoading` gate rather than inside the blocking `Promise.all`.
 
 ## ModelSettings flags
 
@@ -65,7 +76,7 @@ A saved chat's dialog splits into two tabs (`.prefs-tabs`): **Settings** (defaul
 
 ## Sensitive & ephemeral chats
 
-Two independent per-chat flags (`Chat.sensitive`, `Chat.ephemeral`+`expiresAt`) — why they're separate, what each excludes: `docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md` and "Sensitive & ephemeral chats" in `backend/CLAUDE.md`. `ChatDetailsDialog.tsx` exposes them as two independent toggles (draft or saved, see above). For the common case of wanting both at once, `ChatView.tsx`'s header also has a one-click "Private" button (`.btn-private-toggle`, always visible next to the model select) that sets/clears both flags together in a single `api.updateChatFlags` call (`handleSetPrivate`) — a shortcut alongside the dialog's granular control, not a replacement for it. Every flag change refetches the chat's DTO afterward (`patchChat`) rather than hand-computing `expiresAt`, since the server owns `ttl` and its fresh-on-enable semantics.
+Two independent per-chat flags (`Chat.sensitive`, `Chat.ephemeral`+`expiresAt`) — why they're separate, what each excludes: `docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md` and "Sensitive & ephemeral chats" in `backend/CLAUDE.md`. `ChatDetailsDialog.tsx` exposes them as two independent toggles (draft or saved, see above). For the common case of wanting both at once, `ChatView.tsx`'s composer toolbar also has a one-click "Private" button (`.btn-private-toggle`, always visible next to the model select) that sets/clears both flags together in a single `api.updateChatFlags` call (`handleSetPrivate`) — a shortcut alongside the dialog's granular control, not a replacement for it. Every flag change refetches the chat's DTO afterward (`patchChat`) rather than hand-computing `expiresAt`, since the server owns `ttl` and its fresh-on-enable semantics.
 
 Sensitive chats are returned by `GET /api/chats` like any other chat (no backend exclusion), so they live in the normal Zustand `chats` array — no separate store slot, no fallback fetch. Visibility is purely a frontend filter: `ChatListFilter.tsx` is a shared popover (used by both `ChatsPanel` and `ProjectView`) with a "show sensitive chats" checkbox (default off) folded together with the pre-existing "show project chats" checkbox; `applyChatListFilter()` is the one shared predicate both panels apply, so they can't drift. Revealed sensitive chats render with an italic title (`.chat-item.sensitive`) to set them apart subtly — no separate section/list. The chat header itself never shows a sensitive chat's title (only a discreet chip — "Sensitive", or "Private" once auto-delete is also on, so it never contradicts the header button's own label); the real title only ever appears in the LHS, gated by the same filter. Visuals: `.chat-view--private` violet tint (header/messages/input area) and a footer line showing `expiresAt` when `ephemeral`.
 

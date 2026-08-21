@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS } from '../api/http'
 import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
@@ -21,6 +21,7 @@ interface Props {
   defaultModel: string
   onModelChange: (modelId: string) => void
   onOpenSidebar: () => void
+  onNewChat: () => void
 }
 
 // Mirrors the $mobile breakpoint in app.scss — below it, the on-screen keyboard makes
@@ -47,7 +48,7 @@ function enrichMessages(bubbles: Message[]): Message[] {
   })
 }
 
-export default function ChatView({ accessToken, models, defaultModel, onModelChange, onOpenSidebar }: Props) {
+export default function ChatView({ accessToken, models, defaultModel, onModelChange, onOpenSidebar, onNewChat }: Props) {
   const { chatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -1543,52 +1544,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <FontAwesomeIcon icon={faEyeSlash} /> Sensitive
           </span>
         )}
+        {/* Per-send controls (model, research depth, project, Private) live in the composer
+            toolbar, not here — see docs/adr/0028-composer-owns-per-send-controls.md. The header
+            keeps only what identifies the chat plus the two navigational actions. */}
         <div className="header-controls">
-          <button
-            type="button"
-            className={`btn-private-toggle${isPrivate ? ' active' : ''}`}
-            onClick={() => handleSetPrivate(!isPrivate)}
-            title={isPrivate
-              ? 'Private: sensitive + auto-delete, both on. Click to turn both off.'
-              : 'Quick-set Private: sensitive + auto-delete, both on. Use the chat details dialog to set them independently.'}
-          >
-            <FontAwesomeIcon icon={faEyeSlash} /> <span className="btn-private-label">Private</span>
+          <button className="btn-icon btn-header-new-chat" onClick={onNewChat} title="New chat">
+            <FontAwesomeIcon icon={faPlus} />
           </button>
-          {isNew && projects.length > 0 && (
-            <select
-              className="model-select project-picker"
-              value={draftProjectId}
-              onChange={e => setDraftProjectId(e.target.value)}
-              title="File this chat into a project"
-            >
-              <option value="">No project</option>
-              {projects.map(p => (
-                <option key={p.projectId} value={p.projectId}>{p.name}</option>
-              ))}
-            </select>
-          )}
-          <select
-            className="model-select"
-            value={currentModelId}
-            onChange={e => handleModelChange(e.target.value)}
-          >
-            {models.map(m => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-          <select
-            className="model-select"
-            value={effectiveResearchDepth}
-            disabled={sending || creatingChat}
-            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for the rest of this chat session; the chat's stored default is set in Chat details."
-            onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
-          >
-            {RESEARCH_DEPTHS.map(d => (
-              <option key={d} value={d}>
-                {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep Research'}
-              </option>
-            ))}
-          </select>
           <button className="btn-icon" onClick={() => setDetailsOpen(true)} title="Chat details">
             <FontAwesomeIcon icon={faGear} />
           </button>
@@ -1780,6 +1742,58 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             ))}
           </div>
         )}
+
+        {/* Per-send controls sit with the composer rather than in the chat header: they are
+            decisions about the message you're about to send, and the header had run out of
+            room for them on a phone. See docs/adr/0028-composer-owns-per-send-controls.md. */}
+        <div className="composer-toolbar">
+          <select
+            className="composer-select"
+            value={currentModelId}
+            title="Model"
+            onChange={e => handleModelChange(e.target.value)}
+          >
+            {models.map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+          <select
+            className="composer-select"
+            value={effectiveResearchDepth}
+            disabled={sending || creatingChat}
+            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for the rest of this chat session; the chat's stored default is set in Chat details."
+            onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
+          >
+            {RESEARCH_DEPTHS.map(d => (
+              <option key={d} value={d}>
+                {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep'}
+              </option>
+            ))}
+          </select>
+          {isNew && projects.length > 0 && (
+            <select
+              className="composer-select project-picker"
+              value={draftProjectId}
+              onChange={e => setDraftProjectId(e.target.value)}
+              title="File this chat into a project"
+            >
+              <option value="">No project</option>
+              {projects.map(p => (
+                <option key={p.projectId} value={p.projectId}>{p.name}</option>
+              ))}
+            </select>
+          )}
+          <button
+            type="button"
+            className={`btn-private-toggle${isPrivate ? ' active' : ''}`}
+            onClick={() => handleSetPrivate(!isPrivate)}
+            title={isPrivate
+              ? 'Private: sensitive + auto-delete, both on. Click to turn both off.'
+              : 'Quick-set Private: sensitive + auto-delete, both on. Use the chat details dialog to set them independently.'}
+          >
+            <FontAwesomeIcon icon={faEyeSlash} /> <span className="btn-private-label">Private</span>
+          </button>
+        </div>
 
         <div className="input-bar">
           <input

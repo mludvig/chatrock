@@ -4,7 +4,10 @@ import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from 'react-oidc-context'
 import { WebStorageStateStore } from 'oidc-client-ts'
 import { ENV } from './env'
+import { installViewportHeightTracking } from './lib/viewportHeight'
 import App from './App'
+
+installViewportHeightTracking()
 
 // Derive region from pool ID (format: <region>_<id>)
 const cognitoRegion = ENV.cognitoUserPoolId.split('_')[0]

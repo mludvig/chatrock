@@ -5,7 +5,7 @@ test('edit question creates sibling branch, sibling nav works, persists after re
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  await page.locator('.model-select').selectOption({ label: THINKING_MODEL_LABEL })
+  await page.locator('.composer-select').selectOption({ label: THINKING_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Original answer."')

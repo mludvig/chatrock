@@ -31,10 +31,10 @@ test.describe('Preferences panel', () => {
     await expect(page.locator('.dialog .model-settings').first()).toBeVisible()
   })
 
-  test('model select is still present in chat header', async ({ page }) => {
+  test('model select is still present in the composer toolbar', async ({ page }) => {
     await page.goto('/c/new')
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('.chat-header .model-select')).toBeVisible()
+    await expect(page.locator('.composer-toolbar .composer-select').first()).toBeVisible()
   })
 
   test('custom persona in Defaults is reflected in assistant replies', async ({ page }) => {

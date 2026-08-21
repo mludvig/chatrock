@@ -31,12 +31,18 @@ body {
 $activity-bar-w: 48px;
 $header-h: 45px;
 
+// `--app-h` tracks visualViewport.height (see lib/viewportHeight.ts); `position: fixed` keeps
+// the layout pinned to the top of the visual viewport so a mobile keyboard can't scroll the
+// header off-screen. 100dvh is the fallback where visualViewport is unavailable.
 .layout {
   display: grid;
   grid-template-columns: #{$activity-bar-w} var(--sidebar-w, #{$sidebar-w}) 1fr;
   grid-template-rows: #{$header-h} 1fr;
-  height: 100dvh;
-  position: relative;
+  height: var(--app-h, 100dvh);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
 }
 
 // Global header spanning activity bar + sidebar panel (always visible)
@@ -637,6 +643,16 @@ $header-h: 45px;
     text-overflow: ellipsis;
     min-width: 0;
   }
+
+  // A long project name used to eat the whole row and push the controls off-screen.
+  // Cap it and ellipsise — the full name is in the tooltip and one tap away in the project view.
+  .project-chip {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+    line-height: 18px;
+  }
 }
 
 .header-controls {
@@ -1130,6 +1146,42 @@ $header-h: 45px;
     gap: 4px;
     white-space: nowrap;
   }
+}
+
+// Per-send controls (model, research depth, project, Private) — see
+// docs/adr/0028-composer-owns-per-send-controls.md. Scrolls horizontally rather than wrapping
+// so an unusually wide control set can never push the composer's height around.
+.composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar { display: none; }
+
+  > * { flex-shrink: 0; }
+
+  .btn-private-toggle { border-radius: 999px; padding: 4px 10px; }
+}
+
+.composer-select {
+  background: $surface2;
+  border: 1px solid $border;
+  border-radius: 999px;
+  padding: 4px 8px;
+  max-width: 160px;
+  color: $muted;
+  font-family: $font;
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s, color 0.15s;
+
+  &:hover:not(:disabled) { color: $text; }
+  &:focus { border-color: $accent; }
+  &:disabled { opacity: 0.5; cursor: default; }
 }
 
 .input-bar {
@@ -1852,20 +1904,37 @@ $header-h: 45px;
 // ── Mobile responsive (≤720px) ────────────────────────────────────────────────
 $mobile: 720px;
 
-// Hamburger hidden on desktop
-.btn-hamburger { display: none; }
+// Hamburger + header "new chat" are mobile-only: on desktop the sidebar is always visible and
+// the global header already carries a "+" button.
+.btn-hamburger,
+.btn-header-new-chat { display: none; }
 
 @media (max-width: $mobile) {
+  // Drawer geometry — the global header spans the drawer's full width (activity rail + panel)
+  // exactly as it does on desktop, so the three slide in as one unit.
+  $drawer-panel-w: min(300px, calc(85vw - #{$activity-bar-w}));
+
   // Switch to flex column so grid placement rules don't bleed in from desktop
   .layout {
     display: flex;
     flex-direction: column;
-    position: relative;
   }
 
+  // The brand/search/new-chat header is part of the slide-in drawer on mobile rather than a
+  // permanent second row of chrome — two stacked 45px bars left the chat header no room and
+  // pushed its right-hand controls off-screen entirely.
+  // See docs/adr/0028-composer-owns-per-send-controls.md.
   .sidebar-global-header {
-    flex-shrink: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
     height: #{$header-h};
+    width: calc(#{$activity-bar-w} + #{$drawer-panel-w});
+    z-index: 201;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    padding: 0 10px;
+    gap: 8px;
   }
 
   .main {
@@ -1897,14 +1966,15 @@ $mobile: 720px;
 
   .sidebar {
     left: #{$activity-bar-w};
-    width: min(300px, calc(85vw - #{$activity-bar-w}));
+    width: #{$drawer-panel-w};
     box-shadow: 4px 0 24px rgba(0,0,0,0.12);
     // translateX(-100%) only moves sidebar to left:0 — still visible over the activity bar offset.
     // Extra -$activity-bar-w pushes it fully off-screen.
     transform: translateX(calc(-100% - #{$activity-bar-w}));
   }
 
-  // Slide in both when layout has .sidebar-open
+  // Slide all three in when layout has .sidebar-open
+  .sidebar-open .sidebar-global-header,
   .sidebar-open .activity-bar,
   .sidebar-open .sidebar {
     transform: translateX(0);
@@ -1913,38 +1983,50 @@ $mobile: 720px;
   // Backdrop shown when sidebar is open
   .sidebar-backdrop {
     position: fixed;
-    top: #{$header-h};
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     background: rgba(0,0,0,0.35);
     z-index: 199;
     backdrop-filter: blur(1px);
   }
 
-  // Show hamburger, hide on desktop (already display:none above breakpoint)
-  .btn-hamburger {
+  // Show hamburger + the header's own "new chat" (the global header's "+" is in the drawer now)
+  .btn-hamburger,
+  .btn-header-new-chat {
     display: flex;
     flex-shrink: 0;
   }
 
   // Compact header
   .chat-header {
-    padding: 8px 12px;
+    padding: 8px 10px;
     gap: 8px;
 
     h2 { font-size: 14px; }
+
+    .project-chip { max-width: 120px; }
   }
 
-  .header-controls { gap: 6px; }
+  .header-controls { gap: 4px; }
 
-  // Icon-only on mobile — the full "Private" label plus a project chip left
-  // the settings cog crowded off the edge of narrow viewports.
-  .btn-private-toggle { padding: 5px 8px; }
+  // The toolbar must *fit*, not just scroll: a control parked behind a horizontal scroll is
+  // the same unreachable-right-hand-side problem this redesign set out to fix. Let the selects
+  // share the row by shrinking (each keeps a legible floor) and drop the Private label to its
+  // icon, which is enough to fit model + depth + project + Private at 390px.
+  .composer-toolbar {
+    padding: 8px 10px 0;
+
+    > * { flex-shrink: 1; }
+  }
+
+  .composer-select {
+    max-width: 120px;
+    min-width: 62px;
+  }
+
+  .project-picker { max-width: 96px; }
+
+  .btn-private-toggle { padding: 4px 8px; }
   .btn-private-label { display: none; }
-
-  .model-select { font-size: 12px; padding: 4px 8px; max-width: 130px; }
-  .project-picker { max-width: 100px; }
 
   // Bubbles: reduce horizontal padding on mobile
   .bubble-row { padding: 0 8px; }

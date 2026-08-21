@@ -531,7 +531,11 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: 'chatrock-store',
-      partialize: (s) => ({ lastModel: s.lastModel, sidebarWidth: s.sidebarWidth, activePanel: s.activePanel, userPreferences: s.userPreferences }),
+      // `models` is persisted so the model pickers render populated on first paint instead of
+      // waiting out a cold-start GET /api/models — the list is a static server-side constant,
+      // so a stale cached copy is at worst one deploy behind and is refreshed in the
+      // background on every load. See docs/adr/0028-composer-owns-per-send-controls.md.
+      partialize: (s) => ({ lastModel: s.lastModel, sidebarWidth: s.sidebarWidth, activePanel: s.activePanel, userPreferences: s.userPreferences, models: s.models }),
     }
   )
 )
