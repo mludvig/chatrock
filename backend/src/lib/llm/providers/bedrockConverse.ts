@@ -59,42 +59,43 @@ function toBedrockTool(spec: ToolSpec): Tool {
 }
 
 /** Trailing cachePoint so the tool definitions (stable across all turns) get cached
- *  on first use. Empty input -> empty output (no dangling cachePoint-only list). */
-function toBedrockToolsWithCache(tools: ToolSpec[]): Tool[] {
+ *  on first use. Empty input -> empty output (no dangling cachePoint-only list).
+ *  `cachingEnabled` gates the cachePoint itself — a model with promptCaching:'none'
+ *  (e.g. Grok 4.6) gets an AccessDeniedException if a cachePoint is sent at all. */
+function toBedrockToolsWithCache(tools: ToolSpec[], cachingEnabled: boolean): Tool[] {
   if (tools.length === 0) return []
-  return [...tools.map(toBedrockTool), CACHE_POINT_TOOL]
+  return cachingEnabled ? [...tools.map(toBedrockTool), CACHE_POINT_TOOL] : tools.map(toBedrockTool)
 }
 
 // Converse-specific requirement: it rejects tool blocks in history without a non-empty
 // toolConfig. When the caller has no organic tools to offer but the replayed history
 // contains tool_call/tool_result blocks, this re-offers a minimal default set so
 // toolConfig is present and valid. (Not needed for a provider without that constraint.)
-function buildDefaultToolSet(): Tool[] {
-  return toBedrockToolsWithCache(buildDefaultToolList())
+function buildDefaultToolSet(cachingEnabled: boolean): Tool[] {
+  return toBedrockToolsWithCache(buildDefaultToolList(), cachingEnabled)
 }
 
 /**
- * Build the system prompt array with a trailing cachePoint.
+ * Build the system prompt array, with a trailing cachePoint when `cachingEnabled`.
  * Returns undefined when systemPrompt is empty (no dangling cachePoint).
  * See docs/adr/0019-prompt-cache-breakpoint-placement.md — one marker for the
  * whole prompt, so memory/manifest churn invalidates the entire block.
  */
-function buildSystemWithCache(systemPrompt: string): SystemContentBlock[] | undefined {
+function buildSystemWithCache(systemPrompt: string, cachingEnabled: boolean): SystemContentBlock[] | undefined {
   if (!systemPrompt) return undefined
-  return [
-    { text: systemPrompt } as SystemContentBlock,
-    CACHE_POINT_SYSTEM,
-  ]
+  const text = { text: systemPrompt } as SystemContentBlock
+  return cachingEnabled ? [text, CACHE_POINT_SYSTEM] : [text]
 }
 
 /**
  * Return a copy of `messages` with a cachePoint injected after the last block of
  * the message at `boundaryIndex` — the ONE cache marker for this request, placed
  * at the end of the "stable prior" prefix so it replaces (not accumulates) as the
- * conversation grows. boundaryIndex < 0 (nothing stable yet) is a no-op.
+ * conversation grows. boundaryIndex < 0 (nothing stable yet) or `!cachingEnabled`
+ * is a no-op.
  */
-function injectCachePointAt(messages: Message[], boundaryIndex: number): Message[] {
-  if (boundaryIndex < 0 || boundaryIndex >= messages.length) return messages
+function injectCachePointAt(messages: Message[], boundaryIndex: number, cachingEnabled: boolean): Message[] {
+  if (!cachingEnabled || boundaryIndex < 0 || boundaryIndex >= messages.length) return messages
   return messages.map((m, i) => i === boundaryIndex ? { ...m, content: [...(m.content ?? []), CACHE_POINT_CONTENT] } : m)
 }
 
@@ -114,6 +115,7 @@ async function* streamOneTurn(
   messages: Message[],
   tools: Tool[],
   settings: ModelSettings,
+  cachingEnabled: boolean,
   abortSignal?: AbortSignal,
   forceToolName?: string,
 ): AsyncGenerator<StreamChunk, RawTurnResult> {
@@ -122,7 +124,7 @@ async function* streamOneTurn(
   const hasRealTools = tools.some(t => 'toolSpec' in (t as object))
   const cmd = new ConverseStreamCommand({
     modelId,
-    system: buildSystemWithCache(systemPrompt),
+    system: buildSystemWithCache(systemPrompt, cachingEnabled),
     messages,
     ...buildInferenceParams(modelId, settings),
     ...(hasRealTools
@@ -321,19 +323,20 @@ function sanitizeHistory(messages: NeutralMessage[]): NeutralMessage[] {
 }
 
 async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult> {
+  const cachingEnabled = getCapabilities(req.modelId).promptCaching !== 'none'
   const bedrockMessages = req.messages.map(fromNeutralMessage)
-  const withCache = injectCachePointAt(bedrockMessages, req.cacheBoundaryIndex)
+  const withCache = injectCachePointAt(bedrockMessages, req.cacheBoundaryIndex, cachingEnabled)
 
-  let tools = toBedrockToolsWithCache(req.tools)
+  let tools = toBedrockToolsWithCache(req.tools, cachingEnabled)
   if (tools.length === 0 && historyHasToolBlocks(bedrockMessages)) {
-    tools = buildDefaultToolSet()
+    tools = buildDefaultToolSet(cachingEnabled)
   }
 
   // Bedrock rejects toolChoice together with adaptive thinking — a forced round
   // always runs with thinking off (a tool-choice round needs none anyway).
   const roundSettings = req.forceToolName ? { ...req.settings, thinkingEffort: 'off' as const } : req.settings
 
-  const gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, req.abortSignal, req.forceToolName)
+  const gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, cachingEnabled, req.abortSignal, req.forceToolName)
   let raw: RawTurnResult | undefined
   while (true) {
     const { value, done } = await gen.next()
