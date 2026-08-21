@@ -1809,6 +1809,18 @@ $header-h: 45px;
 
 .toast-text { flex: 1; }
 
+.toast-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 8px;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  color: inherit;
+}
+
 .toast-memory-cards {
   flex: 1;
   display: flex;
