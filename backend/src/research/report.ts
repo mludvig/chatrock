@@ -3,15 +3,16 @@ import type { ReportInput, ReportResult } from './types'
 import { converseOnce } from '../lib/bedrock'
 import { DEFAULT_CHAT_MODEL } from '../config/models'
 import {
-  getChat, buildTurnKey, putMessage, updateChatActiveLeaf, updateRun,
+  getChat, buildTurnKey, putMessage, updateChatActiveLeaf, updateChatTitle, updateRun,
   buildProjectKey, putProject, updateChatProject, buildProjectFileKey, putProjectFile,
 } from '../lib/dynamo'
 import { projectFilePrefix } from '../lib/attachments'
 import { summarizeFile } from '../lib/projectFiles'
-import { summarizeChatById, enrichProjectFactsByChatId } from '../lib/enrichment'
+import { summarizeChatById, enrichProjectFactsByChatId, generateChatTitle } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { notifyConnection } from '../lib/wsNotify'
 import { notifyPhase } from './progress'
+import { linkifyReportCitations } from './citations'
 import { v4 as uuidv4 } from 'uuid'
 import RESEARCH_REPORT_SYSTEM_PROMPT from '../../prompts/research-report.txt'
 
@@ -41,9 +42,12 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
     event.gapsNotPursued.length > 0 ? event.gapsNotPursued.join('\n') : '(none)',
   ].join('\n')
 
-  const reportText = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_REPORT_SYSTEM_PROMPT, [
+  const rawReportText = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_REPORT_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },
   ], { maxTokens: 4096 })
+  // Deterministic rewrite of [n] markers and the Sources list into markdown links —
+  // see citations.ts for why this isn't left to the model's own link syntax.
+  const reportText = linkifyReportCitations(rawReportText)
 
   const chat = await getChat(event.sub, event.chatId)
   const ts = new Date().toISOString()
@@ -62,18 +66,44 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
   await updateChatActiveLeaf(event.sub, event.chatId, msgId)
   await updateRun(event.chatId, event.runId, { status: 'done', reportText })
 
+  // Deep Research bypasses ws/sendMessage.ts entirely, so its own title-gen path
+  // (chat.title === 'New Chat' guard) never runs — do the same thing here. The same
+  // generated title is reused as the auto-created project's name below rather than the
+  // raw (often long) question, so ChatDetailsDialog / dropdowns stay a sane width.
+  let title: string | undefined
+  if (chat?.title === 'New Chat') {
+    try {
+      title = await generateChatTitle(`User: ${event.question}\nAssistant: ${reportText}`, event.chatId)
+      if (title) {
+        await updateChatTitle(event.sub, event.chatId, title)
+        await notifyConnection(event.connId, { type: 'titleUpdated', chatId: event.chatId, title })
+      }
+    } catch (err) {
+      console.error(JSON.stringify({ event: 'research_title_gen_error', chatId: event.chatId, error: String(err) }))
+    }
+  }
+
   // Sensitive chats never get a project or a dossier file (docs/adr/0024) — findings stay
   // chat-scoped on the RUN# row, read back via the read_research_findings tool.
   let projectId: string | undefined
+  let newProjectName: string | undefined
   if (!chat?.sensitive) {
     // Its own phase: writeDossier summarizes the file and backfills chat/project facts, so
     // it runs for a while after the report itself is already written.
     await notifyPhase(event, 'dossier')
-    projectId = await writeDossier(event, reportText, chat)
+    const dossier = await writeDossier(event, reportText, chat, title)
+    projectId = dossier.projectId
+    newProjectName = dossier.createdNew ? dossier.projectName : undefined
   }
 
   console.log(JSON.stringify({ event: 'research_report_done', runId: event.runId, chatId: event.chatId, msgId, projectId }))
-  await notifyConnection(event.connId, { type: 'research_done', runId: event.runId, chatId: event.chatId, msgId, projectId })
+  // newProjectName is set only when this run just created the project — the chat moving
+  // there is a surprising side effect (it drops out of the LHS chat list's default filter),
+  // so the frontend uses this to show a toast pointing at where it went. An existing
+  // project's dossier write is unsurprising (the chat was already there) and gets no toast.
+  await notifyConnection(event.connId, {
+    type: 'research_done', runId: event.runId, chatId: event.chatId, msgId, projectId, newProjectName,
+  })
   return { reportText }
 }
 
@@ -86,15 +116,22 @@ async function writeDossier(
   event: ReportInput,
   reportText: string,
   chat: Record<string, unknown> | undefined,
-): Promise<string> {
+  generatedTitle: string | undefined,
+): Promise<{ projectId: string; createdNew: boolean; projectName: string }> {
   let projectId = chat?.projectId as string | undefined
+  let projectName = ''
+  const createdNew = !projectId
   if (!projectId) {
     projectId = newId()
+    // The same title generated for the chat above (or, if title-gen failed / the chat
+    // already had a real title, the raw question truncated) — reusing it here is what
+    // keeps the auto-created project's name short instead of the full question text.
+    projectName = generatedTitle ?? event.question.slice(0, 80)
     const now = new Date().toISOString()
     await putProject({
       ...buildProjectKey(event.sub, projectId),
       projectId,
-      name: event.question.slice(0, 80),
+      name: projectName,
       description: '',
       instructions: '',
       memoryEnabled: true,
@@ -131,7 +168,7 @@ async function writeDossier(
     updatedAt: now,
   })
 
-  return projectId
+  return { projectId, createdNew, projectName }
 }
 
 // Assembled from what actually flows through the state machine today: the final report,

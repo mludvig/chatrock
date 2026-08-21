@@ -118,6 +118,16 @@ const mdComponents = {
       </div>
     )
   },
+  // Same treatment every other external link in this file already gets (sanitized,
+  // opened in a new tab) — markdown links weren't going through that before, most
+  // visibly the research report's citation links (report.ts's linkifyReportCitations).
+  a({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+    return (
+      <a href={sanitizeUrl(href ?? '')} target="_blank" rel="noopener noreferrer" {...props}>
+        {children}
+      </a>
+    )
+  },
 }
 
 // ── Attachment block (images + documents) ───────────────────────────────────

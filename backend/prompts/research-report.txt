@@ -6,8 +6,10 @@ Write the final answer as plain markdown (no JSON, no code fence around the whol
 response). Requirements:
 - Directly and thoroughly answer the question, synthesising across findings rather than
   listing them sub-question by sub-question.
-- Cite sources inline as [n], and end with a "Sources" section listing each numbered URL
-  once.
+- Cite sources inline as [n], and end with a "Sources" section: a markdown ordered list
+  with exactly one URL per line and nothing else on the line (e.g. "1. https://example.com"
+  — no titles, no descriptions, no markdown link syntax). Number sources in the order they
+  are first cited.
 - If gaps were deliberately not pursued and they matter to the answer, note them briefly
   near the end rather than silently omitting them.
 - Do not invent facts beyond what the findings support.

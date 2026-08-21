@@ -550,6 +550,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             if (!useChatStore.getState().projects.some(p => p.projectId === evt.projectId)) {
               void api.getProject(evt.projectId).then(({ project }) => useChatStore.getState().addProject(project))
             }
+            // A newly-created project moves the chat out of the LHS list's default
+            // filter (project chats are hidden unless "show project chats" is on) —
+            // that's a surprising side effect since the user never asked to move it,
+            // so point at where it went rather than let it quietly vanish.
+            if (evt.newProjectName) {
+              pushToast({
+                kind: 'info',
+                text: `Research complete — saved to project "${evt.newProjectName}"`,
+                linkTo: `/p/${evt.projectId}`,
+                linkLabel: 'View project',
+              })
+            }
           }
           if (evt.chatId === chatIdRef.current) {
             reloadMessages(evt.chatId)

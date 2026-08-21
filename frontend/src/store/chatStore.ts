@@ -26,6 +26,10 @@ export interface Toast {
   kind: ToastKind
   text: string
   items?: MemoryUpdateItem[]
+  // Optional in-app navigation path (e.g. a project the toast is announcing) — a plain
+  // route string rather than a callback since toasts are Zustand state.
+  linkTo?: string
+  linkLabel?: string
 }
 
 let _toastSeq = 0
