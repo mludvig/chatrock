@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faFolder, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS } from '../api/http'
 import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
@@ -1771,17 +1771,22 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             ))}
           </select>
           {isNew && projects.length > 0 && (
-            <select
-              className="composer-select project-picker"
-              value={draftProjectId}
-              onChange={e => setDraftProjectId(e.target.value)}
-              title="File this chat into a project"
-            >
-              <option value="">No project</option>
-              {projects.map(p => (
-                <option key={p.projectId} value={p.projectId}>{p.name}</option>
-              ))}
-            </select>
+            /* Unfiled is the default and says nothing worth a word of the row: it collapses to
+               the folder icon, and only a chosen project spends width on its (ellipsised) name. */
+            <span className={`project-picker-wrap${draftProjectId ? '' : ' is-empty'}`}>
+              {!draftProjectId && <FontAwesomeIcon icon={faFolder} className="project-picker-icon" />}
+              <select
+                className="composer-select project-picker"
+                value={draftProjectId}
+                onChange={e => setDraftProjectId(e.target.value)}
+                title="File this chat into a project"
+              >
+                <option value="">No project</option>
+                {projects.map(p => (
+                  <option key={p.projectId} value={p.projectId}>{p.name}</option>
+                ))}
+              </select>
+            </span>
           )}
           <button
             type="button"

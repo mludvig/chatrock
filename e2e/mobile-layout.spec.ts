@@ -112,6 +112,30 @@ test.describe('redesigned chrome', () => {
     await page.screenshot({ path: '.screenshots/2026-08-22-mobile-long-project.png' })
   })
 
+  test('mobile: the project picker is icon-only until a project is chosen', async ({ page }) => {
+    await page.setViewportSize(MOBILE)
+    await page.goto('/c/new')
+    await expect(page.locator('.chat-view')).toBeVisible({ timeout: 15_000 })
+    await page.waitForLoadState('networkidle')
+
+    const wrap = page.locator('.project-picker-wrap')
+    await expect(wrap).toHaveClass(/is-empty/)
+    await expect(page.locator('.project-picker-icon')).toBeVisible()
+    expect((await wrap.boundingBox())!.width).toBeLessThanOrEqual(34)
+
+    // Choosing a project spends width on its (ellipsised) name instead.
+    const picker = page.locator('.project-picker')
+    const firstProject = await picker.locator('option').nth(1).getAttribute('value')
+    await picker.selectOption(firstProject!)
+    await expect(wrap).not.toHaveClass(/is-empty/)
+    await expect(page.locator('.project-picker-icon')).toHaveCount(0)
+    expect((await wrap.boundingBox())!.width).toBeGreaterThan(34)
+
+    await assertNoHorizontalOverflow(page)
+    await assertAllControlsReachable(page)
+    await page.screenshot({ path: '.screenshots/2026-08-22-mobile-project-picked.png' })
+  })
+
   test('desktop: header is lean, composer owns the per-send controls', async ({ page }) => {
     await page.setViewportSize(DESKTOP)
     await page.goto('/c/new')
