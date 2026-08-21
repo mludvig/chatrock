@@ -1184,6 +1184,38 @@ $header-h: 45px;
   &:disabled { opacity: 0.5; cursor: default; }
 }
 
+// The project picker stays a native <select> (so mobile gets the OS picker) but collapses to a
+// folder icon while nothing is filed: the select is laid over the icon with its own text and
+// arrow hidden, which keeps one control rather than swapping in a button + custom menu.
+.project-picker-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+
+  .project-picker-icon {
+    position: absolute;
+    left: 0;
+    right: 0;
+    margin: auto;
+    font-size: 12px;
+    color: $muted;
+    pointer-events: none;
+  }
+
+  &.is-empty .project-picker {
+    appearance: none;
+    width: 30px;
+    min-width: 30px;
+    padding: 4px;
+    color: transparent;
+
+    // Firefox inherits the select's colour into the open list; the options must stay legible.
+    option { color: $text; }
+  }
+
+  &.is-empty:hover .project-picker-icon { color: $text; }
+}
+
 .input-bar {
   display: flex;
   gap: 10px;

@@ -12,7 +12,7 @@ CSS grid (`display: grid`, columns `48px var(--sidebar-w, 260px) 1fr`, rows `45p
 
 Why per-send controls were moved out of the chat header: `docs/adr/0028-composer-owns-per-send-controls.md`. Three surfaces, split by what the control is *about*:
 
-- **`.composer-toolbar`** (in `ChatView.tsx`, above the textarea) — decisions about the message you're about to send: model select, research depth, project picker (drafts only), Private quick-toggle. Scrolls horizontally rather than wrapping. Controls use `.composer-select` (pill-shaped); `.model-select` is the squarer variant still used inside dialogs and panels.
+- **`.composer-toolbar`** (in `ChatView.tsx`, above the textarea) — decisions about the message you're about to send: model select, research depth, project picker (drafts only — a native `<select>` that collapses to a folder icon via `.project-picker-wrap.is-empty` while nothing is filed, and spends width on the ellipsised name only once a project is chosen), Private quick-toggle. Scrolls horizontally rather than wrapping. Controls use `.composer-select` (pill-shaped); `.model-select` is the squarer variant still used inside dialogs and panels.
 - **`.chat-header`** — identity + navigation only: hamburger (mobile), title, project chip (width-capped and ellipsised — 180px desktop, 120px mobile), "+ new chat" (mobile), details cog.
 - **`ChatDetailsDialog` / `ProjectDetailsDialog`** — everything item-scoped and infrequent, unchanged.
 
