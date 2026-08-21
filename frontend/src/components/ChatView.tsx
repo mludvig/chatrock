@@ -1220,6 +1220,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             waveSubQuestions: [], findings: [], findingCount: 0, done: false,
             ...initialResearchProgress(),
           })
+          // Seed the cache before navigating: the load effect blanks and refetches an
+          // uncached chat, which would drop the question bubble in the window before
+          // ws/startResearch.ts's user turn is queryable. A cache hit skips both, and
+          // research_done's reload replaces this with the real transcript.
+          useChatStore.getState().setMessagesCache(res.chatId, {
+            messages: [optimisticUser], conversationUsage: null, hasMoreOlder: false, oldestMsgId: null,
+          })
           justCreatedChatIdRef.current = res.chatId
           navigate(`/c/${res.chatId}`, { replace: true })
         } catch (err) {
@@ -1320,6 +1327,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           runId: '', status: 'recon', question: content, plan: null,
           waveSubQuestions: [], findings: [], findingCount: 0, done: false,
           ...initialResearchProgress(),
+        })
+        // Same reason as the new-chat branch above: keep the question bubble across a
+        // switch to another chat and back, before the persisted turn is queryable.
+        useChatStore.getState().setMessagesCache(chatId!, {
+          messages: researchMessages, conversationUsage, hasMoreOlder, oldestMsgId,
         })
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : String(err))

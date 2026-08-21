@@ -12,6 +12,9 @@ const mockSend = (SFNClient as jest.Mock).mock.results[0].value.send as jest.Moc
 jest.mock('../../src/lib/dynamo', () => ({
   ...jest.requireActual('../../src/lib/dynamo'),
   getConnection: jest.fn(),
+  getChat: jest.fn(),
+  putMessage: jest.fn(),
+  updateChatActiveLeaf: jest.fn(),
   putRun: jest.fn(),
 }))
 
@@ -54,13 +57,32 @@ test('returns 400 when question is missing or blank', async () => {
   expect(mockDynamo.putRun).not.toHaveBeenCalled()
 })
 
-test('mints a runId, writes the initial RUN# row, and starts the execution', async () => {
+test('returns 404 when the chat does not exist', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
+  mockDynamo.getChat.mockResolvedValue(undefined)
+
+  const res = await handler(makeEvent({ chatId: 'chat-1', question: 'What is X?' }))
+
+  expect((res as { statusCode: number }).statusCode).toBe(404)
+  expect(mockDynamo.putMessage).not.toHaveBeenCalled()
+  expect(mockDynamo.putRun).not.toHaveBeenCalled()
+})
+
+test('persists the question as a user turn chained under activeLeafId, then mints a runId, writes the initial RUN# row, and starts the execution', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', model: 'model-x', activeLeafId: 'leaf-9' })
 
   const res = await handler(makeEvent({ chatId: 'chat-1', question: 'What is X?' }))
 
   expect((res as { statusCode: number }).statusCode).toBe(200)
   expect(JSON.parse((res as { body: string }).body)).toEqual({ runId: 'run-1' })
+
+  expect(mockDynamo.putMessage).toHaveBeenCalledTimes(1)
+  const userTurn = mockDynamo.putMessage.mock.calls[0][0] as Record<string, unknown>
+  expect(userTurn.role).toBe('user')
+  expect(userTurn.parentId).toBe('leaf-9')
+  expect(userTurn.blocks).toEqual([{ kind: 'text', text: 'What is X?' }])
+  expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledWith('user-1', 'chat-1', userTurn.msgId)
 
   expect(mockDynamo.putRun).toHaveBeenCalledTimes(1)
   const runRow = mockDynamo.putRun.mock.calls[0][0]
