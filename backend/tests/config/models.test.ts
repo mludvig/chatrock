@@ -17,8 +17,12 @@ test('TITLE_MODEL is a non-empty string', () => {
   expect(TITLE_MODEL.length).toBeGreaterThan(0)
 })
 
-test('all current models have attachments capability', () => {
+test('all current models have attachments capability, except known exceptions', () => {
+  // global.xai.grok-4.6: image blocks 500/503 on Bedrock Converse as of Aug 2026 despite
+  // the model card listing IMAGE input — see the comment in config/models.ts.
+  const KNOWN_EXCEPTIONS = ['global.xai.grok-4.6']
   for (const m of MODELS) {
+    if (KNOWN_EXCEPTIONS.includes(m.id)) continue
     expect(m.capabilities.attachments).toBe(true)
   }
 })
