@@ -7,7 +7,7 @@ import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
-import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove } from '../api/ws'
+import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove, isConnected } from '../api/ws'
 import type { WSEvent, ConnectionState } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
@@ -794,11 +794,17 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => {
     function handleRefocus() {
       if (document.visibilityState === 'hidden') return
+      // Capture before ensureConnected() reconnects it — a still-open socket means the
+      // backend stream is genuinely still live (e.g. a long multi-round agentic turn), and
+      // force-reloading here would clobber `messages`/streamingMsg with a fetch that only
+      // reflects rounds already persisted, then race against the live frames still arriving
+      // for the in-flight round — rendering as two stacked bubbles.
+      const wasConnected = isConnected()
       ensureConnected(accessToken).catch(() => {})
       const id = chatIdRef.current
       // Only force a reconcile when this tab is actually looking at the chat the
       // in-flight stream belongs to — refocusing on an unrelated chat shouldn't touch it.
-      if (useChatStore.getState().sending && id && id !== 'new' && streamingChatIdRef.current === id) {
+      if (!wasConnected && useChatStore.getState().sending && id && id !== 'new' && streamingChatIdRef.current === id) {
         clearAckTimer()
         clearIdleTimer()
         reloadMessages(id, { force: true })

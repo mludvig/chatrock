@@ -604,7 +604,10 @@ test('inc3: re-run replay ends at the user turn — original answer NOT included
   expect(passedMessages[0].role).toBe('user')
 })
 
-test('inc3: re-run does NOT call auto-title even when title is "New Chat"', async () => {
+test('inc3: re-run DOES call auto-title when title is still "New Chat"', async () => {
+  // A re-run can be the only successful attempt for an otherwise-untitled chat (e.g. the
+  // original first-message call errored before any assistant turn was persisted, and the
+  // user retried) — chat.title === 'New Chat' is the sole guard, so it must still fire here.
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue(RERUN_PRIOR_ROWS)
@@ -618,9 +621,7 @@ test('inc3: re-run does NOT call auto-title even when title is "New Chat"', asyn
   mockBedrock.converseStream.mockReturnValue(fakeStream())
   await buildHandler(mockPost)(rerunEvent())
 
-  // generateChatTitle must not be called for re-runs
-  expect(mockEnrichment.generateChatTitle).not.toHaveBeenCalled()
-  expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+  expect(mockEnrichment.generateChatTitle).toHaveBeenCalled()
 })
 
 test('inc3: re-run with unknown parentId sends error and does not stream', async () => {
@@ -737,7 +738,10 @@ test('inc5: edit replay is root→new-user-turn (edited content is last message)
   expect(passedMessages[0].content).toEqual([{ kind: 'text', text: 'edited question' }])
 })
 
-test('inc5: edit does NOT call auto-title when title is "New Chat"', async () => {
+test('inc5: edit DOES call auto-title when title is still "New Chat"', async () => {
+  // An edit of the chat's root message is wire-indistinguishable from a resend of a first
+  // message whose original attempt errored before persisting an assistant turn — the
+  // chat.title === 'New Chat' guard alone must be enough to let title generation run.
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue(RERUN_PRIOR_ROWS)
@@ -751,9 +755,7 @@ test('inc5: edit does NOT call auto-title when title is "New Chat"', async () =>
   mockBedrock.converseStream.mockReturnValue(fakeStream())
   await buildHandler(mockPost)(editEvent())
 
-  // generateChatTitle must not be called for edits
-  expect(mockEnrichment.generateChatTitle).not.toHaveBeenCalled()
-  expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
+  expect(mockEnrichment.generateChatTitle).toHaveBeenCalled()
 })
 
 test('inc5: edit with unknown non-null parentId sends error frame and does not stream', async () => {
