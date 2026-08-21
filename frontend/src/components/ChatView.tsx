@@ -528,6 +528,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           patchActiveResearch(evt.chatId, { findingCount: evt.findingCount, done: evt.done })
         } else if (evt.type === 'research_done') {
           setActiveResearch(evt.chatId, null)
+          // A run without an existing project creates one and moves the chat into it
+          // (backend/src/research/report.ts's writeDossier) — the store never learns
+          // about either side effect from a WS frame alone, so pull both in here.
+          if (evt.projectId) {
+            patchChat(evt.chatId, { projectId: evt.projectId })
+            if (!useChatStore.getState().projects.some(p => p.projectId === evt.projectId)) {
+              void api.getProject(evt.projectId).then(({ project }) => useChatStore.getState().addProject(project))
+            }
+          }
           if (evt.chatId === chatIdRef.current) {
             reloadMessages(evt.chatId)
           } else {
