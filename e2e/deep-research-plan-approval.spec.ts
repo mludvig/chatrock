@@ -26,6 +26,9 @@ test('plan approval: revise on substantive feedback, approve on empty input', as
   await expect(page.locator('.research-panel')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.research-panel-plan')).toBeVisible({ timeout: 120_000 })
 
+  // Recon's search is shown as a normal tool pill and stays above the plan it produced.
+  await expect(page.locator('.research-panel-plan .research-panel-steps .tool-pill')).toBeVisible()
+
   const feedback = page.locator('.research-panel-feedback')
   const actionBtn = page.locator('.research-panel-actions button')
 
@@ -37,7 +40,10 @@ test('plan approval: revise on substantive feedback, approve on empty input', as
   await expect(actionBtn).toHaveText(/Revise/, { timeout: 5_000 })
 
   await actionBtn.click()
-  // A revised plan still awaits approval — the panel doesn't disappear.
+  // Submitting drops the superseded plan immediately — without this the assertions below
+  // would pass against the pre-revise UI and click Approve on a consumed task token.
+  await expect(page.locator('.research-panel-plan')).toHaveCount(0, { timeout: 10_000 })
+  // A revised plan still awaits approval — the panel comes back rather than starting a run.
   await expect(page.locator('.research-panel-plan')).toBeVisible({ timeout: 120_000 })
   await expect(page.locator('.research-panel-feedback')).toHaveValue('')
 
@@ -46,4 +52,9 @@ test('plan approval: revise on substantive feedback, approve on empty input', as
   await actionBtn.click()
   await expect(page.locator('.research-panel-plan')).toHaveCount(0, { timeout: 60_000 })
   await expect(page.locator('.research-panel-status')).toBeVisible({ timeout: 15_000 })
+
+  // Each researcher in the wave gets its own card, and its tool calls appear there live
+  // rather than only when the whole run finishes.
+  await expect(page.locator('.research-panel-researcher').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.research-panel-researcher .tool-pill').first()).toBeVisible({ timeout: 120_000 })
 })

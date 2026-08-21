@@ -31,11 +31,10 @@ interface ApproveBody {
 // replaces the state machine's state ($) — it must reconstruct every field the rest of
 // the pipeline (ApprovalChoice/Replan/Wave/Assess/Report) needs, not just the plan.
 // A revise loops AwaitApproval -> Replan -> AwaitApproval, minting a fresh task token.
-// The frontend (ResearchPanel.tsx) disables its action button for the duration of a
-// submission, so a second click can't race a still-in-flight revise against its own
-// token rotation — but retry once against a freshly re-read row on a stale-token error
-// anyway, as a defense-in-depth for any other path (e.g. a reconnect) that could still
-// deliver a second decision before awaitApproval.ts's rewrite lands.
+// Both decisions move the run out of 'awaiting_approval' immediately (below), so the
+// panel stops offering the button and a second decision hits the status guard — but the
+// status write lands just after SendTaskSuccess, so retry against a freshly re-read row
+// on a stale-token error anyway, for a decision that arrives inside that window.
 const STALE_TOKEN_RETRY_DELAYS_MS = [300, 600, 1000, 1500]
 
 function isStaleTaskTokenError(err: unknown): boolean {
@@ -82,9 +81,12 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
             connId,
           }),
         }))
-        // status stays 'awaiting_approval' — ApprovalChoice/Replan loop back into a fresh
-        // AwaitApproval visit. Refresh connId in case the user reconnected from another tab.
-        await updateRun(chatId, runId, { connId })
+        // The run is planning again until Replan's fresh AwaitApproval visit writes
+        // 'awaiting_approval' back (awaitApproval.ts) — saying so here is what stops the
+        // panel from re-offering the superseded plan, and makes a second decision arriving
+        // in the meantime fail the guard above instead of racing the token rotation.
+        // Refresh connId in case the user reconnected from another tab.
+        await updateRun(chatId, runId, { connId, status: 'planning' })
         console.log(JSON.stringify({ event: 'research_approve_revise', runId, chatId }))
         return { statusCode: 200, body: '' }
       }

@@ -94,7 +94,7 @@ test('approve with feedback: feedback seeds steeringNotes instead of triggering 
   expect(JSON.parse(call.input.output).steeringNotes).toEqual(['Focus on 1990s'])
 })
 
-test('revise: sends SendTaskSuccess with revise:true and feedback, and leaves status awaiting_approval', async () => {
+test('revise: sends SendTaskSuccess with revise:true and feedback, and moves status to planning', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
   mockDynamo.getRun.mockResolvedValue(BASE_RUN)
 
@@ -113,7 +113,10 @@ test('revise: sends SendTaskSuccess with revise:true and feedback, and leaves st
     revise: true,
     connId: 'conn-1',
   })
-  expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { connId: 'conn-1' })
+  // 'planning' until Replan's fresh AwaitApproval visit writes 'awaiting_approval' back —
+  // it is what stops the panel re-offering the superseded plan and makes a second decision
+  // hit the status guard rather than the rotating task token.
+  expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { connId: 'conn-1', status: 'planning' })
 })
 
 test('revise without feedback returns 400 and sends nothing', async () => {

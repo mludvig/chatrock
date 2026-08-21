@@ -1632,8 +1632,19 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <div className="message assistant">
               <ResearchPanel
                 run={activeResearchRun}
-                onApprove={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve', feedback })}
-                onRevise={(feedback) => researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'revise', feedback })}
+                // Both decisions move the run out of awaiting_approval right away, matching
+                // what researchApprove.ts writes to the run row — the panel must stop
+                // offering a plan the user has already acted on rather than waiting out the
+                // minute of backend work for the frame that says so. Patch after the send,
+                // so a closed socket leaves the plan in place to retry.
+                onApprove={(feedback) => {
+                  researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve', feedback })
+                  patchActiveResearch(chatId!, { status: 'running', waveSubQuestions: activeResearchRun.plan?.subQuestions ?? [], phase: null })
+                }}
+                onRevise={(feedback) => {
+                  researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'revise', feedback })
+                  patchActiveResearch(chatId!, { status: 'planning', phase: 'planning' })
+                }}
               />
             </div>
           )}
