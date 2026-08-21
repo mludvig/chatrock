@@ -5,6 +5,7 @@ import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { updateRun } from '../lib/dynamo'
 import { notifyConnection } from '../lib/wsNotify'
+import { notifyPhase } from './progress'
 import RESEARCH_ASSESS_SYSTEM_PROMPT from '../../prompts/research-assess.txt'
 
 interface RawSubQuestion {
@@ -19,6 +20,7 @@ interface RawSubQuestion {
 // running total, and decides whether another wave is needed.
 export const handler = async (event: AssessInput): Promise<AssessResult> => {
   console.log(JSON.stringify({ event: 'research_assess_start', runId: event.runId, chatId: event.chatId, roundsSpent: event.roundsSpent }))
+  await notifyPhase(event, 'assessing')
 
   const newFindings: Finding[] = event.waveFindings.map(item => item.result.finding)
   const findings = [...event.findings, ...newFindings]

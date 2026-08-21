@@ -32,6 +32,8 @@ frontend/src/
     ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; "Private" quick-toggle + model select + cog (opens ChatDetailsDialog)/tint/footer (see below)
     ToolsPanel.tsx          — what the model may call out to: web search, browser core/extended, memory, search history, inject-timestamp (all always shown, none capability-gated)
     ModelTuningPanel.tsx    — how the model reasons/writes: answer length, thinking effort (capability-gated), temperature (capability-gated). No Top P control — dropped as rarely-worth-tuning clutter.
+    StepBlocks.tsx         — ThinkingBlock / ToolCallPill (+ search-result cards, sanitizeUrl): how one step of a turn renders. Shared by MessageBubble and ResearchPanel so Deep Research progress looks identical to any other tool use
+    ResearchPanel.tsx      — Deep Research plan-approval gate + live progress (recon steps, per-researcher step lists, findings, phase status line)
     MessageBubble.tsx      — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
     Toaster.tsx            — stacked toast notifications (bottom-center), auto-dismiss 3s
   env.ts                  — VITE_* env var access

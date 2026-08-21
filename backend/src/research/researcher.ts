@@ -5,6 +5,7 @@ import { DEFAULT_CHAT_MODEL } from '../config/models'
 import { safeParse } from '../lib/enrichment'
 import type { ToolContext } from '../lib/tools'
 import { notifyConnection } from '../lib/wsNotify'
+import { stepEmitter } from './progress'
 import RESEARCH_RESEARCHER_SYSTEM_PROMPT from '../../prompts/research-researcher.txt'
 
 // Only web_search/web_fetch — a researcher has no chat/memory/project context to draw on,
@@ -33,6 +34,10 @@ export const handler = async (event: ResearcherInput): Promise<ResearcherResult>
 
   const ctx: ToolContext = { sub: event.sub, chatId: event.chatId }
 
+  // A researcher can spend minutes on multiple search/fetch rounds; without this its work
+  // is invisible until the single research_finding frame at the very end.
+  const emit = stepEmitter(event, event.subQuestion.id)
+
   let finalText = ''
   for await (const chunk of converseStream(
     DEFAULT_CHAT_MODEL,
@@ -41,6 +46,7 @@ export const handler = async (event: ResearcherInput): Promise<ResearcherResult>
     RESEARCHER_SETTINGS,
     ctx,
   )) {
+    await emit(chunk)
     if (chunk.type === 'turn' && chunk.role === 'assistant') {
       finalText = chunk.content.filter(b => b.kind === 'text').map(b => b.text).join('\n')
     }

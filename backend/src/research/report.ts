@@ -11,6 +11,7 @@ import { summarizeFile } from '../lib/projectFiles'
 import { summarizeChatById, enrichProjectFactsByChatId } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { notifyConnection } from '../lib/wsNotify'
+import { notifyPhase } from './progress'
 import { v4 as uuidv4 } from 'uuid'
 import RESEARCH_REPORT_SYSTEM_PROMPT from '../../prompts/research-report.txt'
 
@@ -26,6 +27,7 @@ const s3 = new S3Client({})
 // back via the read_research_findings tool. See docs/adr/0024.
 export const handler = async (event: ReportInput): Promise<ReportResult> => {
   console.log(JSON.stringify({ event: 'research_report_start', runId: event.runId, chatId: event.chatId }))
+  await notifyPhase(event, 'reporting')
 
   const userMsg = [
     `QUESTION: ${event.question}`,
@@ -62,7 +64,13 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
 
   // Sensitive chats never get a project or a dossier file (docs/adr/0024) — findings stay
   // chat-scoped on the RUN# row, read back via the read_research_findings tool.
-  const projectId = chat?.sensitive ? undefined : await writeDossier(event, reportText, chat)
+  let projectId: string | undefined
+  if (!chat?.sensitive) {
+    // Its own phase: writeDossier summarizes the file and backfills chat/project facts, so
+    // it runs for a while after the report itself is already written.
+    await notifyPhase(event, 'dossier')
+    projectId = await writeDossier(event, reportText, chat)
+  }
 
   console.log(JSON.stringify({ event: 'research_report_done', runId: event.runId, chatId: event.chatId, msgId, projectId }))
   await notifyConnection(event.connId, { type: 'research_done', runId: event.runId, chatId: event.chatId, msgId, projectId })

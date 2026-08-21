@@ -1,5 +1,5 @@
 import { ENV } from '../env'
-import type { ModelSettings, TokenUsage } from './http'
+import type { ModelSettings, Step, TokenUsage } from './http'
 
 // Same shape whether the write came from an explicit manage_memory/manage_project_memory
 // tool call (one item) or passive post-turn enrichment (zero or more) — see
@@ -10,6 +10,10 @@ export interface MemoryUpdateItem {
   category?: string
   text?: string
 }
+
+// Mirrors backend/src/research/types.ts's ResearchPhase — the phases that run a single
+// blocking model call and so have no steps to report, plus recon's own announcement.
+export type ResearchPhase = 'recon' | 'planning' | 'assessing' | 'reporting' | 'dossier'
 
 export type WSEvent =
   | { type: 'ack' }
@@ -33,6 +37,11 @@ export type WSEvent =
   | { type: 'research_wave_start'; runId: string; chatId: string; subQuestions: { id: string; question: string }[] }
   | { type: 'research_finding';    runId: string; chatId: string; subQuestionId: string; summary: string; sourceUrls: string[] }
   | { type: 'research_assess';     runId: string; chatId: string; findingCount: number; done: boolean }
+  // Live progress from the phases that run a real converseStream loop (recon, each
+  // researcher) plus a coarse phase signal for the blocking converseOnce phases —
+  // see backend/src/research/progress.ts.
+  | { type: 'research_phase';      runId: string; chatId: string; phase: ResearchPhase; detail?: string }
+  | { type: 'research_step';       runId: string; chatId: string; subQuestionId?: string; step: Step }
   | { type: 'research_done';       runId: string; chatId: string; msgId: string; projectId?: string }
   // Mid-flight steering ack — see ws/sendMessage.ts's active-run interception.
   | { type: 'research_steering_noted'; runId: string; msgId: string }
