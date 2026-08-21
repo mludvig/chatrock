@@ -956,14 +956,12 @@ $header-h: 45px;
   gap: 8px;
   font-weight: 600;
   color: $accent-h;
+}
 
-  .research-panel-question {
-    font-weight: 400;
-    color: $muted;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+.research-panel-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .research-panel-status {
@@ -976,19 +974,46 @@ $header-h: 45px;
   &.research-panel-status--error { color: $danger; }
 }
 
+// Each section gets its own bordered card, matching the .thinking-block / .tool-pill
+// grammar used for a normal turn's steps — without it the clarifying questions and the
+// sub-questions run together as one undifferentiated wall of bullets.
 .research-panel-section {
+  border: 1px solid $border;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: $bg;
+
   h4 {
-    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
     color: $muted;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
   }
-  ul {
-    list-style: disc;
+  ul, ol {
     padding-left: 20px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 8px;
+    font-size: 14px;
+    line-height: 1.45;
   }
+  ul { list-style: disc; }
+  ol { list-style: decimal; }
+  li::marker { color: $muted; }
+}
+
+.research-panel-count {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: $surface;
+  border: 1px solid $border;
+  letter-spacing: 0;
 }
 
 .research-panel-feedback {

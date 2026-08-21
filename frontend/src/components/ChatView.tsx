@@ -521,7 +521,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             plan: evt.plan, waveSubQuestions: [], findings: [], findingCount: 0, done: false,
           })
         } else if (evt.type === 'research_wave_start') {
-          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: evt.subQuestions, findings: [] })
+          // Findings accumulate across waves — assess.ts merges each wave into the running
+          // total, so clearing them here would make a multi-wave run look like it kept
+          // losing the work it had already reported.
+          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: evt.subQuestions })
         } else if (evt.type === 'research_finding') {
           addResearchFinding(evt.chatId, { subQuestionId: evt.subQuestionId, summary: evt.summary, sourceUrls: evt.sourceUrls })
         } else if (evt.type === 'research_assess') {

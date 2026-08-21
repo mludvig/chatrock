@@ -43,10 +43,11 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
 
   return (
     <div className="research-panel">
+      {/* The question is already rendered as a normal user bubble directly above this
+          panel (ChatView.tsx's optimistic user message), so it isn't repeated here. */}
       <div className="research-panel-header">
         <FontAwesomeIcon icon={faMagnifyingGlass} />
         <span>Deep Research</span>
-        <span className="research-panel-question">{run.question}</span>
       </div>
 
       {(run.status === 'recon' || run.status === 'planning') && (
@@ -66,10 +67,10 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
             </div>
           )}
           <div className="research-panel-section">
-            <h4>Proposed sub-questions</h4>
-            <ul>
+            <h4>Proposed sub-questions <span className="research-panel-count">{run.plan.subQuestions.length}</span></h4>
+            <ol>
               {run.plan.subQuestions.map(sq => <li key={sq.id}>{sq.question}</li>)}
-            </ul>
+            </ol>
           </div>
           <textarea
             className="research-panel-feedback"
