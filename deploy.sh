@@ -34,7 +34,7 @@ SKIP_TERRAFORM=false
 SKIP_FRONTEND=false
 TF_ACTION="apply"
 FORCE_REBUILD=false
-WAIT_INVALIDATION=false
+WAIT_INVALIDATION=true
 
 for arg in "$@"; do
   case $arg in
@@ -45,14 +45,14 @@ for arg in "$@"; do
     backend)       SUBCOMMAND="backend" ;;
     tf)            SUBCOMMAND="tf" ;;
     --force-rebuild) FORCE_REBUILD=true ;;
-    --wait)          WAIT_INVALIDATION=true ;;
+    --no-wait)       WAIT_INVALIDATION=false ;;
     --backend-only)  SKIP_FRONTEND=true ;;
     --frontend-only) SKIP_BACKEND=true; SKIP_TERRAFORM=true ;;
     --tf-only)       SKIP_BACKEND=true; SKIP_FRONTEND=true ;;
     --skip-tf)       SKIP_TERRAFORM=true ;;
     *)
       echo "Unknown argument: $arg"
-      echo "Usage: $0 {apply|plan|validate|frontend|backend|tf} [--force-rebuild] [--wait]"
+      echo "Usage: $0 {apply|plan|validate|frontend|backend|tf} [--force-rebuild] [--no-wait]"
       exit 1
       ;;
   esac
