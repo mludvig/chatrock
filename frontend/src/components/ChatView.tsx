@@ -471,21 +471,46 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
 
-  // Re-sync Deep Research run state on chat load/reconnect — WS progress frames are
-  // best-effort (see api/ws.ts), this is the source of truth. Only an active run (not
-  // done/failed) is worth holding in state; a finished run's report is a normal turn,
-  // already covered by the message-load path.
-  useEffect(() => {
-    if (isNew || !chatId) return
-    api.getResearchRun(chatId).then(({ run }) => {
-      if (!run || run.status === 'done' || run.status === 'failed') return
-      setActiveResearch(chatId, {
+  // Re-sync Deep Research run state from the `RUN#` row — WS progress frames are best-effort
+  // (see backend/src/research/CLAUDE.md's "Progress frames and reconnect"), this is the source
+  // of truth. A run outlives the socket: it finishes in Step Functions, so a phone that
+  // backgrounds the tab misses `research_done` outright and would otherwise sit on a spinning
+  // progress panel forever. Hence this runs on refocus too, not just on chat load.
+  const reconcileResearch = useCallback((id: string) => {
+    api.getResearchRun(id).then(({ run }) => {
+      // No run row yet is not the same as no run: `startResearch` seeds the panel optimistically
+      // and the row appears a moment later, so this must stay a no-op rather than a clear.
+      if (!run) return
+      if (run.status === 'done' || run.status === 'failed') {
+        // The report landed as a normal turn while we were away, so the transcript — not the
+        // progress panel — is where it belongs now.
+        setActiveResearch(id, null)
+        if (id === chatIdRef.current) reloadMessages(id)
+        else useChatStore.getState().invalidateMessagesCache(id)
+        // A run with no project of its own creates one and moves the chat into it
+        // (backend/src/research/report.ts's writeDossier). `research_done` carries that in a
+        // frame; the run row doesn't, so re-read the chat to catch the move.
+        api.getChat(id).then(fresh => {
+          if (!fresh.projectId) return
+          patchChat(id, { projectId: fresh.projectId })
+          if (!useChatStore.getState().projects.some(p => p.projectId === fresh.projectId)) {
+            void api.getProject(fresh.projectId).then(({ project }) => useChatStore.getState().addProject(project))
+          }
+        }).catch(() => {})
+        return
+      }
+      setActiveResearch(id, {
         runId: run.runId, status: run.status, question: run.question, plan: run.plan,
         waveSubQuestions: [], findings: run.findings, findingCount: run.findings.length, done: false,
         ...initialResearchProgress(),
       })
     }).catch(() => {})
-  }, [chatId, isNew, setActiveResearch])
+  }, [setActiveResearch, reloadMessages, patchChat])
+
+  useEffect(() => {
+    if (isNew || !chatId) return
+    reconcileResearch(chatId)
+  }, [chatId, isNew, reconcileResearch])
 
   // Backfill: if chats were not loaded when the seed effect ran (cold navigation),
   // fill draftModelSettings once the chat record arrives in the store.
@@ -803,8 +828,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   useEffect(() => { setDetailsOpen(false) }, [chatId])
 
   // Mirror `sending` into ws.ts so its onclose handler knows whether a dropped socket is
-  // worth chasing with backoff (a turn in flight) or can reconnect lazily on next send.
-  useEffect(() => { setTurnInFlight(sending) }, [sending])
+  // worth chasing with backoff (a turn in flight) or can reconnect lazily on next send. An
+  // active research run counts: `sending` is already false by then, but progress frames are
+  // still arriving and a dropped socket would silently stall the panel.
+  useEffect(() => { setTurnInFlight(sending || !!activeResearchRun) }, [sending, activeResearchRun])
 
   // Surface reconnect attempts so the user isn't left staring at a stalled turn with no
   // explanation — see docs/adr/0021-websocket-reconnect-and-refocus-catchup.md.
@@ -836,6 +863,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         clearIdleTimer()
         reloadMessages(id, { force: true })
       }
+      // A Deep Research run is not a `sending` turn — it runs in Step Functions with the socket
+      // idle, so the branch above never covers it and the missed `research_done` has to be
+      // recovered from the run row instead. Unconditional on `wasConnected`: an iOS tab can come
+      // back with the socket seemingly alive yet have slept through the frame.
+      if (id && id !== 'new' && useChatStore.getState().activeResearch[id]) {
+        reconcileResearch(id)
+      }
     }
     document.addEventListener('visibilitychange', handleRefocus)
     window.addEventListener('focus', handleRefocus)
@@ -844,7 +878,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       window.removeEventListener('focus', handleRefocus)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, reloadMessages])
+  }, [accessToken, reloadMessages, reconcileResearch])
 
   function handleMessagesScroll() {
     const el = messagesRef.current
