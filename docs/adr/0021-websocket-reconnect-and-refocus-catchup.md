@@ -34,6 +34,15 @@ on a stale streaming bubble forever.
   answer is already there. `reloadMessages()` gained a `force` option that bypasses its
   existing sending-guard and clears the stream/sending state itself, since here there is no
   live stream to protect, just a stale local view.
+- **A Deep Research run counts as in flight, and reconciles from its run row.** A run executes
+  in Step Functions with `sending` already false, so neither the reconnect flag nor the
+  `sending`-gated refetch above would cover it, and its best-effort `research_done` frame is
+  simply lost if the phone is away when it fires. `ChatView` therefore mirrors
+  `sending || activeResearchRun` into `setTurnInFlight()`, and refocus additionally re-reads
+  `GET /api/chats/{chatId}/research` whenever the current chat has an active run — the `RUN#`
+  row, not the frame, is the source of truth. A `done`/`failed` run clears the progress panel
+  and reloads the transcript; a missing run row is left alone, since `startResearch` seeds the
+  panel optimistically before the row exists.
 - **Squares with the existing ack watchdog** (`armAckWatchdog`): that covers "the send
   never landed" (no `ack` frame within 12s); this covers "the send landed and the turn
   finished while we were away." Different failure, different recovery — watchdog discards
