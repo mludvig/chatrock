@@ -1,11 +1,11 @@
 import type { AssessInput, AssessResult, Finding, SubQuestion } from './types'
 import { converseOnce } from '../lib/bedrock'
-import { DEFAULT_CHAT_MODEL } from '../config/models'
 import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { updateRun } from '../lib/dynamo'
 import { notifyConnection } from '../lib/wsNotify'
 import { notifyPhase } from './progress'
+import { resolveRunModel } from './model'
 import RESEARCH_ASSESS_SYSTEM_PROMPT from '../../prompts/research-assess.txt'
 
 interface RawSubQuestion {
@@ -35,7 +35,8 @@ export const handler = async (event: AssessInput): Promise<AssessResult> => {
     event.steeringNotes.length > 0 ? event.steeringNotes.join('\n') : '(none)',
   ].join('\n')
 
-  const response = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_ASSESS_SYSTEM_PROMPT, [
+  const model = await resolveRunModel(event)
+  const response = await converseOnce(model, RESEARCH_ASSESS_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },
   ], { maxTokens: 1024, call: { purpose: 'research_assess', sub: event.sub, chatId: event.chatId, runId: event.runId } })
 

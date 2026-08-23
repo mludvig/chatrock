@@ -1,7 +1,6 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3'
 import type { ReportInput, ReportResult } from './types'
 import { converseOnce } from '../lib/bedrock'
-import { DEFAULT_CHAT_MODEL } from '../config/models'
 import {
   getChat, buildTurnKey, putMessage, updateChatActiveLeaf, updateChatTitle, updateRun,
   buildProjectKey, putProject, updateChatProject, buildProjectFileKey, putProjectFile,
@@ -13,6 +12,7 @@ import { newId } from '../lib/ids'
 import { notifyConnection } from '../lib/wsNotify'
 import { notifyPhase } from './progress'
 import { linkifyReportCitations } from './citations'
+import { resolveRunModel } from './model'
 import { v4 as uuidv4 } from 'uuid'
 import RESEARCH_REPORT_SYSTEM_PROMPT from '../../prompts/research-report.txt'
 
@@ -42,7 +42,8 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
     event.gapsNotPursued.length > 0 ? event.gapsNotPursued.join('\n') : '(none)',
   ].join('\n')
 
-  const rawReportText = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_REPORT_SYSTEM_PROMPT, [
+  const model = await resolveRunModel(event)
+  const rawReportText = await converseOnce(model, RESEARCH_REPORT_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },
   ], { maxTokens: 4096, call: { purpose: 'research_report', sub: event.sub, chatId: event.chatId, runId: event.runId } })
   // Deterministic rewrite of [n] markers and the Sources list into markdown links —
@@ -58,7 +59,7 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
     parentId: (chat?.activeLeafId as string | undefined) ?? null,
     role: 'assistant',
     blocks: [{ kind: 'text', text: reportText }],
-    model: DEFAULT_CHAT_MODEL,
+    model,
     createdAt: ts,
     turnIndex: 0,
     responseId: uuidv4(),

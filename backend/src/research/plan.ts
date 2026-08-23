@@ -1,10 +1,10 @@
 import type { PlanInput, PlanResult, SubQuestion } from './types'
 import { converseOnce } from '../lib/bedrock'
-import { DEFAULT_CHAT_MODEL } from '../config/models'
 import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { notifyConnection } from '../lib/wsNotify'
 import { notifyPhase } from './progress'
+import { resolveRunModel } from './model'
 import RESEARCH_PLAN_SYSTEM_PROMPT from '../../prompts/research-plan.txt'
 
 interface RawSubQuestion {
@@ -40,7 +40,8 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
         event.recon && event.recon.notes.length > 0 ? event.recon.notes.join('\n\n') : '(none)',
       ].join('\n')
 
-  const response = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_PLAN_SYSTEM_PROMPT, [
+  const model = await resolveRunModel(event)
+  const response = await converseOnce(model, RESEARCH_PLAN_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },
   ], { maxTokens: 1536, call: { purpose: 'research_plan', sub: event.sub, chatId: event.chatId, runId: event.runId } })
 
