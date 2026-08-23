@@ -1156,6 +1156,64 @@ test('read tools: cachePoint is always last when read tools present', async () =
   expect(lastTool.cachePoint).toBeDefined()
 })
 
+// ── message-level cachePoint placement around attachments ────────────────────
+
+const DOC_BLOCK = {
+  kind: 'document' as const,
+  document: { format: 'txt' as const, name: 'notes', source: { bytes: new Uint8Array([1, 2, 3]) } },
+}
+
+function drainOnce(messages: Parameters<typeof converseStream>[2]) {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+    { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+  ]))
+  return converseStream(DEFAULT_CHAT_MODEL, '', messages, { settings: {}, ctx: { sub: 'user-1' }, call: TEST_CALL })
+}
+
+function sentContent(): Array<Record<string, unknown>> {
+  const cmdInput = getMockSend().mock.calls[0][0].input as { messages: Array<{ content: Array<Record<string, unknown>> }> }
+  return cmdInput.messages[0].content
+}
+
+test('cachePoint goes BEFORE a trailing document block (after it is a ValidationException)', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of drainOnce([
+    { role: 'user', content: [{ kind: 'text', text: 'summarize this' }, DOC_BLOCK] },
+  ])) {
+    // drain
+  }
+
+  const content = sentContent()
+  const cacheIdx = content.findIndex(b => 'cachePoint' in b)
+  const docIdx = content.findIndex(b => 'document' in b)
+  expect(cacheIdx).toBeGreaterThanOrEqual(0)
+  expect(docIdx).toBeGreaterThanOrEqual(0)
+  expect(cacheIdx).toBeLessThan(docIdx)
+})
+
+test('no cachePoint at all when the boundary message is nothing but documents', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of drainOnce([{ role: 'user', content: [DOC_BLOCK] }])) {
+    // drain
+  }
+
+  expect(sentContent().some(b => 'cachePoint' in b)).toBe(false)
+})
+
+test('cachePoint still goes last when the boundary message has no document', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of drainOnce([{ role: 'user', content: [{ kind: 'text', text: 'hello' }] }])) {
+    // drain
+  }
+
+  const content = sentContent()
+  expect('cachePoint' in content[content.length - 1]).toBe(true)
+})
+
 // ── forced Search turn: forceToolName param ──────────────────────────────────────
 
 describe('converseStream forceToolName (forced Search turn)', () => {

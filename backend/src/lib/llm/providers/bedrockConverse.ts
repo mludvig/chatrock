@@ -93,10 +93,23 @@ function buildSystemWithCache(systemPrompt: string, cachingEnabled: boolean): Sy
  * at the end of the "stable prior" prefix so it replaces (not accumulates) as the
  * conversation grows. boundaryIndex < 0 (nothing stable yet) or `!cachingEnabled`
  * is a no-op.
+ *
+ * Exception: a cachePoint directly after a document block is a hard
+ * ValidationException ("messages.N.content.M.type: Field required") — the document
+ * expands into several Anthropic blocks and the marker lands in the middle of them.
+ * An image block has no such problem. So the marker goes before any trailing
+ * documents, and a message that is nothing but documents gets none at all.
  */
 function injectCachePointAt(messages: Message[], boundaryIndex: number, cachingEnabled: boolean): Message[] {
   if (!cachingEnabled || boundaryIndex < 0 || boundaryIndex >= messages.length) return messages
-  return messages.map((m, i) => i === boundaryIndex ? { ...m, content: [...(m.content ?? []), CACHE_POINT_CONTENT] } : m)
+  return messages.map((m, i) => {
+    if (i !== boundaryIndex) return m
+    const content = m.content ?? []
+    let at = content.length
+    while (at > 0 && 'document' in (content[at - 1] as object)) at--
+    if (at === 0) return m
+    return { ...m, content: [...content.slice(0, at), CACHE_POINT_CONTENT, ...content.slice(at)] }
+  })
 }
 
 // Raw, Bedrock-content-shaped result of one streamed Converse call — distinct from
