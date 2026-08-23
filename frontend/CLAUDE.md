@@ -44,7 +44,7 @@ frontend/src/
     ToolsPanel.tsx          — what the model may call out to: web search, browser core/extended, memory, search history, inject-timestamp (all always shown, none capability-gated)
     ModelTuningPanel.tsx    — how the model reasons/writes: answer length, thinking effort (capability-gated), temperature (capability-gated). No Top P control — dropped as rarely-worth-tuning clutter.
     StepBlocks.tsx         — ThinkingBlock / ToolCallPill (+ search-result cards, sanitizeUrl): how one step of a turn renders. Shared by MessageBubble and ResearchPanel so Deep Research progress looks identical to any other tool use
-    ResearchPanel.tsx      — Deep Research plan-approval gate + live progress (recon steps, per-researcher step lists, findings, phase status line)
+    ResearchPanel.tsx      — Deep Research plan-approval gate + live progress (recon steps, per-researcher step lists, findings, phase status line). Approval is one "Approve & start" button; feedback and answers to clarifying questions go through the main composer (docs/adr/0032)
     ResearchInfoSection.tsx — ChatDetailsDialog Info-tab section for a chat with a completed run: question, counts, and a markdown dossier download (docs/adr/0031-deep-research-is-not-a-project.md)
     MessageBubble.tsx      — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
     Toaster.tsx            — stacked toast notifications (bottom-center), auto-dismiss 3s

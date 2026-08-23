@@ -23,6 +23,8 @@ backend/src/
   lib/attachments.ts      — S3 presigned PUT, CloudFront signed display URLs (SSM key), hydrateBlocks, copyChatObjects/rewriteBlockUri for fork; deleteProjectObjects
   lib/projectFiles.ts     — summarizeFile(): sends file to Bedrock (text/PDF/image) to produce microLabel + summary; stores extracted text sidecar for PDFs
   lib/researchDossier.ts  — the research dossier: buildDossierMarkdown() + writeResearchDossier()/writeDossiersForChatMove(), the project-file copy written only for a chat that already belongs to a project (docs/adr/0031)
+  lib/researchApproval.ts — resolvePlanApproval(): releases the AwaitApproval task token (SendTaskSuccess + row transition + stale-token retry), shared by the researchApprove WS action and a composer reply (docs/adr/0032)
+  lib/planFeedback.ts     — classifyPlanFeedback(): one TINY_MODEL call deciding whether a composer reply to a research plan is approve / approve_with_steering / revise (docs/adr/0032)
   lib/projectContext.ts   — executeProjectReadFileTool / executeProjectReadChatTool: ownership validation, progressive detail (summary vs full), capToolResultText applied
   lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
   lib/preferences.ts      — UserPreferences type + resolvePreferences() layering

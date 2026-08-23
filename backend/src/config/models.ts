@@ -119,8 +119,12 @@ export const MODELS: Model[] = [
 
 export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-5'
 
+// The smallest/cheapest model, for short mechanical calls whose output is a title or a
+// one-word classification rather than anything the user reads as an answer.
+export const TINY_MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+
 // Cheaper model used for auto-title generation only
-export const TITLE_MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+export const TITLE_MODEL = TINY_MODEL
 
 // Model used for background memory extraction after each turn.
 export const MEMORY_EXTRACTION_MODEL = DEFAULT_CHAT_MODEL

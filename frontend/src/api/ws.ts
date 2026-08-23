@@ -45,6 +45,9 @@ export type WSEvent =
   | { type: 'research_done';       runId: string; chatId: string; msgId: string }
   // Mid-flight steering ack — see ws/sendMessage.ts's active-run interception.
   | { type: 'research_steering_noted'; runId: string; msgId: string }
+  // A composer message that answered the plan-approval gate instead of becoming a
+  // steering note — the backend classified it and already acted on it.
+  | { type: 'research_plan_decision'; runId: string; chatId: string; msgId: string; decision: 'approve' | 'revise' }
 
 type EventHandler = (evt: WSEvent) => void
 export type ConnectionState = 'open' | 'connecting' | 'closed'

@@ -128,12 +128,13 @@ persists, so the transcript records the model that actually wrote the report.
 returns the first row whose `status` isn't `done`/`failed` — at most one run is ever active
 per chat by product design) before doing anything else with it. If a run is active, the
 message does **not** start a normal turn: it's persisted as a plain user turn (chained under
-the chat's current `activeLeafId` regardless of any `parentId` the client sent — a steering
-message talks to the running supervisor, it doesn't branch the tree), `activeLeafId` is
-advanced, and the text is appended to the run's `steeringNotes[]` via
-`appendRunSteeringNote` (list-append, race-safe — see "Data model" above). The client gets a
+the chat's current `activeLeafId` regardless of any `parentId` the client sent — a message to
+the running supervisor doesn't branch the tree) and `activeLeafId` is advanced. What happens
+next depends on the run's status: `awaiting_approval` sends it to the approval gate (see
+"Plan approval gate" below), anything else appends it to the run's `steeringNotes[]` via
+`appendRunSteeringNote` (list-append, race-safe — see "Data model" above) and answers with a
 `research_steering_noted` WS frame (`runId`, `msgId`) instead of the normal streaming
-sequence; no Bedrock call happens on this path. `researcher.ts` reads pending notes at the
+sequence. No Bedrock chat call happens on either path. `researcher.ts` reads pending notes at the
 start of each `Wave` iteration; `assess.ts` reads and clears them when deciding the next
 wave (see "The wave loop" above).
 
@@ -174,6 +175,19 @@ A sensitive chat never gets a dossier file even inside a project — its finding
 `ResultPath`, so whatever `ws/researchApprove.ts` sends via `SendTaskSuccess` becomes the
 *entire* state for whatever comes next — not a merge with what came before.
 
+Two things reach that token, both through `lib/researchApproval.ts`'s
+`resolvePlanApproval()` (which owns the `SendTaskSuccess` payloads, the row transition and
+the stale-token retry loop): the panel's Approve button via the WS `researchApprove` action,
+and a reply typed into the main composer via `ws/sendMessage.ts`. The panel has no feedback
+box of its own — it scrolls off small screens while the composer doesn't, so answers went to
+the composer and stalled the run as steering notes. `lib/planFeedback.ts`'s
+`classifyPlanFeedback()` decides what a composer reply means with one `TINY_MODEL` call —
+`approve` (bare consent), `approve_with_steering` (consent plus guidance, passed as
+`feedback` on an approve) or `revise` — falling back to `revise` on any failure, and the
+client is told which via a `research_plan_decision` frame. A reply that arrives just after
+the run left the gate falls through to the steering path instead.
+See `docs/adr/0032-plan-feedback-classified-by-a-tiny-model.md`.
+
 The WS `researchApprove` action takes `decision: 'approve' | 'revise'` plus an optional
 freetext `feedback` — named `decision`, not `action`, since the envelope's own
 `action: 'researchApprove'` is what API Gateway's `route_selection_expression`
@@ -191,16 +205,20 @@ presses.
 - **`revise`** sends `{revise: true, feedback, plan, ...}` and moves the row to `planning`
   until the next `AwaitApproval` visit writes `awaiting_approval` back — the superseded plan
   must stop being offered, and the status guard below is what makes a second decision fail
-  cleanly instead of racing the token rotation. `ResearchPanel.tsx` mirrors that transition
-  optimistically as it sends, for both decisions, so the panel never re-offers a plan the
-  user has already acted on. `ApprovalChoice` (`terraform/research.tf`) branches on `$.revise` to
+  cleanly instead of racing the token rotation. The frontend mirrors that transition as it
+  sends (`ResearchPanel.tsx`'s Approve button) or when `research_plan_decision` lands (a
+  composer reply), so the panel never re-offers a plan the user has already acted on.
+  `plan.ts` renders the prior plan for `Replan` as numbered lists matching what
+  `ResearchPanel.tsx` displayed, so feedback like "#1 I mean xyz" resolves to the right item.
+  `ApprovalChoice` (`terraform/research.tf`) branches on `$.revise` to
   `Replan` — the same `plan.ts` handler, invoked with `priorPlan`/`feedback` instead of
   `recon` (see plan.ts's header comment) — which produces a revised plan and loops back into
   `AwaitApproval`, minting a fresh task token for a second wait cycle. `ApprovalChoice`
   falls through to `Wave` when `$.revise` is absent (the `approve` path never sets it).
 
 `researchApprove.ts` trusts `getConnection(connId).userSub` (the pattern every WS action
-handler post-`$connect` uses) for the ownership check against the `RUN#` row's `sub`. A
+handler post-`$connect` uses) for the ownership check against the `RUN#` row's `sub`;
+`sendMessage.ts` has already resolved the same `sub` for the send itself. A
 `status !== 'awaiting_approval'` or missing `taskToken` on the row is a 409, guarding
 against a stale or replayed approval; a `revise` with blank/missing `feedback` is a 400.
 
@@ -217,6 +235,7 @@ always the source of truth, these frames are a live-UI convenience only:
 | `research_finding` | `researcher.ts`, once per sub-question | `runId`, `chatId`, `subQuestionId`, `summary`, `sourceUrls` |
 | `research_assess` | `assess.ts`, every round | `runId`, `chatId`, `findingCount`, `done` |
 | `research_done` | `report.ts` | `runId`, `chatId`, `msgId` |
+| `research_plan_decision` | `ws/sendMessage.ts` | `runId`, `chatId`, `msgId`, `decision` (`approve\|revise`) — a composer reply answered the approval gate |
 | `research_phase` | `progress.ts`'s `notifyPhase`, called by `recon.ts`/`plan.ts`/`assess.ts`/`report.ts` | `runId`, `chatId`, `phase` (`recon\|planning\|assessing\|reporting\|dossier`), `detail?` |
 | `research_step` | `progress.ts`'s `notifyStep`, called directly by `recon.ts` and via `stepEmitter` by `researcher.ts` | `runId`, `chatId`, `subQuestionId?`, `step` (one `thinking` or `tool` step, shaped as the frontend's own `Step`) |
 

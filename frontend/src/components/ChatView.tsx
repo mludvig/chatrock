@@ -535,6 +535,25 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       // Deep Research frames are unrelated to the normal chat stream — a run can be
       // progressing in the background while a cancelled chat-stream guard is active.
       if (evt.type.startsWith('research_')) {
+        // A message sent while a run is active goes through the normal send path
+        // (setSending(true) + startStream()) since the frontend can't know ahead of time
+        // that a run is active — the backend answers with a single research_* frame
+        // instead of a delta/done sequence, so this is what releases the send lock for it.
+        const releaseResearchSend = (text: string) => {
+          clearIdleTimer()
+          clearStream()
+          setSending(false)
+          const streamedId = streamingChatIdRef.current
+          streamingChatIdRef.current = null
+          if (streamedId) {
+            if (streamedId === chatIdRef.current) {
+              reloadMessages(streamedId)
+            } else {
+              useChatStore.getState().invalidateMessagesCache(streamedId)
+            }
+          }
+          pushToast({ kind: 'info', text })
+        }
         if (evt.type === 'research_plan') {
           // Recon's steps are kept: they are what the plan was drafted from, so they stay
           // visible above it as the record of how the run scoped the question.
@@ -571,23 +590,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             useChatStore.getState().invalidateMessagesCache(evt.chatId)
           }
         } else if (evt.type === 'research_steering_noted') {
-          // A steering send goes through the normal send path (setSending(true) +
-          // startStream()) since the frontend can't know ahead of time that a run is
-          // active — the backend answers with this frame instead of a delta/done
-          // sequence, so this is the only place that releases the send lock for it.
-          clearIdleTimer()
-          clearStream()
-          setSending(false)
-          const streamedId = streamingChatIdRef.current
-          streamingChatIdRef.current = null
-          if (streamedId) {
-            if (streamedId === chatIdRef.current) {
-              reloadMessages(streamedId)
-            } else {
-              useChatStore.getState().invalidateMessagesCache(streamedId)
-            }
-          }
-          pushToast({ kind: 'info', text: 'Steering note added — the researcher will pick it up shortly' })
+          releaseResearchSend('Steering note added — the researcher will pick it up shortly')
+        } else if (evt.type === 'research_plan_decision') {
+          // The composer answered the approval gate. The backend has already acted on it;
+          // mirror the resulting status here so the panel stops offering the old plan
+          // (waveSubQuestions arrive separately, on the research_wave_start that precedes
+          // this frame on the approve path).
+          patchActiveResearch(evt.chatId, evt.decision === 'revise'
+            ? { status: 'planning', phase: 'planning' }
+            : { status: 'running', phase: null })
+          releaseResearchSend(evt.decision === 'revise'
+            ? 'Revising the plan with your feedback…'
+            : 'Plan approved — research started')
         }
         return
       }
@@ -1628,18 +1642,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             <div className="message assistant">
               <ResearchPanel
                 run={activeResearchRun}
-                // Both decisions move the run out of awaiting_approval right away, matching
-                // what researchApprove.ts writes to the run row — the panel must stop
-                // offering a plan the user has already acted on rather than waiting out the
-                // minute of backend work for the frame that says so. Patch after the send,
-                // so a closed socket leaves the plan in place to retry.
-                onApprove={(feedback) => {
-                  researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve', feedback })
+                // Approving moves the run out of awaiting_approval right away, matching
+                // what the backend writes to the run row — the panel must stop offering a
+                // plan the user has already acted on rather than waiting out the minute of
+                // backend work for the frame that says so. Patch after the send, so a
+                // closed socket leaves the plan in place to retry. Feedback typed into the
+                // composer takes the other route, and lands here as research_plan_decision.
+                onApprove={() => {
+                  researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve' })
                   patchActiveResearch(chatId!, { status: 'running', waveSubQuestions: activeResearchRun.plan?.subQuestions ?? [], phase: null })
-                }}
-                onRevise={(feedback) => {
-                  researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'revise', feedback })
-                  patchActiveResearch(chatId!, { status: 'planning', phase: 'planning' })
                 }}
               />
             </div>

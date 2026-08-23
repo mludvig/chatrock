@@ -12,6 +12,16 @@ interface RawSubQuestion {
   question?: unknown
 }
 
+// Numbered rather than raw JSON so a "#1 I meant xyz" reply lands on the same item the
+// user was looking at — ResearchPanel.tsx numbers both lists the same way. Ids are kept
+// visible so unchanged sub-questions can keep theirs.
+function renderPlanForFeedback(plan: PlanResult): string {
+  const clarifying = plan.clarifyingQuestions.length > 0
+    ? `CLARIFYING QUESTIONS:\n${plan.clarifyingQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\n\n`
+    : ''
+  return `${clarifying}SUB-QUESTIONS:\n${plan.subQuestions.map((sq, i) => `${i + 1}. [id: ${sq.id}] ${sq.question}`).join('\n')}`
+}
+
 // Step Functions Task state "Plan" and "Replan" (terraform/research.tf) share this
 // handler. "Plan" proposes clarifying questions and sub-questions from the question +
 // Recon's notes; "Replan" runs when the user hits "Revise" on the approval gate
@@ -26,8 +36,9 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
     ? [
         `QUESTION: ${event.question}`,
         ``,
-        `CURRENT PLAN:`,
-        JSON.stringify(event.priorPlan),
+        `CURRENT PLAN (numbered exactly as the user saw it — feedback like "#2" refers to`,
+        `these numbers, counted separately within each list):`,
+        renderPlanForFeedback(event.priorPlan),
         ``,
         `USER FEEDBACK ON THE PLAN: ${event.feedback}`,
         ``,

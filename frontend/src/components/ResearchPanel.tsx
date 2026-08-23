@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faMagnifyingGlass, faSpinner, faCheck, faPenToSquare } from '@fortawesome/free-solid-svg-icons'
+import { faMagnifyingGlass, faSpinner, faCheck } from '@fortawesome/free-solid-svg-icons'
 import type { ActiveResearch } from '../store/chatStore'
 import type { Step } from '../api/http'
 import { ThinkingBlock, ToolCallPill } from './StepBlocks'
@@ -30,35 +29,14 @@ function StepList({ steps }: { steps: Step[] }) {
   )
 }
 
-// Feedback that doesn't change the plan — "OK", "looks good", etc. Anything else typed is
-// treated as intent to revise. See docs/adr/0026-plan-approval-single-button.md.
-const INCONSEQUENTIAL_FEEDBACK = /^(ok(ay)?|sounds? good|looks? good|good|fine|yes|yep|sure|approved?|go(\s*ahead)?|start|proceed|lgtm)[.!]?$/i
-
 // Deep Research's plan-approval + live-progress panel. Rendered by ChatView while a run is
 // active for the current chat (cleared on research_done). No "Reject" action — a user who
 // dislikes the plan just abandons the chat; the backend's 24h AwaitApproval timeout handles
 // cleanup on its own (see backend/src/research/CLAUDE.md's "Plan approval gate").
-export default function ResearchPanel({ run, onApprove, onRevise }: {
+export default function ResearchPanel({ run, onApprove }: {
   run: ActiveResearch
-  onApprove: (feedback?: string) => void
-  onRevise: (feedback: string) => void
+  onApprove: () => void
 }) {
-  const [feedback, setFeedback] = useState('')
-
-  const trimmed = feedback.trim()
-  const isRevision = trimmed !== '' && !INCONSEQUENTIAL_FEEDBACK.test(trimmed)
-
-  // ChatView moves the run out of awaiting_approval as it sends, so this whole block
-  // unmounts on submit — no in-flight guard is needed to stop a second decision.
-  function handleSubmit() {
-    if (isRevision) {
-      onRevise(trimmed)
-    } else {
-      onApprove(trimmed || undefined)
-    }
-    setFeedback('')
-  }
-
   return (
     <div className="research-panel">
       {/* The question is already rendered as a normal user bubble directly above this
@@ -84,9 +62,11 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
           {run.plan.clarifyingQuestions.length > 0 && (
             <div className="research-panel-section">
               <h4>Clarifying questions</h4>
-              <ul>
+              {/* Numbered so feedback can address one of them as "#2" — the Replan prompt
+                  is given the same numbering (backend/src/research/plan.ts). */}
+              <ol>
                 {run.plan.clarifyingQuestions.map((q, i) => <li key={i}>{q}</li>)}
-              </ul>
+              </ol>
             </div>
           )}
           <div className="research-panel-section">
@@ -95,16 +75,17 @@ export default function ResearchPanel({ run, onApprove, onRevise }: {
               {run.plan.subQuestions.map(sq => <li key={sq.id}>{sq.question}</li>)}
             </ol>
           </div>
-          <textarea
-            className="research-panel-feedback"
-            placeholder="Optional feedback — e.g. &quot;Change point 2 to XYZ and also consider ABC&quot;. Leave blank (or type OK) to start as-is; add feedback that changes the plan to revise it."
-            value={feedback}
-            onChange={e => setFeedback(e.target.value)}
-          />
+          {/* No feedback box here: the panel scrolls off small screens while the main
+              composer stays put, so answers went there and were swallowed. The composer is
+              now the one input for the plan too — this button is just the shortcut for the
+              common "start as-is". See docs/adr/0032-plan-feedback-classified-by-a-tiny-model.md. */}
           <div className="research-panel-actions">
-            <button className="btn-primary" onClick={handleSubmit}>
-              <FontAwesomeIcon icon={isRevision ? faPenToSquare : faCheck} /> {isRevision ? 'Revise' : 'Approve'}
+            <button className="btn-primary" onClick={onApprove}>
+              <FontAwesomeIcon icon={faCheck} /> Approve &amp; start
             </button>
+            <span className="research-panel-hint">
+              or reply below to answer a question or change the plan
+            </span>
           </div>
         </div>
       )}

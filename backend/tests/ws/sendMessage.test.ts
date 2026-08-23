@@ -12,6 +12,13 @@ jest.mock('../../src/lib/attachments', () => ({
 import * as attachmentsMod from '../../src/lib/attachments'
 const mockAttachments = attachmentsMod as jest.Mocked<typeof attachmentsMod>
 
+jest.mock('../../src/lib/planFeedback', () => ({ classifyPlanFeedback: jest.fn() }))
+jest.mock('../../src/lib/researchApproval', () => ({ resolvePlanApproval: jest.fn() }))
+import * as planFeedbackMod from '../../src/lib/planFeedback'
+import * as researchApprovalMod from '../../src/lib/researchApproval'
+const mockPlanFeedback = planFeedbackMod as jest.Mocked<typeof planFeedbackMod>
+const mockResearchApproval = researchApprovalMod as jest.Mocked<typeof researchApprovalMod>
+
 // Keep pure key-builder functions real; only mock the async DB operations
 jest.mock('../../src/lib/dynamo', () => ({
   ...jest.requireActual('../../src/lib/dynamo'),
@@ -2421,6 +2428,68 @@ describe('mid-flight steering (Deep Research)', () => {
     expect(mockPost).toHaveBeenCalledWith(expect.objectContaining({
       Data: expect.stringContaining('"type":"research_steering_noted"'),
     }))
+  })
+
+  describe('a run waiting at the plan-approval gate', () => {
+    const PLAN = { subQuestions: [{ id: 'sq1', question: 'Q1?' }], clarifyingQuestions: ['Which decade?'] }
+    const AWAITING_RUN = { PK: 'CHAT#c1', SK: 'RUN#run-1', runId: 'run-1', status: 'awaiting_approval', plan: PLAN }
+
+    beforeEach(() => {
+      mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+      mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'leaf-0' })
+      mockDynamo.getActiveRun.mockResolvedValue(AWAITING_RUN)
+    })
+
+    test('substantive feedback revises the plan instead of becoming a steering note', async () => {
+      mockPlanFeedback.classifyPlanFeedback.mockResolvedValue('revise')
+      mockResearchApproval.resolvePlanApproval.mockResolvedValue('revising')
+
+      await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: '#1 I mean the 1990s', model: MODEL, systemPrompt: '' }))
+
+      expect(mockPlanFeedback.classifyPlanFeedback).toHaveBeenCalledWith('#1 I mean the 1990s', PLAN, expect.objectContaining({ chatId: 'c1', runId: 'run-1' }))
+      expect(mockResearchApproval.resolvePlanApproval).toHaveBeenCalledWith(expect.objectContaining({
+        chatId: 'c1', runId: 'run-1', decision: 'revise', feedback: '#1 I mean the 1990s',
+      }))
+      expect(mockDynamo.appendRunSteeringNote).not.toHaveBeenCalled()
+      expect(mockDynamo.putMessage).toHaveBeenCalledTimes(1)
+      expect(mockPost).toHaveBeenCalledWith(expect.objectContaining({
+        Data: expect.stringContaining('"type":"research_plan_decision"'),
+      }))
+      expect(mockPost).toHaveBeenCalledWith(expect.objectContaining({ Data: expect.stringContaining('"decision":"revise"') }))
+    })
+
+    test('bare consent approves without seeding a steering note from it', async () => {
+      mockPlanFeedback.classifyPlanFeedback.mockResolvedValue('approve')
+      mockResearchApproval.resolvePlanApproval.mockResolvedValue('started')
+
+      await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'looks good', model: MODEL, systemPrompt: '' }))
+
+      expect(mockResearchApproval.resolvePlanApproval).toHaveBeenCalledWith(expect.objectContaining({ decision: 'approve', feedback: undefined }))
+      expect(mockPost).toHaveBeenCalledWith(expect.objectContaining({ Data: expect.stringContaining('"decision":"approve"') }))
+    })
+
+    test('consent with guidance approves and carries the message into the first wave', async () => {
+      mockPlanFeedback.classifyPlanFeedback.mockResolvedValue('approve_with_steering')
+      mockResearchApproval.resolvePlanApproval.mockResolvedValue('started')
+
+      await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'go ahead, prefer primary sources', model: MODEL, systemPrompt: '' }))
+
+      expect(mockResearchApproval.resolvePlanApproval).toHaveBeenCalledWith(expect.objectContaining({
+        decision: 'approve', feedback: 'go ahead, prefer primary sources',
+      }))
+    })
+
+    test('a run that left the gate mid-classification falls back to a steering note', async () => {
+      mockPlanFeedback.classifyPlanFeedback.mockResolvedValue('revise')
+      mockResearchApproval.resolvePlanApproval.mockResolvedValue('not_awaiting')
+
+      await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'also cover Europe', model: MODEL, systemPrompt: '' }))
+
+      expect(mockDynamo.appendRunSteeringNote).toHaveBeenCalledWith('c1', 'run-1', 'also cover Europe')
+      expect(mockPost).toHaveBeenCalledWith(expect.objectContaining({
+        Data: expect.stringContaining('"type":"research_steering_noted"'),
+      }))
+    })
   })
 
   test('a content-bearing send with no active run behaves as a normal turn', async () => {
