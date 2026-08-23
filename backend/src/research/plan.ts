@@ -4,6 +4,7 @@ import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { notifyPhase } from './progress'
 import { resolveRunModel } from './model'
+import { resolveRunContext } from './context'
 import RESEARCH_PLAN_SYSTEM_PROMPT from '../../prompts/research-plan.txt'
 
 interface RawSubQuestion {
@@ -31,7 +32,14 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
   console.log(JSON.stringify({ event: 'research_plan_start', runId: event.runId, chatId: event.chatId, revise: !!event.priorPlan }))
   await notifyPhase(event, 'planning', event.priorPlan ? 'Revising the plan' : undefined)
 
-  const userMsg = event.priorPlan
+  // The planner is the only stage that sees the user's memory: it resolves the ambiguities
+  // that would otherwise become clarifying questions, and writes what it learned into the
+  // sub-questions themselves, since a researcher has no user context of its own.
+  // See docs/adr/0033-research-runs-see-the-users-memory.md.
+  const context = await resolveRunContext(event)
+  const preamble = context ? [`ABOUT THE USER:`, context, ``] : []
+
+  const userMsg = [...preamble, ...(event.priorPlan
     ? [
         `QUESTION: ${event.question}`,
         ``,
@@ -42,13 +50,13 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
         `USER FEEDBACK ON THE PLAN: ${event.feedback}`,
         ``,
         `Revise the plan to address the feedback.`,
-      ].join('\n')
+      ]
     : [
         `QUESTION: ${event.question}`,
         ``,
         `RECON NOTES:`,
         event.recon && event.recon.notes.length > 0 ? event.recon.notes.join('\n\n') : '(none)',
-      ].join('\n')
+      ])].join('\n')
 
   const model = await resolveRunModel(event)
   const response = await converseOnce(model, RESEARCH_PLAN_SYSTEM_PROMPT, [

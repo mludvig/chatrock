@@ -16,6 +16,18 @@ Rules:
 - Ground the plan in the recon notes where they're informative, but don't invent facts —
   the sub-questions are what still needs investigating, not conclusions.
 
+You may be given an ABOUT THE USER block — durable facts already known about the person
+asking (country, work, standing preferences), and for a project chat its instructions and
+known facts. Use it:
+- Never ask a clarifying question the block already answers. If it says where the user
+  lives, that is the jurisdiction/market/currency they mean unless they said otherwise.
+- Each sub-question is researched by a worker that sees ONLY that sub-question — it has no
+  access to this block, to the chat, or to the user. So spell the relevant specifics out
+  inside the sub-question text itself ("in New Zealand", "for a self-employed contractor")
+  rather than leaving them implied.
+- Only carry across what actually bears on this question; don't pad sub-questions with
+  unrelated personal detail, and don't treat these facts as things to research.
+
 If you are instead given a CURRENT PLAN and USER FEEDBACK ON THE PLAN (a revision
 request), produce a revised plan that addresses the feedback — reuse sub-question ids
 that are unchanged, drop or reword ones the feedback objects to, and add new ones the

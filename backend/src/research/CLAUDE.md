@@ -41,13 +41,14 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `ApprovalChoice`, `Replan`,
 |------|----------|--------|
 | `types.ts` | — | Shared `*Input`/`*Result` types, one pair per state, plus `RunRow` (the `RUN#` DynamoDB row shape). Every handler's signature is `(event: XInput) => Promise<XResult>` — Step Functions passes each state's `ResultPath`-merged JSON straight through as the next state's input, no envelope. |
 | `model.ts` | — | `resolveRunModel(event)`: the run's model, read back from the `RUN#` row, with a `DEFAULT_CHAT_MODEL` fallback. Called by every phase that makes an LLM call — see "The run's model" below. |
+| `context.ts` | — | `buildRunContext(sub, projectId?)` renders what the run knows about the person who asked (user memories, plus project instructions/memories for a project chat, capped at `RUN_CONTEXT_CAP`); `resolveRunContext(event)` reads that snapshot back off the `RUN#` row. See "What the run knows about the user" below. |
 | `recon.ts` | `Recon` | Runs one `web_search` call (via `lib/tools.ts`'s `executeTool`) to ground the Plan step in something more than the raw question. Notes are the search result's text entries; an error result yields `notes: []` rather than throwing. |
 | `plan.ts` | `Plan`, `Replan` | Calls Bedrock once (the run's model, JSON out — same `safeParse`-wrapped pattern as `lib/search.ts`'s `searchHistory`, prompt in `prompts/research-plan.txt`) to produce `clarifyingQuestions` + `subQuestions`, either from the question + Recon's notes (`Plan`) or from the prior plan + the user's freetext feedback (`Replan`, when `event.priorPlan` is set — see "Plan approval gate" below). Sub-questions with no `question` text are dropped; a missing or duplicate `id` is replaced with a fresh `newId()`. |
 | `awaitApproval.ts` | `AwaitApproval` | Persists `question`/`plan`/`taskToken` onto the `RUN#` row (via `updateRun`, upserting the row on its first write) with `status: 'awaiting_approval'` and the `findings`/`gapsNotPursued`/`steeringNotes`/`roundsSpent` defaults the downstream states need. Then writes the plan as an ordinary assistant turn (numbered clarifying questions + numbered sub-questions) at the chat's active leaf and pushes the `research_plan` frame — the frame comes from here, not `plan.ts`, so the client is only told about a plan it can already reload. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation (`lib/researchApproval.ts`, via `ws/researchApprove.ts` or a composer reply) does. |
 | `researcher.ts` | `Wave` (Map iterator) | Runs one bounded `converseStream` (`lib/llm/loop.ts`, `extended`/8-round budget) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with only `web_search`/`web_fetch` enabled (no memory/project/image tools — a researcher has no chat context to draw on) and no WS connection to stream to. The system prompt (`prompts/research-researcher.txt`) asks for a final turn shaped as plain-text prose followed by a trailing `SOURCES: [...]` JSON-array line, parsed via a regex split rather than `safeParse`-over-the-whole-turn — nesting long free-text prose inside a JSON string is fragile (unescaped quotes/newlines routinely broke `JSON.parse`, observed live as raw JSON leaking into the `research_finding` summary). A turn with no `SOURCES:` line falls back to the legacy nested-JSON `{summary, sourceUrls}` shape (`safeParse`d like `plan.ts`), and if that also fails to parse, to `{summary: <raw text>, sourceUrls: []}` — never throws. Steering notes, if any, are appended to the sub-question in the initial user message. |
 | `assess.ts` | `Assess` | Flattens this wave's raw `waveFindings` into `Finding[]` (`item.result.finding`), merges into the running `findings` total, then calls Bedrock once (the run's model, JSON out, prompt in `prompts/research-assess.txt`) to decide `done` vs. `nextSubQuestions` for another wave. `gapsNotPursued` accumulates across rounds; `steeringNotes` are cleared every round (consumed, not carried forward). Malformed model output falls back to `done: true` rather than looping forever. Like `AwaitApproval`, this state has no `ResultPath` — the handler's return value (`AssessResult`) is the *entire* next state, so it must re-emit every field `Wave`/`Report` need, not just its own verdict. |
 | `report.ts` | `Report` | Calls Bedrock once (the run's model, plain markdown out — no `safeParse`, this is prose not JSON — prompt in `prompts/research-report.txt`) over the accumulated `findings`/`gapsNotPursued` to write the cited final answer. `citations.ts`'s `linkifyReportCitations()` deterministically rewrites the model's `[n]` markers and its `n. <url>`-format Sources list into markdown links before anything is persisted — parsing the model's own link syntax was judged less reliable than a plain URL list. The (linkified) report is then persisted as a normal assistant turn: `getChat` for the chat's current `activeLeafId` (used as `parentId`, `null` if unset), `putMessage` with a fresh `msgId`/`responseId` (same `uuidv4()` convention `ws/sendMessage.ts` uses for turn ids, not `newId()`), then `updateChatActiveLeaf` so it becomes the new leaf. `updateRun` sets `status: 'done'` and stores `reportText` on the `RUN#` row in the same call. Deep Research bypasses `ws/sendMessage.ts` entirely, so its own `chat.title === 'New Chat'` title-gen call never fires — `report.ts` runs the same `generateChatTitle()` call itself right after persisting the turn, and pushes `titleUpdated` the same way. `updateChatHasResearch` then unlocks `read_research_findings` on the chat. A dossier file is written only when the chat already belongs to a project — see "The research dossier" below. |
-| `ws/startResearch.ts` | — (starts the execution) | WS action `startResearch`, outside the state machine itself. Persists the question as a normal user turn (`putMessage`, chained under the chat's current `activeLeafId`) and advances `activeLeafId` to it — the same durability the question would get from a normal send, and what `report.ts`'s final answer chains under — then mints a `runId` (`newId()`), writes the initial `RUN#` row (`status: 'recon'`, `model` snapshotted from the chat — see "The run's model" below), and calls `StartExecutionCommand` with `{chatId, runId, sub, question, connId}` as the execution input — see "Invocation" below. |
+| `ws/startResearch.ts` | — (starts the execution) | WS action `startResearch`, outside the state machine itself. Persists the question as a normal user turn (`putMessage`, chained under the chat's current `activeLeafId`) and advances `activeLeafId` to it — the same durability the question would get from a normal send, and what `report.ts`'s final answer chains under — then mints a `runId` (`newId()`), writes the initial `RUN#` row (`status: 'recon'`, `model` snapshotted from the chat — see "The run's model" below — and `context`, the user/project memory snapshot the planner reads), and calls `StartExecutionCommand` with `{chatId, runId, sub, question, connId}` as the execution input — see "Invocation" below. |
 
 ## Data model
 
@@ -55,7 +56,7 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `ApprovalChoice`, `Replan`,
 `lib/dynamo.ts`'s `putRun`/`getRun`/`getActiveRun`/`updateRun`/`appendRunSteeringNote`/
 `deleteChatRuns`:
 `status` (`recon|planning|awaiting_approval|running|done|failed`), `model` (see "The run's
-model" below), `plan`, findings, `steeringNotes[]`, `roundsSpent`, `connId`, the approval task token, `reportText` (set by
+model" below), `context` (see "What the run knows about the user" below), `plan`, findings, `steeringNotes[]`, `roundsSpent`, `connId`, the approval task token, `reportText` (set by
 `report.ts` alongside `status: 'done'`), timestamps.
 `updateRun` is a generic partial-update (every field aliased via
 `ExpressionAttributeNames`, so any field name is safe to pass without checking DynamoDB
@@ -119,6 +120,25 @@ model, not a fixed default and not a per-stage tier. Why, and why it is read bac
 one `GetItem`, same fallback — and every phase handler calls it before its own
 `converseOnce`/`converseStream`. `report.ts` also stamps it on the assistant turn it
 persists, so the transcript records the model that actually wrote the report.
+
+## What the run knows about the user
+
+Why the planner is the only stage that sees it, and why it is snapshotted rather than
+re-read: `docs/adr/0033-research-runs-see-the-users-memory.md`.
+
+`ws/startResearch.ts` calls `context.ts`'s `buildRunContext(sub, chat.projectId)` and stores
+the rendered block on the `RUN#` row as `context` — the user's memories, then the project's
+instructions, then the project's memories, in `assembleSystemPrompt`'s own wording and
+order, truncated at `RUN_CONTEXT_CAP` (4000 chars). Nothing known means no attribute is
+written at all.
+
+`plan.ts` reads it back with `resolveRunContext(event)` (one `GetItem`, alongside
+`resolveRunModel`'s) and prepends it to both the `Plan` and `Replan` user message as an
+`ABOUT THE USER:` block. `prompts/research-plan.txt` instructs the planner to answer its own
+clarifying questions from that block, and to spell the relevant specifics out inside each
+sub-question — a researcher receives only its sub-question text, so anything the planner
+leaves implied is lost. No other stage reads `context`, and no stage in a run can write
+memory.
 
 ## Mid-flight steering
 

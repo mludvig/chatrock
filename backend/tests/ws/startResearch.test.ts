@@ -19,6 +19,9 @@ jest.mock('../../src/lib/dynamo', () => ({
 }))
 
 jest.mock('../../src/lib/ids', () => ({ newId: () => 'run-1' }))
+jest.mock('../../src/research/context', () => ({ buildRunContext: jest.fn() }))
+
+const mockBuildRunContext = jest.requireMock('../../src/research/context').buildRunContext as jest.Mock
 
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
@@ -110,4 +113,25 @@ test('persists the question as a user turn chained under activeLeafId, then mint
     question: 'What is X?',
     connId: 'conn-1',
   })
+})
+
+test('snapshots the user/project context onto the RUN# row, and omits the attribute when there is none', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
+  mockDynamo.getChat.mockResolvedValue({ model: 'model-x', activeLeafId: 'leaf-9', projectId: 'proj-1' })
+  mockBuildRunContext.mockResolvedValue('What you know about the user:\n- Lives in New Zealand')
+
+  await handler(makeEvent({ chatId: 'chat-1', question: 'What is X?' }))
+
+  expect(mockBuildRunContext).toHaveBeenCalledWith('user-1', 'proj-1')
+  expect(mockDynamo.putRun.mock.calls[0][0].context).toBe('What you know about the user:\n- Lives in New Zealand')
+
+  jest.clearAllMocks()
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
+  mockDynamo.getChat.mockResolvedValue({ model: 'model-x' })
+  mockBuildRunContext.mockResolvedValue(undefined)
+
+  await handler(makeEvent({ chatId: 'chat-1', question: 'What is X?' }))
+
+  expect(mockBuildRunContext).toHaveBeenCalledWith('user-1', undefined)
+  expect(mockDynamo.putRun.mock.calls[0][0]).not.toHaveProperty('context')
 })

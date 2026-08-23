@@ -145,6 +145,10 @@ export interface RunRow {
   // The chat's model at the moment the run started — every phase's LLM call uses it.
   // See docs/adr/0030-research-runs-use-the-chats-model.md.
   model: string
+  // What the run knows about the person who asked: their memories, plus the project's
+  // instructions/memories for a project chat. Snapshotted at startResearch, read back by
+  // plan.ts. See docs/adr/0033-research-runs-see-the-users-memory.md.
+  context?: string
   plan?: PlanResult
   findings: Finding[]
   gapsNotPursued: string[]

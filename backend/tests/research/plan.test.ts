@@ -3,8 +3,12 @@ import * as bedrock from '../../src/lib/bedrock'
 
 jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
+jest.mock('../../src/research/context', () => ({ resolveRunContext: jest.fn() }))
 
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
+const mockResolveRunContext = jest.requireMock('../../src/research/context').resolveRunContext as jest.Mock
+
+const sentUserMsg = () => (mockBedrock.converseOnce.mock.calls[0][2][0].content[0] as { text: string }).text
 
 beforeEach(() => jest.clearAllMocks())
 
@@ -59,9 +63,48 @@ test('plan handler — revise mode (priorPlan + feedback) sends the plan and fee
   })
 
   expect(result.subQuestions).toEqual([{ id: 'sq1', question: 'Revised question?' }])
-  const userMsg = (mockBedrock.converseOnce.mock.calls[0][2][0].content[0] as { text: string }).text
+  const userMsg = sentUserMsg()
   expect(userMsg).toContain('CURRENT PLAN')
   expect(userMsg).toContain('Original question?')
   expect(userMsg).toContain('USER FEEDBACK ON THE PLAN: Change point 2 to XYZ')
   expect(userMsg).not.toContain('RECON NOTES')
+})
+
+test('plan handler — prepends the run context so the planner can answer its own clarifying questions', async () => {
+  mockResolveRunContext.mockResolvedValue('What you know about the user:\n- Lives in New Zealand')
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    clarifyingQuestions: [], subQuestions: [{ id: 'sq1', question: 'X in New Zealand?' }],
+  }))
+
+  await handler(BASE_INPUT)
+
+  const userMsg = sentUserMsg()
+  expect(userMsg).toContain('ABOUT THE USER:\nWhat you know about the user:\n- Lives in New Zealand')
+  expect(userMsg.indexOf('ABOUT THE USER:')).toBeLessThan(userMsg.indexOf('QUESTION:'))
+})
+
+test('plan handler — revise mode gets the same context block', async () => {
+  mockResolveRunContext.mockResolvedValue('What you know about the user:\n- Lives in New Zealand')
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    clarifyingQuestions: [], subQuestions: [{ id: 'sq1', question: 'Revised?' }],
+  }))
+
+  await handler({
+    chatId: 'chat-1', runId: 'run-1', sub: 'user-1', question: 'what is X',
+    priorPlan: { subQuestions: [{ id: 'sq1', question: 'Original?' }], clarifyingQuestions: [] },
+    feedback: 'change it',
+  })
+
+  const userMsg = sentUserMsg()
+  expect(userMsg).toContain('ABOUT THE USER:')
+  expect(userMsg).toContain('USER FEEDBACK ON THE PLAN: change it')
+})
+
+test('plan handler — no context block when the run has none', async () => {
+  mockResolveRunContext.mockResolvedValue(undefined)
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ subQuestions: [{ id: 'sq1', question: 'X?' }] }))
+
+  await handler(BASE_INPUT)
+
+  expect(sentUserMsg().startsWith('QUESTION: what is X')).toBe(true)
 })
