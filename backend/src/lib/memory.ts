@@ -54,7 +54,7 @@ export async function extractUserFacts(
       MEMORY_EXTRACTION_MODEL,
       EXTRACTION_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ kind: 'text', text: transcript }] }],
-      { maxTokens: 512 },
+      { maxTokens: 512, call: { purpose: 'extract_user_facts' } },
     )
 
     let parsed: unknown

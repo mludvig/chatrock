@@ -319,6 +319,7 @@ export const handler = async (
         s3Key: fileItem.s3Key as string,
         contentType: fileItem.contentType as string,
         filename: fileItem.filename as string,
+        projectId,
       })
       await updateProjectFile(projectId, fileId, {
         status: 'ready',
@@ -326,7 +327,6 @@ export const handler = async (
         summary: summary.summary,
         ...(summary.extractedTextKey ? { extractedTextKey: summary.extractedTextKey } : {}),
       })
-      console.log(JSON.stringify({ event: 'llm_call', purpose: 'file_summary', projectId, fileId }))
       const updated = await getProjectFile(projectId, fileId)
       return ok({ file: updated })
     } catch (processErr) {

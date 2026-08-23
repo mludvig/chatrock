@@ -44,7 +44,7 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
 
   const rawReportText = await converseOnce(DEFAULT_CHAT_MODEL, RESEARCH_REPORT_SYSTEM_PROMPT, [
     { role: 'user', content: [{ kind: 'text', text: userMsg }] },
-  ], { maxTokens: 4096 })
+  ], { maxTokens: 4096, call: { purpose: 'research_report', sub: event.sub, chatId: event.chatId, runId: event.runId } })
   // Deterministic rewrite of [n] markers and the Sources list into markdown links —
   // see citations.ts for why this isn't left to the model's own link syntax.
   const reportText = linkifyReportCitations(rawReportText)
@@ -150,7 +150,7 @@ async function writeDossier(
   const s3Key = `${projectFilePrefix(event.sub, projectId)}${fileId}/${filename}`
   await s3.send(new PutObjectCommand({ Bucket: BUCKET, Key: s3Key, Body: dossierText, ContentType: 'text/markdown' }))
 
-  const summary = await summarizeFile({ s3Key, contentType: 'text/markdown', filename })
+  const summary = await summarizeFile({ s3Key, contentType: 'text/markdown', filename, projectId })
   const now = new Date().toISOString()
   await putProjectFile({
     ...buildProjectFileKey(projectId, fileId),

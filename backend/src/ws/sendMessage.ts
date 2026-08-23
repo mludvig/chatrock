@@ -7,7 +7,7 @@ import { getConnection, getChat, listMessages, putMessage, putMessagePair, updat
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
-import { MEMORY_EXTRACTION_MODEL, isValidModelId, type ModelSettings } from '../config/models'
+import { isValidModelId, type ModelSettings } from '../config/models'
 import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences, type UserPreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
@@ -511,7 +511,13 @@ export const buildHandler = (postFn: PostFn) => async (
   let errorMessage = ''
 
   try {
-    for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, effectiveModelSettings, toolCtx, abortController.signal, search ? 'search_history' : undefined)) {
+    for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, {
+      settings: effectiveModelSettings,
+      ctx: toolCtx,
+      abortSignal: abortController.signal,
+      forceToolName: search ? 'search_history' : undefined,
+      call: { purpose: 'chat', sub, chatId, projectId: chat?.projectId },
+    })) {
       switch (chunk.type) {
         case 'thinking_delta':
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'thinking_delta', text: chunk.text }) })
@@ -629,19 +635,6 @@ export const buildHandler = (postFn: PostFn) => async (
             console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
           }
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
-          console.log(JSON.stringify({
-            event: 'llm_call',
-            purpose: 'chat',
-            model,
-            chatId,
-            stopReason: chunk.stopReason,
-            ...(lastUsage ? {
-              inputTokens: lastUsage.inputTokens,
-              outputTokens: lastUsage.outputTokens,
-              ...(lastUsage.cacheReadInputTokens !== undefined ? { cacheReadInputTokens: lastUsage.cacheReadInputTokens } : {}),
-              ...(lastUsage.cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens: lastUsage.cacheWriteInputTokens } : {}),
-            } : {}),
-          }))
           break
       }
     }
@@ -817,8 +810,6 @@ export const buildHandler = (postFn: PostFn) => async (
         if (totalChanged > 0 && !memoryChangedDuringStream) {
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'memoryUpdated', count: totalChanged, items: passiveMemoryItems }) })
         }
-
-        console.log(JSON.stringify({ event: 'llm_call', purpose: 'enrich_turn', model: MEMORY_EXTRACTION_MODEL, chatId }))
       } catch (err) {
         console.error(JSON.stringify({ event: 'enrich_turn_error', chatId, error: String(err) }))
         await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'warning', message: 'Post-turn enrichment failed (memory/summary not updated)' }) })

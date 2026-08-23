@@ -264,13 +264,13 @@ describe('bedrockMantle.sanitizeHistory', () => {
 describe('bedrockMantle.once', () => {
   test('returns trimmed output_text, sends store:false', async () => {
     mockCreate.mockResolvedValue({ output_text: '  Paris  ' })
-    const text = await bedrockMantleProvider.once({
+    const result = await bedrockMantleProvider.once({
       modelId: 'openai.gpt-5.6-terra',
       systemPrompt: 'Answer concisely.',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'capital of France?' }] }],
       maxTokens: 32,
     })
-    expect(text).toBe('Paris')
+    expect(result.text).toBe('Paris')
     const params = mockCreate.mock.calls[0][0]
     expect(params.store).toBe(false)
     expect(params.max_output_tokens).toBe(32)

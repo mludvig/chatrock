@@ -100,7 +100,7 @@ export async function enrichUserFacts(
       MEMORY_EXTRACTION_MODEL,
       USER_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
-      { maxTokens: 1024 },
+      { maxTokens: 1024, call: { purpose: 'enrich_user_facts', chatId } },
     )
 
     const obj = safeParse(response)
@@ -129,7 +129,7 @@ export async function generateChatTitle(transcript: string, chatId?: string): Pr
       TITLE_MODEL,
       '',
       [{ role: 'user', content: [{ kind: 'text', text: `${TITLE_PROMPT}\n\n${transcript}` }] }],
-      { maxTokens: 32 },
+      { maxTokens: 32, call: { purpose: 'chat_title', chatId } },
     )
     const title = response.trim()
     if (!title) {
@@ -169,7 +169,7 @@ export async function enrichProjectFacts(
       MEMORY_EXTRACTION_MODEL,
       PROJECT_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
-      { maxTokens: 1024 },
+      { maxTokens: 1024, call: { purpose: 'enrich_project_facts', chatId } },
     )
 
     const obj = safeParse(response)
@@ -214,7 +214,7 @@ export async function summarizeChat(
       MEMORY_EXTRACTION_MODEL,
       SUMMARIZE_CHAT_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
-      { maxTokens: 512 },
+      { maxTokens: 512, call: { purpose: 'chat_summary', chatId } },
     )
 
     const obj = safeParse(response)

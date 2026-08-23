@@ -43,8 +43,11 @@ export const handler = async (event: ResearcherInput): Promise<ResearcherResult>
     DEFAULT_CHAT_MODEL,
     RESEARCH_RESEARCHER_SYSTEM_PROMPT,
     [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
-    RESEARCHER_SETTINGS,
-    ctx,
+    {
+      settings: RESEARCHER_SETTINGS,
+      ctx,
+      call: { purpose: 'research_worker', sub: event.sub, chatId: event.chatId, runId: event.runId },
+    },
   )) {
     await emit(chunk)
     if (chunk.type === 'turn' && chunk.role === 'assistant') {

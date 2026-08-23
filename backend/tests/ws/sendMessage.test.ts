@@ -820,10 +820,11 @@ test('d3: cancel between turns — persisted turns survive, cancelled event emit
 
   // Fake stream: yields one complete turn, then throws AbortError (simulating the
   // abort signal being fired by the poll timer between turns).
-  const converseStreamFn = jest.fn((_model: unknown, _sys: unknown, _msgs: unknown, _settings: unknown, signal?: AbortSignal) =>
+  const converseStreamFn = jest.fn((_model: unknown, _sys: unknown, _msgs: unknown, _opts: unknown) =>
     (async function* () {
       yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'first answer' }], turnIndex: 0 }
       // Simulate the abort signal firing (as if the poll timer called abort())
+      const signal = (_opts as { abortSignal?: AbortSignal }).abortSignal
       if (signal) {
         const ctrl = (signal as unknown as { _controller?: AbortController })._controller
         if (ctrl) ctrl.abort()
@@ -835,7 +836,7 @@ test('d3: cancel between turns — persisted turns survive, cancelled event emit
 
   // Override converseStream to receive the AbortController signal and abort it
   // A simpler approach: the fake stream throws AbortError directly to simulate cancellation.
-  const converseStreamFn2 = jest.fn((_m: unknown, _s: unknown, _msgs: unknown, _settings: unknown, _signal?: AbortSignal) =>
+  const converseStreamFn2 = jest.fn((_m: unknown, _s: unknown, _msgs: unknown, _opts: unknown) =>
     (async function* () {
       yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'first answer' }], turnIndex: 0 }
       // Throw AbortError to simulate the signal firing
@@ -1024,8 +1025,8 @@ test('f2: webSearchEnabled:false passes empty tools — converseStream called wi
   }))
 
   // The modelSettings passed to converseStream must include webSearchEnabled:false
-  const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
-  expect((passedSettings as Record<string, unknown>).webSearchEnabled).toBe(false)
+  const [, , , opts] = mockBedrock.converseStream.mock.calls[0]
+  expect(opts.settings?.webSearchEnabled).toBe(false)
 })
 
 test('f3: a turn chunk with truncated:true persists truncated:true and researchDepth on the assistant turn', async () => {
@@ -1232,8 +1233,8 @@ test('prefs2: client modelSettings override user preference defaults', async () 
   // Client explicitly turns web search ON — must win
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { webSearchEnabled: true } }))
 
-  const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
-  expect((passedSettings as Record<string, unknown>).webSearchEnabled).toBe(true)
+  const [, , , opts] = mockBedrock.converseStream.mock.calls[0]
+  expect(opts.settings?.webSearchEnabled).toBe(true)
 })
 
 test('prefs2b: client modelSettings.imageGenerationEnabled flows through to converseStream (regression — was silently dropped by the chatPrefs/effectiveModelSettings field allowlist)', async () => {
@@ -1248,8 +1249,8 @@ test('prefs2b: client modelSettings.imageGenerationEnabled flows through to conv
 
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { imageGenerationEnabled: true } }))
 
-  const [, , , passedSettings] = mockBedrock.converseStream.mock.calls[0]
-  expect((passedSettings as Record<string, unknown>).imageGenerationEnabled).toBe(true)
+  const [, , , opts] = mockBedrock.converseStream.mock.calls[0]
+  expect(opts.settings?.imageGenerationEnabled).toBe(true)
 })
 
 test('prefs3: getUserPrefs failure propagates as a fatal error — converseStream not called', async () => {
@@ -1854,8 +1855,12 @@ test('cont9: continue uses resolveResponseLeaf — bubble msgId (first turn) res
 })
 
 // ── Task D: LLM call structured logging ──────────────────────────────────────
+//
+// The `llm_call` record itself is emitted by converseStream (lib/llm/loop.ts, covered by
+// tests/lib/llm/observability.test.ts) — mocked out here. What this handler still owns is
+// the call *label* it hands the wrapper, which is what D1a asserts.
 
-test('D1a: llm_call chat log emitted after stop chunk with stopReason and token fields', async () => {
+test('D1a: converseStream is labelled purpose=chat with the sub/chatId correlation ids', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
@@ -1869,25 +1874,13 @@ test('D1a: llm_call chat log emitted after stop chunk with stopReason and token 
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
-  const logCalls = [...logSpy.mock.calls]
-  logSpy.mockRestore()
 
-  const chatLog = logCalls
-    .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
-    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'chat')
-
-  expect(chatLog).toBeDefined()
-  expect(chatLog!.stopReason).toBe('end_turn')
-  expect(chatLog!.model).toBe(MODEL)
-  expect(chatLog!.chatId).toBe('c1')
-  expect(chatLog!.inputTokens).toBe(10)
-  expect(chatLog!.outputTokens).toBe(5)
-  expect(chatLog!.cacheReadInputTokens).toBe(3)
+  const opts = mockBedrock.converseStream.mock.calls[0][3]
+  expect(opts.call).toEqual({ purpose: 'chat', sub: 'user-1', chatId: 'c1', projectId: undefined })
 })
 
-test('D1b: llm_call enrich_turn log emitted after enrichTurn call', async () => {
+test('D1b: title generated and applied after the turn', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
   mockDynamo.listMessages.mockResolvedValue([])
@@ -1903,22 +1896,12 @@ test('D1b: llm_call enrich_turn log emitted after enrichTurn call', async () => 
   // generateChatTitle returns a title (first normal send with title='New Chat')
   mockEnrichment.generateChatTitle.mockResolvedValue('Generated Title')
 
-  const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
-  const logCalls = [...logSpy.mock.calls]
-  logSpy.mockRestore()
 
-  const enrichLog = logCalls
-    .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
-    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'enrich_turn')
-
-  expect(enrichLog).toBeDefined()
-  expect(enrichLog!.chatId).toBe('c1')
-  // Verify the title was also applied
   expect(mockDynamo.updateChatTitle).toHaveBeenCalledWith('user-1', 'c1', 'Generated Title')
 })
 
-test('D1c: llm_call enrich_turn log emitted and user facts persisted via reconcile', async () => {
+test('D1c: user facts persisted via reconcile after the turn', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   // Use 'Existing Chat' title so needTitle=false
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing Chat' })
@@ -1946,17 +1929,8 @@ test('D1c: llm_call enrich_turn log emitted and user facts persisted via reconci
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {})
   await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
-  const logCalls = [...logSpy.mock.calls]
-  logSpy.mockRestore()
 
-  const enrichLog = logCalls
-    .map(args => { try { return JSON.parse(args[0] as string) as Record<string, unknown> } catch { return null } })
-    .find(obj => obj?.event === 'llm_call' && obj?.purpose === 'enrich_turn')
-
-  expect(enrichLog).toBeDefined()
-  expect(enrichLog!.chatId).toBe('c1')
   // Both facts were persisted via putUserMemory
   expect(mockDynamo.putUserMemory).toHaveBeenCalledTimes(2)
 })
@@ -2249,8 +2223,8 @@ describe('project chat enrichment', () => {
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
-    // converseStream receives toolCtx as 5th arg
-    const toolCtxArg = mockBedrock.converseStream.mock.calls[0][4]
+    // converseStream receives toolCtx on its options object
+    const toolCtxArg = mockBedrock.converseStream.mock.calls[0][3].ctx
     expect(toolCtxArg).toMatchObject({ sub: 'user-1', projectId: 'proj-1', chatId: 'c1' })
   })
 
@@ -2390,10 +2364,9 @@ describe('Search (forced search_history turn)', () => {
       search: { scope: 'global' },
     }))
 
-    const callArgs = mockBedrock.converseStream.mock.calls[0]
-    const toolCtxArg = callArgs[4]
-    expect(toolCtxArg).toMatchObject({ sub: 'user-1', searchScope: 'global' })
-    expect(callArgs[6]).toBe('search_history') // forceToolName
+    const opts = mockBedrock.converseStream.mock.calls[0][3]
+    expect(opts.ctx).toMatchObject({ sub: 'user-1', searchScope: 'global' })
+    expect(opts.forceToolName).toBe('search_history')
   })
 
   test('without body.search, toolCtx has no searchScope and forceToolName is undefined', async () => {
@@ -2404,10 +2377,9 @@ describe('Search (forced search_history turn)', () => {
 
     await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'just a normal message', model: MODEL, systemPrompt: '' }))
 
-    const callArgs = mockBedrock.converseStream.mock.calls[0]
-    const toolCtxArg = callArgs[4]
-    expect(toolCtxArg?.searchScope).toBeUndefined()
-    expect(callArgs[6]).toBeUndefined()
+    const opts = mockBedrock.converseStream.mock.calls[0][3]
+    expect(opts.ctx?.searchScope).toBeUndefined()
+    expect(opts.forceToolName).toBeUndefined()
   })
 
   test('search.scope:"project" is forwarded as-is — buildSearchHistoryCorpus/searchHistory (not sendMessage) own the no-projectId fallback', async () => {
@@ -2422,7 +2394,7 @@ describe('Search (forced search_history turn)', () => {
       search: { scope: 'project' },
     }))
 
-    const toolCtxArg = mockBedrock.converseStream.mock.calls[0][4]
+    const toolCtxArg = mockBedrock.converseStream.mock.calls[0][3].ctx
     expect(toolCtxArg?.searchScope).toBe('project')
     expect(toolCtxArg?.projectId).toBeUndefined()
   })

@@ -15,7 +15,7 @@ import type {
 } from 'openai/resources/responses/responses'
 import { getCapabilities, type ModelSettings } from '../../../config/models'
 import { ensureBedrockAuth } from '../../bedrockAuth'
-import type { StreamChunk, TurnRequest, TurnResult, OnceRequest, ChatProvider, TokenUsage } from '../types'
+import type { StreamChunk, TurnRequest, TurnResult, OnceRequest, OnceResult, ChatProvider, TokenUsage } from '../types'
 import type { ToolSpec } from '../toolSpec'
 import type { Block, NeutralMessage } from '../blocks'
 import { toNeutral, fromNeutralMessages } from './mantleTranslate'
@@ -207,7 +207,7 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   }
 }
 
-async function once(req: OnceRequest): Promise<string> {
+async function once(req: OnceRequest): Promise<OnceResult> {
   const caps = getCapabilities(req.modelId)
   const region = regionFor(req.modelId)
   const client = await clientFor(region)
@@ -220,7 +220,10 @@ async function once(req: OnceRequest): Promise<string> {
     max_output_tokens: req.maxTokens ?? 64,
     ...buildReasoningParams(caps, {}),
   })
-  return (response.output_text ?? '').trim()
+  return {
+    text: (response.output_text ?? '').trim(),
+    usage: mapUsage(response.usage),
+  }
 }
 
 export const bedrockMantleProvider: ChatProvider = {

@@ -41,6 +41,37 @@ export interface TokenUsage {
   cacheWriteInputTokens?: number
 }
 
+// ── Call labelling for observability ─────────────────────────────────────────
+//
+// Every entry point in loop.ts requires an LlmCallContext, so a new call site
+// cannot be added without saying what it is for — the wrapper then emits the
+// `llm_call` record itself (lib/llm/observability.ts). See
+// docs/adr/0029-llm-observability-in-the-wrapper.md.
+
+// A closed union rather than a free string: these values are what CloudWatch
+// Insights queries filter on, so a typo'd purpose would silently vanish from them.
+export type LlmPurpose =
+  | 'chat'
+  | 'chat_title'
+  | 'chat_summary'
+  | 'enrich_user_facts'
+  | 'enrich_project_facts'
+  | 'extract_user_facts'
+  | 'file_summary'
+  | 'search_history'
+  | 'research_plan'
+  | 'research_worker'
+  | 'research_assess'
+  | 'research_report'
+
+export interface LlmCallContext {
+  purpose: LlmPurpose
+  sub?: string
+  chatId?: string
+  projectId?: string
+  runId?: string
+}
+
 // ── The ChatProvider seam ────────────────────────────────────────────────────
 //
 // Every model dispatches through one of these (see registry.ts). loop.ts contains
@@ -70,6 +101,14 @@ export interface OnceRequest {
   maxTokens?: number
 }
 
+// A one-shot call's text plus whatever the provider reported spending on it. `once`
+// returns usage rather than just the string so loop.ts can log token stats for the
+// non-streaming calls too — `converseOnce`'s own callers still only see the text.
+export interface OnceResult {
+  text: string
+  usage?: TokenUsage
+}
+
 export interface TurnResult {
   stopReason: string
   textContent: string
@@ -90,5 +129,5 @@ export interface ChatProvider {
   // foreign-opaque filtering this provider's wire format requires. Idempotent.
   sanitizeHistory(messages: NeutralMessage[]): NeutralMessage[]
   streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult>
-  once(req: OnceRequest): Promise<string>
+  once(req: OnceRequest): Promise<OnceResult>
 }
