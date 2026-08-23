@@ -25,7 +25,10 @@ async function startNewChat(page: import('@playwright/test').Page) {
 async function waitForStreamDone(page: import('@playwright/test').Page) {
   await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
-  await expect(page.locator('.message-input')).toBeEnabled({ timeout: 10_000 })
+  // The assistant bubble appears optimistically and the composer textarea is never
+  // disabled, so neither is a real wait — the turn is only over once the composer
+  // swaps its Stop button back for Send.
+  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 60_000 })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
