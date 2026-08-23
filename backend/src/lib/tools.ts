@@ -26,9 +26,11 @@ export interface ToolContext {
   // Set only for a forced/explicit Search turn (ws/sendMessage.ts) — see SearchHistoryContext
   // in lib/search.ts for why this overrides any model-supplied scope on that turn.
   searchScope?: 'project' | 'global'
-  // Gates read_research_findings — a sensitive chat gets no project/dossier (docs/adr/0024),
-  // so this is its only way back to a completed Deep Research run's findings.
   sensitive?: boolean
+  // Set from the chat row's `hasResearch` flag — gates read_research_findings so only a
+  // chat that has actually completed a Deep Research run is offered it.
+  // See docs/adr/0031-deep-research-is-not-a-project.md.
+  hasResearch?: boolean
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────

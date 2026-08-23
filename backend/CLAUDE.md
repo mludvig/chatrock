@@ -22,6 +22,7 @@ backend/src/
   lib/enrichment.ts       — post-turn extraction: enrichUserFacts() (Sonnet), enrichProjectFacts() (Sonnet), summarizeChat() (Sonnet), generateChatTitle() (Haiku); all independent calls, each logs on failure
   lib/attachments.ts      — S3 presigned PUT, CloudFront signed display URLs (SSM key), hydrateBlocks, copyChatObjects/rewriteBlockUri for fork; deleteProjectObjects
   lib/projectFiles.ts     — summarizeFile(): sends file to Bedrock (text/PDF/image) to produce microLabel + summary; stores extracted text sidecar for PDFs
+  lib/researchDossier.ts  — the research dossier: buildDossierMarkdown() + writeResearchDossier()/writeDossiersForChatMove(), the project-file copy written only for a chat that already belongs to a project (docs/adr/0031)
   lib/projectContext.ts   — executeProjectReadFileTool / executeProjectReadChatTool: ownership validation, progressive detail (summary vs full), capToolResultText applied
   lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
   lib/preferences.ts      — UserPreferences type + resolvePreferences() layering
@@ -189,6 +190,7 @@ Other mechanics: `GET /api/chats` returns sensitive chats like any other (visibi
 | `POST /api/chats/{chatId}/fork` | clone active-path into new chat |
 | `DELETE /api/chats/{chatId}/messages/{msgId}` | delete message subtree |
 | `GET /api/chats/{chatId}/messages` | full tree walk + attachment URL signing |
+| `GET /api/chats/{chatId}/research` | re-sync the active/most-recent Deep Research run; `?dossier=1` also renders the dossier markdown |
 | `POST /api/attachments` | presign S3 PUT → `{s3Key, uploadUrl}` |
 | `GET /api/models` | list models |
 | `GET /api/memory` | list user memories |

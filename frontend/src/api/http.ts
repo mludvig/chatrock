@@ -42,6 +42,9 @@ export interface Chat {
   sensitive?: boolean
   ephemeral?: boolean
   expiresAt?: string
+  // Set once a Deep Research run in this chat completes — its findings live on the run row,
+  // reachable from the chat itself. See docs/adr/0031-deep-research-is-not-a-project.md.
+  hasResearch?: boolean
   // Present exactly once, the first time this chat is read after its stored model was
   // retired from config/models.ts — the backend already swapped `model` to the current
   // default and persisted it; this is only here so the UI can show a one-time notice.
@@ -294,6 +297,10 @@ export const api = {
   },
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
   getResearchRun: (chatId: string) => req<{ run: ResearchRun | null }>('GET', `/api/chats/${chatId}/research`),
+  // ?dossier=1 asks the backend to render the full markdown record alongside the run — the
+  // same document a project chat's dossier file holds, for the download button.
+  getResearchDossier: (chatId: string) =>
+    req<{ run: ResearchRun | null; dossierMarkdown?: string }>('GET', `/api/chats/${chatId}/research?dossier=1`),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
   resummarizeChat: (chatId: string)    => req<{ summary: string; topics: string[] }>('POST', `/api/chats/${chatId}/resummarize`),

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Superseded by `0031-deep-research-is-not-a-project.md` — a run no longer creates a project;
+the dossier is written only when the chat already belongs to one.
 
 ## Context
 

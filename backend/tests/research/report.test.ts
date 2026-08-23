@@ -2,7 +2,6 @@ import { handler } from '../../src/research/report'
 import * as bedrock from '../../src/lib/bedrock'
 import * as dynamo from '../../src/lib/dynamo'
 import * as projectFiles from '../../src/lib/projectFiles'
-import * as enrichment from '../../src/lib/enrichment'
 
 jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/lib/dynamo', () => ({
@@ -11,6 +10,7 @@ jest.mock('../../src/lib/dynamo', () => ({
   putMessage: jest.fn(),
   updateChatActiveLeaf: jest.fn(),
   updateRun: jest.fn(),
+  updateChatHasResearch: jest.fn(),
   putProject: jest.fn(),
   updateChatProject: jest.fn(),
   putProjectFile: jest.fn(),
@@ -19,8 +19,7 @@ jest.mock('../../src/lib/projectFiles', () => ({
   summarizeFile: jest.fn(),
 }))
 jest.mock('../../src/lib/enrichment', () => ({
-  summarizeChatById: jest.fn(),
-  enrichProjectFactsByChatId: jest.fn(),
+  generateChatTitle: jest.fn(),
 }))
 jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
 jest.mock('@aws-sdk/client-s3', () => ({
@@ -31,7 +30,6 @@ jest.mock('@aws-sdk/client-s3', () => ({
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 const mockProjectFiles = projectFiles as jest.Mocked<typeof projectFiles>
-const mockEnrichment = enrichment as jest.Mocked<typeof enrichment>
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -91,36 +89,33 @@ test('report handler — includes findings and gaps in the prompt sent to the mo
 })
 
 describe('research dossier', () => {
-  test('chat already in a project — dossier is written there, no new project created', async () => {
+  test('chat already in a project — the dossier is filed there', async () => {
     mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', activeLeafId: 'leaf-9', projectId: 'proj-existing' })
     mockBedrock.converseOnce.mockResolvedValue('answer')
 
     await handler(BASE_INPUT)
 
-    expect(mockDynamo.putProject).not.toHaveBeenCalled()
-    expect(mockDynamo.updateChatProject).not.toHaveBeenCalled()
     expect(mockDynamo.putProjectFile).toHaveBeenCalledTimes(1)
     const file = mockDynamo.putProjectFile.mock.calls[0][0] as Record<string, unknown>
     expect(file.PK).toBe('PROJECT#proj-existing')
     expect(file.status).toBe('ready')
     expect(file.inclusion).toBe('auto')
     expect(file.microLabel).toBe('Dossier')
+    // Recorded so a later move into the same project doesn't file a duplicate copy.
+    expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { dossierProjectId: 'proj-existing' })
   })
 
-  test('chat with no project — a project is created from the question and the chat is moved into it', async () => {
+  test('chat with no project — no project is created and no dossier file is written', async () => {
     mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', activeLeafId: 'leaf-9' })
     mockBedrock.converseOnce.mockResolvedValue('answer')
 
     await handler(BASE_INPUT)
 
-    expect(mockDynamo.putProject).toHaveBeenCalledTimes(1)
-    const project = mockDynamo.putProject.mock.calls[0][0] as Record<string, unknown>
-    expect(project.name).toBe(BASE_INPUT.question)
-    expect(mockDynamo.updateChatProject).toHaveBeenCalledWith('user-1', 'chat-1', project.projectId)
-    expect(mockEnrichment.summarizeChatById).toHaveBeenCalledWith('user-1', 'chat-1')
-    expect(mockEnrichment.enrichProjectFactsByChatId).toHaveBeenCalledWith('chat-1', project.projectId)
-    const file = mockDynamo.putProjectFile.mock.calls[0][0] as Record<string, unknown>
-    expect(file.PK).toBe(`PROJECT#${project.projectId}`)
+    expect(mockDynamo.putProject).not.toHaveBeenCalled()
+    expect(mockDynamo.updateChatProject).not.toHaveBeenCalled()
+    expect(mockDynamo.putProjectFile).not.toHaveBeenCalled()
+    // The findings are still reachable — read_research_findings is unlocked on the chat.
+    expect(mockDynamo.updateChatHasResearch).toHaveBeenCalledWith('user-1', 'chat-1')
   })
 
   test('dossier markdown includes the report, plan, findings with sources, and gaps', async () => {
@@ -138,14 +133,12 @@ describe('research dossier', () => {
     expect(body).toContain('Did not verify the exact date')
   })
 
-  test('sensitive chat — no project is created and no dossier file is written', async () => {
-    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', activeLeafId: 'leaf-9', sensitive: true })
+  test('sensitive chat in a project — no dossier file is written', async () => {
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', activeLeafId: 'leaf-9', projectId: 'proj-1', sensitive: true })
     mockBedrock.converseOnce.mockResolvedValue('answer')
 
     await handler(BASE_INPUT)
 
-    expect(mockDynamo.putProject).not.toHaveBeenCalled()
-    expect(mockDynamo.updateChatProject).not.toHaveBeenCalled()
     expect(mockDynamo.putProjectFile).not.toHaveBeenCalled()
     expect(mockProjectFiles.summarizeFile).not.toHaveBeenCalled()
   })

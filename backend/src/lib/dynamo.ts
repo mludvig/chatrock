@@ -94,6 +94,18 @@ export async function updateChatActiveLeaf(sub: string, chatId: string, activeLe
   }))
 }
 
+// Set once by research/report.ts when a run completes. Gates read_research_findings in
+// lib/llm/toolGating.ts so a plain chat's tool list isn't padded with a tool that has
+// nothing to read — see docs/adr/0031-deep-research-is-not-a-project.md.
+export async function updateChatHasResearch(sub: string, chatId: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET hasResearch = :h, updatedAt = :u',
+    ExpressionAttributeValues: { ':h': true, ':u': new Date().toISOString() },
+  }))
+}
+
 export async function updateChatModel(sub: string, chatId: string, model: string) {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,

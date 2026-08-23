@@ -11,9 +11,9 @@ function errorResult(text: string): ToolResult {
   return textResult(text, true)
 }
 
-// Sensitive-chat carve-out (docs/adr/0024) — a sensitive chat gets no project and no
-// dossier file, so its Deep Research findings are read back from the RUN# row itself
-// rather than through read_project_file.
+// A completed run's findings live on the RUN# row, not in a project — this is how a chat
+// reads its own Deep Research back, whether or not a dossier file was ever written.
+// See docs/adr/0031-deep-research-is-not-a-project.md.
 export async function executeReadResearchFindingsTool(
   input: Record<string, string>,
   ctx: ToolContext,
