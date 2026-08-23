@@ -2,6 +2,7 @@ import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn'
 import { getConnection, getChat, putRun, buildRunKey, buildTurnKey, putMessage, updateChatActiveLeaf } from '../lib/dynamo'
 import { newId } from '../lib/ids'
+import { DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { v4 as uuidv4 } from 'uuid'
 
 const sfn = new SFNClient({})
@@ -61,6 +62,9 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
     sub: conn.userSub,
     status: 'recon',
     question,
+    // Snapshotted so every phase of the run uses one model even if the chat's is changed
+    // mid-run — see docs/adr/0030-research-runs-use-the-chats-model.md.
+    model: isValidModelId(chat.model as string) ? (chat.model as string) : DEFAULT_CHAT_MODEL,
     connId,
     findings: [],
     gapsNotPursued: [],

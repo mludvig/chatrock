@@ -142,6 +142,9 @@ export interface RunRow {
   sub: string
   status: RunStatus
   question: string
+  // The chat's model at the moment the run started — every phase's LLM call uses it.
+  // See docs/adr/0030-research-runs-use-the-chats-model.md.
+  model: string
   plan?: PlanResult
   findings: Finding[]
   gapsNotPursued: string[]

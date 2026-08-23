@@ -1,11 +1,11 @@
 import type { ResearcherInput, ResearcherResult, Finding } from './types'
 import { converseStream } from '../lib/bedrock'
 import type { ModelSettings } from '../config/models'
-import { DEFAULT_CHAT_MODEL } from '../config/models'
 import { safeParse } from '../lib/enrichment'
 import type { ToolContext } from '../lib/tools'
 import { notifyConnection } from '../lib/wsNotify'
 import { stepEmitter } from './progress'
+import { resolveRunModel } from './model'
 import RESEARCH_RESEARCHER_SYSTEM_PROMPT from '../../prompts/research-researcher.txt'
 
 // Only web_search/web_fetch — a researcher has no chat/memory/project context to draw on,
@@ -38,9 +38,11 @@ export const handler = async (event: ResearcherInput): Promise<ResearcherResult>
   // is invisible until the single research_finding frame at the very end.
   const emit = stepEmitter(event, event.subQuestion.id)
 
+  const model = await resolveRunModel(event)
+
   let finalText = ''
   for await (const chunk of converseStream(
-    DEFAULT_CHAT_MODEL,
+    model,
     RESEARCH_RESEARCHER_SYSTEM_PROMPT,
     [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
     {

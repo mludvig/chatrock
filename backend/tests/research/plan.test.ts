@@ -2,6 +2,7 @@ import { handler } from '../../src/research/plan'
 import * as bedrock from '../../src/lib/bedrock'
 
 jest.mock('../../src/lib/bedrock')
+jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
 
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 

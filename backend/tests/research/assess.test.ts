@@ -5,6 +5,7 @@ import * as dynamo from '../../src/lib/dynamo'
 jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/lib/dynamo', () => ({ updateRun: jest.fn() }))
 jest.mock('../../src/lib/wsNotify', () => ({ notifyConnection: jest.fn() }))
+jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
 
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>

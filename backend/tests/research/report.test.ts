@@ -22,6 +22,7 @@ jest.mock('../../src/lib/enrichment', () => ({
   summarizeChatById: jest.fn(),
   enrichProjectFactsByChatId: jest.fn(),
 }))
+jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
 jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn().mockImplementation(() => ({ send: jest.fn().mockResolvedValue({}) })),
   PutObjectCommand: jest.fn(),
@@ -59,6 +60,9 @@ test('report handler — persists the synthesised answer as an assistant turn ch
   expect(turn.role).toBe('assistant')
   expect(turn.parentId).toBe('leaf-9')
   expect(turn.blocks).toEqual([{ kind: 'text', text: result.reportText }])
+  // The turn records the run's model, not the global default — see docs/adr/0030.
+  expect(turn.model).toBe('test-model')
+  expect(mockBedrock.converseOnce.mock.calls[0][0]).toBe('test-model')
   expect(mockDynamo.updateChatActiveLeaf).toHaveBeenCalledWith('user-1', 'chat-1', turn.msgId)
   expect(mockDynamo.updateRun).toHaveBeenCalledWith('chat-1', 'run-1', { status: 'done', reportText: result.reportText })
 })
