@@ -33,6 +33,22 @@ async function createProject(page: Page, name: string) {
 }
 
 /**
+ * Turn on "Show project chats" in the ChatsPanel filter popover. Off by default, so a chat
+ * moved into a project drops straight out of the list and its chip can never be asserted.
+ * Assumes the ChatsPanel is open.
+ */
+async function showProjectChats(page: Page) {
+  await page.locator('.chat-list-filter .chat-filter-btn').click()
+  const item = page.locator('.chat-list-filter-item').filter({ hasText: 'Show project chats' })
+  await item.locator('input').check()
+  // The popover only closes on a click outside it (there is no Esc handler), and while it
+  // is open it covers the top of the chat list — every later hover/click there is
+  // intercepted. Toggle it shut with the same button that opened it.
+  await page.locator('.chat-list-filter .chat-filter-btn').click()
+  await expect(page.locator('.chat-list-filter-menu')).toBeHidden({ timeout: 5000 })
+}
+
+/**
  * Delete a project via the Projects panel UI.
  * Assumes the projects panel is visible.
  * Handles the confirm() dialog automatically.
@@ -78,7 +94,7 @@ test.describe('Projects — CRUD lifecycle', () => {
   test.use({ storageState: '.auth/state.json' })
 
   test('create project', async ({ page }) => {
-    const name = 'E2E Test Project CRUD'
+    const name = `E2E Test Project CRUD ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, name)
 
@@ -92,7 +108,7 @@ test.describe('Projects — CRUD lifecycle', () => {
   })
 
   test('navigate to project view', async ({ page }) => {
-    const name = 'E2E Nav Test'
+    const name = `E2E Nav Test ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, name)
 
@@ -112,7 +128,7 @@ test.describe('Projects — CRUD lifecycle', () => {
   })
 
   test('project view sections are visible', async ({ page }) => {
-    const name = 'E2E Sections Test'
+    const name = `E2E Sections Test ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, name)
 
@@ -132,8 +148,8 @@ test.describe('Projects — CRUD lifecycle', () => {
   })
 
   test('rename project', async ({ page }) => {
-    const before = 'E2E Rename Before'
-    const after = 'E2E Rename After'
+    const before = `E2E Rename Before ${Date.now()}`
+    const after = `E2E Rename After ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, before)
 
@@ -168,7 +184,7 @@ test.describe('Projects — CRUD lifecycle', () => {
   })
 
   test('delete project — chats survive', async ({ page }) => {
-    const name = 'E2E Delete Test'
+    const name = `E2E Delete Test ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, name)
 
@@ -189,7 +205,7 @@ test.describe('Projects — chat membership', () => {
   test.use({ storageState: '.auth/state.json' })
 
   test('new chat in project gets project chip in ChatView', async ({ page }) => {
-    const projectName = 'E2E Chip Test'
+    const projectName = `E2E Chip Test ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, projectName)
 
@@ -219,7 +235,7 @@ test.describe('Projects — chat membership', () => {
   })
 
   test('move chat to project via ChatsPanel', async ({ page }) => {
-    const projectName = 'E2E Move Test'
+    const projectName = `E2E Move Test ${Date.now()}`
 
     // Go to /c/new — a new chat URL is assigned
     await page.goto('/c/new')
@@ -244,6 +260,7 @@ test.describe('Projects — chat membership', () => {
     // Open ChatsPanel
     await page.click('[data-panel="chats"]')
     await expect(page.locator('.chat-list')).toBeVisible()
+    await showProjectChats(page)
 
     // The first chat item in the list is the most recently updated one
     const firstChatItem = page.locator('.chat-list .chat-item').first()
@@ -277,7 +294,7 @@ test.describe('Projects — chat membership', () => {
   })
 
   test('remove chat from project via ChatsPanel', async ({ page }) => {
-    const projectName = 'E2E Remove Test'
+    const projectName = `E2E Remove Test ${Date.now()}`
 
     // Create project
     await openProjectsPanel(page)
@@ -290,6 +307,7 @@ test.describe('Projects — chat membership', () => {
     // Open ChatsPanel, move the first chat item into the project
     await page.click('[data-panel="chats"]')
     await expect(page.locator('.chat-list')).toBeVisible()
+    await showProjectChats(page)
 
     const firstChatItem = page.locator('.chat-list .chat-item').first()
     await expect(firstChatItem).toBeVisible({ timeout: 5000 })
@@ -317,7 +335,7 @@ test.describe('Projects — chat membership', () => {
   })
 
   test('project chip in ChatsPanel links to project view', async ({ page }) => {
-    const projectName = 'E2E Chip Link Test'
+    const projectName = `E2E Chip Link Test ${Date.now()}`
 
     // Create project
     await openProjectsPanel(page)
@@ -330,6 +348,7 @@ test.describe('Projects — chat membership', () => {
     // Open ChatsPanel, move first chat into project
     await page.click('[data-panel="chats"]')
     await expect(page.locator('.chat-list')).toBeVisible()
+    await showProjectChats(page)
 
     const firstChatItem = page.locator('.chat-list .chat-item').first()
     await expect(firstChatItem).toBeVisible({ timeout: 5000 })
@@ -362,7 +381,7 @@ test.describe('Projects — file upload UI', () => {
   test.use({ storageState: '.auth/state.json' })
 
   test('file drop zone visible in project view', async ({ page }) => {
-    const projectName = 'E2E Files UI Test'
+    const projectName = `E2E Files UI Test ${Date.now()}`
 
     await openProjectsPanel(page)
     await createProject(page, projectName)
@@ -389,7 +408,7 @@ test.describe('Projects — inline edits (live verification)', () => {
   test.use({ storageState: '.auth/state.json' })
 
   test('project memory, file microLabel/summary, and chat summary edits persist across reload', async ({ page }) => {
-    const projectName = 'E2E Inline Edits Test'
+    const projectName = `E2E Inline Edits Test ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, projectName)
     await page.waitForURL(/\/p\//, { timeout: 10000 })
@@ -428,7 +447,9 @@ test.describe('Projects — inline edits (live verification)', () => {
     const memoryText = memorySection.locator('.memory-text').first()
     await expect(memoryText).toBeVisible({ timeout: 15000 })
     await memoryText.click()
-    await memorySection.locator('.rename-input').fill('Edited: Postgres 16 is the database of record.')
+    // Memory rows edit through a textarea of their own (.memory-edit-textarea), not the
+    // .rename-input the file label uses.
+    await memorySection.locator('.memory-edit-textarea').fill('Edited: Postgres 16 is the database of record.')
     await Promise.all([page.waitForResponse(isProjectMemoryPatch), page.keyboard.press('Enter')])
     await expect(memorySection.locator('.memory-text').first())
       .toHaveText('Edited: Postgres 16 is the database of record.', { timeout: 5000 })
@@ -572,7 +593,7 @@ test.describe('Projects — Settings section', () => {
   test.use({ storageState: '.auth/state.json' })
 
   test('description, instructions, and memoryEnabled persist across reload', async ({ page }) => {
-    const projectName = 'E2E Settings Test'
+    const projectName = `E2E Settings Test ${Date.now()}`
     await openProjectsPanel(page)
     await createProject(page, projectName)
 
