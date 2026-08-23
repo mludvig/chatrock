@@ -55,30 +55,16 @@ export default function ResearchPanel({ run, onApprove }: {
         </>
       )}
 
-      {run.status === 'awaiting_approval' && run.plan && (
+      {run.status === 'awaiting_approval' && (
         <div className="research-panel-plan">
           {/* How the run scoped the question — kept above the plan it produced. */}
           <StepList steps={run.reconSteps} />
-          {run.plan.clarifyingQuestions.length > 0 && (
-            <div className="research-panel-section">
-              <h4>Clarifying questions</h4>
-              {/* Numbered so feedback can address one of them as "#2" — the Replan prompt
-                  is given the same numbering (backend/src/research/plan.ts). */}
-              <ol>
-                {run.plan.clarifyingQuestions.map((q, i) => <li key={i}>{q}</li>)}
-              </ol>
-            </div>
-          )}
-          <div className="research-panel-section">
-            <h4>Proposed sub-questions <span className="research-panel-count">{run.plan.subQuestions.length}</span></h4>
-            <ol>
-              {run.plan.subQuestions.map(sq => <li key={sq.id}>{sq.question}</li>)}
-            </ol>
-          </div>
-          {/* No feedback box here: the panel scrolls off small screens while the main
-              composer stays put, so answers went there and were swallowed. The composer is
-              now the one input for the plan too — this button is just the shortcut for the
-              common "start as-is". See docs/adr/0032-plan-feedback-classified-by-a-tiny-model.md. */}
+          {/* The plan itself is rendered above, as the persisted assistant turn
+              awaitApproval.ts wrote — so it stays in the transcript after approval instead
+              of vanishing with this panel, and a revised plan lands beneath the feedback
+              that asked for it. No feedback box here either: the panel scrolls off small
+              screens while the main composer stays put, so answers went there and were
+              swallowed. See docs/adr/0032-plan-feedback-classified-by-a-tiny-model.md. */}
           <div className="research-panel-actions">
             <button className="btn-primary" onClick={onApprove}>
               <FontAwesomeIcon icon={faCheck} /> Approve &amp; start
@@ -90,10 +76,12 @@ export default function ResearchPanel({ run, onApprove }: {
         </div>
       )}
 
-      {run.status === 'running' && (
+      {(run.status === 'running' || run.status === 'done') && (
         <div className="research-panel-progress">
           {/* Each researcher gets its own card so three concurrent ones don't interleave
-              into one unattributable stream of pills. */}
+              into one unattributable stream of pills. Every wave's researchers stay listed
+              — a finished one is the record of work done, and removing it as the next wave
+              starts reads as progress being lost. */}
           {run.waveSubQuestions.map(sq => {
             const finding = run.findings.find(f => f.subQuestionId === sq.id)
             return (
@@ -107,8 +95,8 @@ export default function ResearchPanel({ run, onApprove }: {
               </div>
             )
           })}
-          {/* Findings from earlier waves — their researchers' steps belong to sub-questions
-              this wave no longer lists, so only the result is carried forward. */}
+          {/* A finding whose sub-question isn't listed can only come from a re-synced run
+              that missed its research_wave_start — still shown, just without its steps. */}
           {run.findings.some(f => !run.waveSubQuestions.some(sq => sq.id === f.subQuestionId)) && (
             <ul className="research-panel-findings">
               {run.findings.filter(f => !run.waveSubQuestions.some(sq => sq.id === f.subQuestionId)).map((f, i) => (
@@ -118,13 +106,19 @@ export default function ResearchPanel({ run, onApprove }: {
               ))}
             </ul>
           )}
-          <div className="research-panel-status">
-            <FontAwesomeIcon icon={faSpinner} spin />
-            {' '}
-            {run.phase && run.phase !== 'recon' && run.phase !== 'planning'
-              ? PHASE_LABEL[run.phase]
-              : `Researching ${run.waveSubQuestions.length} sub-question${run.waveSubQuestions.length === 1 ? '' : 's'}…`}
-          </div>
+          {run.status === 'done' ? (
+            <div className="research-panel-status">
+              <FontAwesomeIcon icon={faCheck} /> Research complete — {run.findings.length} finding{run.findings.length === 1 ? '' : 's'}. The report is above.
+            </div>
+          ) : (
+            <div className="research-panel-status">
+              <FontAwesomeIcon icon={faSpinner} spin />
+              {' '}
+              {run.phase && run.phase !== 'recon' && run.phase !== 'planning'
+                ? PHASE_LABEL[run.phase]
+                : `Researching ${run.waveSubQuestions.length} sub-question${run.waveSubQuestions.length === 1 ? '' : 's'}…`}
+            </div>
+          )}
         </div>
       )}
 

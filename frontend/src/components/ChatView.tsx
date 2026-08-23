@@ -192,6 +192,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   // Live Deep Research run for the chat currently being viewed, if any — see ResearchPanel.
   const activeResearchRun = chatId ? activeResearch[chatId] : undefined
+  // A finished run's panel stays mounted as the record of how the report was produced, but
+  // the run itself is over: it must not keep the composer marked in-flight or swallow the
+  // next deep-research send.
+  const liveResearchRun = activeResearchRun?.status === 'done' ? undefined : activeResearchRun
 
   const ALLOWED_TYPES: Record<string, 'image' | 'document'> = {
     'image/png': 'image', 'image/jpeg': 'image', 'image/gif': 'image', 'image/webp': 'image',
@@ -483,8 +487,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       if (!run) return
       if (run.status === 'done' || run.status === 'failed') {
         // The report landed as a normal turn while we were away, so the transcript — not the
-        // progress panel — is where it belongs now.
-        setActiveResearch(id, null)
+        // progress panel — is where it belongs now. A panel we already watched this run
+        // fill in is kept, marked done: its steps only exist in this tab's memory, and
+        // dropping them on a refocus would delete the record of the run in front of the
+        // user for no reason.
+        const shown = useChatStore.getState().activeResearch[id]
+        if (shown && shown.runId === run.runId) patchActiveResearch(id, { status: 'done', phase: null, done: true })
+        else setActiveResearch(id, null)
         if (id === chatIdRef.current) reloadMessages(id)
         else useChatStore.getState().invalidateMessagesCache(id)
         // Same unlock research_done does — a run that finished while the tab was away still
@@ -498,7 +507,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         ...initialResearchProgress(),
       })
     }).catch(() => {})
-  }, [setActiveResearch, reloadMessages, patchChat])
+  }, [setActiveResearch, patchActiveResearch, reloadMessages, patchChat])
 
   useEffect(() => {
     if (isNew || !chatId) return
@@ -563,6 +572,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             ...initialResearchProgress(),
             reconSteps: activeResearch[evt.chatId]?.reconSteps ?? [],
           })
+          // The plan is a persisted assistant turn (backend/src/research/awaitApproval.ts),
+          // and this frame is only sent once it is durable — so pull it into the transcript
+          // rather than rendering a panel-local copy that would vanish on approval.
+          if (evt.chatId === chatIdRef.current) reloadMessages(evt.chatId)
+          else useChatStore.getState().invalidateMessagesCache(evt.chatId)
         } else if (evt.type === 'research_phase') {
           patchActiveResearch(evt.chatId, { phase: evt.phase })
         } else if (evt.type === 'research_step') {
@@ -570,16 +584,22 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         } else if (evt.type === 'research_wave_start') {
           // Findings accumulate across waves — assess.ts merges each wave into the running
           // total, so clearing them here would make a multi-wave run look like it kept
-          // losing the work it had already reported.
+          // losing the work it had already reported. The sub-questions accumulate for the
+          // same reason: an earlier wave's researcher card, with its steps and its finding,
+          // is the record that the work happened.
           // phase is cleared so the status line drops back to "researching N sub-questions"
           // rather than keeping the previous round's "reviewing the findings" up.
-          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: evt.subQuestions, phase: null })
+          const known = activeResearch[evt.chatId]?.waveSubQuestions ?? []
+          const added = evt.subQuestions.filter(sq => !known.some(k => k.id === sq.id))
+          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: [...known, ...added], phase: null })
         } else if (evt.type === 'research_finding') {
           addResearchFinding(evt.chatId, { subQuestionId: evt.subQuestionId, summary: evt.summary, sourceUrls: evt.sourceUrls })
         } else if (evt.type === 'research_assess') {
           patchActiveResearch(evt.chatId, { findingCount: evt.findingCount, done: evt.done })
         } else if (evt.type === 'research_done') {
-          setActiveResearch(evt.chatId, null)
+          // The panel stays, as the log of how the report was arrived at — unmounting it
+          // the moment the answer lands throws away everything the user watched happen.
+          patchActiveResearch(evt.chatId, { status: 'done', phase: null, done: true })
           // Unlocks the Research section in ChatDetailsDialog (and read_research_findings on
           // the backend) without a chat refetch — a run never moves the chat anywhere now.
           // See docs/adr/0031-deep-research-is-not-a-project.md.
@@ -821,7 +841,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // worth chasing with backoff (a turn in flight) or can reconnect lazily on next send. An
   // active research run counts: `sending` is already false by then, but progress frames are
   // still arriving and a dropped socket would silently stall the panel.
-  useEffect(() => { setTurnInFlight(sending || !!activeResearchRun) }, [sending, activeResearchRun])
+  useEffect(() => { setTurnInFlight(sending || !!liveResearchRun) }, [sending, liveResearchRun])
 
   // Surface reconnect attempts so the user isn't left staring at a stalled turn with no
   // explanation — see docs/adr/0021-websocket-reconnect-and-refocus-catchup.md.
@@ -857,8 +877,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       // idle, so the branch above never covers it and the missed `research_done` has to be
       // recovered from the run row instead. Unconditional on `wasConnected`: an iOS tab can come
       // back with the socket seemingly alive yet have slept through the frame.
-      if (id && id !== 'new' && useChatStore.getState().activeResearch[id]) {
-        reconcileResearch(id)
+      const shownRun = id && id !== 'new' ? useChatStore.getState().activeResearch[id] : undefined
+      if (shownRun && shownRun.status !== 'done') {
+        reconcileResearch(id!)
       }
     }
     document.addEventListener('visibilitychange', handleRefocus)
@@ -1226,7 +1247,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     // on "Deep Research" for the run's duration (sticky), so a follow-up sent mid-run must
     // fall through to the normal sendMessage path, where the backend recognizes the active
     // run and appends the message as a steering note instead of starting a second run.
-    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId && !activeResearchRun
+    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId && !liveResearchRun
 
     if (isNew) {
       setCreatingChat(true)
