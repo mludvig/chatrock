@@ -2,7 +2,6 @@ import type { PlanInput, PlanResult, SubQuestion } from './types'
 import { converseOnce } from '../lib/bedrock'
 import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
-import { notifyConnection } from '../lib/wsNotify'
 import { notifyPhase } from './progress'
 import { resolveRunModel } from './model'
 import RESEARCH_PLAN_SYSTEM_PROMPT from '../../prompts/research-plan.txt'
@@ -77,7 +76,8 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
     ? obj.clarifyingQuestions.filter((q): q is string => typeof q === 'string' && q.trim().length > 0)
     : []
 
+  // The `research_plan` frame is pushed by awaitApproval.ts, not here — it announces a plan
+  // the client can reload into the transcript, so it waits until the turn is persisted.
   console.log(JSON.stringify({ event: 'research_plan_done', runId: event.runId, chatId: event.chatId, subQuestionCount: subQuestions.length, clarifyingCount: clarifyingQuestions.length }))
-  await notifyConnection(event.connId, { type: 'research_plan', runId: event.runId, chatId: event.chatId, plan: { subQuestions, clarifyingQuestions } })
   return { subQuestions, clarifyingQuestions }
 }

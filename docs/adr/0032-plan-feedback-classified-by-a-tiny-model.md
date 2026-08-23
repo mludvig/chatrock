@@ -46,3 +46,13 @@ does not change the plan) or `revise`. The token-releasing mechanics move to
   case where being sure matters most (start it exactly as proposed).
 - Clarifying questions render numbered, and `plan.ts` hands the Replan step the same
   numbering, so "#1 I mean xyz" resolves to the item the user was looking at.
+- Because the plan is now answered in the transcript, it is written there: `awaitApproval.ts`
+  persists it as an ordinary assistant turn and pushes `research_plan` only once that write
+  lands, so the plan stays above the reply that answered it and a revised plan appears as a
+  second turn below rather than overwriting the first. The panel renders the plan no more —
+  it would duplicate the turn on every reload.
+- Nothing the user watched happen is unmounted mid-run: wave sub-questions accumulate across
+  waves and the panel stays on screen in a `done` state after the report lands, including
+  across a refocus reconcile. The steps inside it are still tab-local (they are never
+  persisted, per 0027), so a page reload leaves the plan and the report but not the
+  step-by-step trace.

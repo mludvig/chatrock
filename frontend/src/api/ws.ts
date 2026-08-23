@@ -33,7 +33,9 @@ export type WSEvent =
   | { type: 'heartbeat' }
   // Deep Research progress frames — see backend/src/research/CLAUDE.md's "Progress
   // frames and reconnect". Best-effort; GET /api/chats/{chatId}/research re-syncs.
-  | { type: 'research_plan';       runId: string; chatId: string; plan: { subQuestions: { id: string; question: string }[]; clarifyingQuestions: string[] } }
+  // msgId is the assistant turn the plan was persisted as — awaitApproval.ts writes it before
+  // sending this frame, so the client can just reload the transcript to show the plan.
+  | { type: 'research_plan';       runId: string; chatId: string; msgId: string; plan: { subQuestions: { id: string; question: string }[]; clarifyingQuestions: string[] } }
   | { type: 'research_wave_start'; runId: string; chatId: string; subQuestions: { id: string; question: string }[] }
   | { type: 'research_finding';    runId: string; chatId: string; subQuestionId: string; summary: string; sourceUrls: string[] }
   | { type: 'research_assess';     runId: string; chatId: string; findingCount: number; done: boolean }
