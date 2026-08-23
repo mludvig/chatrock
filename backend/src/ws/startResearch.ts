@@ -2,6 +2,7 @@ import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn'
 import { getConnection, getChat, putRun, buildRunKey, buildTurnKey, putMessage, updateChatActiveLeaf } from '../lib/dynamo'
 import { newId } from '../lib/ids'
+import { buildRunContext } from '../research/context'
 import { DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -55,6 +56,9 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
   await updateChatActiveLeaf(conn.userSub, chatId, userMsgId)
 
   const runId = newId()
+  // What the planner is told about the person asking — snapshotted here for the same reason
+  // the model is. See docs/adr/0033-research-runs-see-the-users-memory.md.
+  const context = await buildRunContext(conn.userSub, chat.projectId as string | undefined)
   await putRun({
     ...buildRunKey(chatId, runId),
     runId,
@@ -65,6 +69,7 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
     // Snapshotted so every phase of the run uses one model even if the chat's is changed
     // mid-run — see docs/adr/0030-research-runs-use-the-chats-model.md.
     model: isValidModelId(chat.model as string) ? (chat.model as string) : DEFAULT_CHAT_MODEL,
+    ...(context ? { context } : {}),
     connId,
     findings: [],
     gapsNotPursued: [],
