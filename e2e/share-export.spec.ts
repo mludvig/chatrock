@@ -15,14 +15,19 @@ async function sendOneMessage(page: import('@playwright/test').Page) {
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
   await expect(page.locator('.message.assistant')).toContainText('Share test answer', { timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
-  await expect(page.locator('.message-input')).toBeEnabled({ timeout: 10_000 })
+  // The composer textarea is never disabled, so toBeEnabled() is not a wait — the turn is
+  // only over once the composer swaps its Stop button back for Send. Opening the details
+  // dialog before that races the post-stream re-render, which drops the dialog again.
+  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
 }
 
 test('create a share link, open it unauthenticated, then revoke it', async ({ page, context }) => {
   await sendOneMessage(page)
 
   await page.locator('.btn-icon[title="Chat details"]').click()
-  await expect(page.locator('.prefs-tab', { hasText: 'Share' })).toBeVisible({ timeout: 5_000 })
+  // The Share tab only renders once the chat's own DTO has landed in the store (it needs a
+  // persisted chatId) — that fetch trails the URL change by a beat, so this is a real wait.
+  await expect(page.locator('.prefs-tab', { hasText: 'Share' })).toBeVisible({ timeout: 20_000 })
   await page.locator('.prefs-tab', { hasText: 'Share' }).click()
 
   await page.locator('button', { hasText: 'Create share link' }).click()
@@ -62,6 +67,9 @@ test('Markdown export downloads a .md file with clear turn separators', async ({
   await sendOneMessage(page)
 
   await page.locator('.btn-icon[title="Chat details"]').click()
+  // The Share tab only renders once the chat's own DTO has landed in the store (it needs a
+  // persisted chatId) — that fetch trails the URL change by a beat, so this is a real wait.
+  await expect(page.locator('.prefs-tab', { hasText: 'Share' })).toBeVisible({ timeout: 20_000 })
   await page.locator('.prefs-tab', { hasText: 'Share' }).click()
 
   const downloadPromise = page.waitForEvent('download')
