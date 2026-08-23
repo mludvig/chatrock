@@ -1782,7 +1782,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             room for them on a phone. See docs/adr/0028-composer-owns-per-send-controls.md. */}
         <div className="composer-toolbar">
           <select
-            className="composer-select"
+            className="composer-select model-picker"
             value={currentModelId}
             title="Model"
             onChange={e => handleModelChange(e.target.value)}

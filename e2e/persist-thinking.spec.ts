@@ -19,7 +19,7 @@ test('thinking and search results survive page reload', async ({ page }) => {
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
   // Select a thinking-capable model
-  const modelSelect = page.locator('.composer-select')
+  const modelSelect = page.locator('.model-picker')
   await modelSelect.selectOption({ label: THINKING_MODEL_LABEL })
 
   // Open the Chat details dialog (header cog) to enable thinking effort for this chat

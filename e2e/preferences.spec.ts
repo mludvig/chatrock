@@ -34,7 +34,7 @@ test.describe('Preferences panel', () => {
   test('model select is still present in the composer toolbar', async ({ page }) => {
     await page.goto('/c/new')
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('.composer-toolbar .composer-select').first()).toBeVisible()
+    await expect(page.locator('.composer-toolbar .model-picker')).toBeVisible()
   })
 
   test('custom persona in Defaults is reflected in assistant replies', async ({ page }) => {

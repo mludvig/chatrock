@@ -4,7 +4,7 @@ import { FAST_MODEL_LABEL } from './testConfig'
 test('Private toggle creates a sensitive+ephemeral chat, hidden from the list until revealed', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
 
   await page.locator('.btn-private-toggle').click()
   await expect(page.locator('.btn-private-toggle')).toHaveClass(/active/)
@@ -19,7 +19,9 @@ test('Private toggle creates a sensitive+ephemeral chat, hidden from the list un
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
 
   await expect(page.locator('.chat-header h2')).toHaveCount(0)
-  await expect(page.locator('.chat-header .private-chip')).toBeVisible()
+  // Both flags are on, so the header chip stays away — the active composer toggle already says it.
+  await expect(page.locator('.composer-toolbar .btn-private-toggle')).toHaveClass(/active/)
+  await expect(page.locator('.chat-header .private-chip')).toHaveCount(0)
 
   await expect(page.locator('.chat-item.sensitive')).toHaveCount(0)
 
@@ -32,7 +34,7 @@ test('Private toggle creates a sensitive+ephemeral chat, hidden from the list un
 test('Chat details dialog toggles Sensitive/Auto-delete independently on an existing chat', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Chat details test answer."')
@@ -47,14 +49,15 @@ test('Chat details dialog toggles Sensitive/Auto-delete independently on an exis
   // Open the Chat details dialog (the cog, always present) and turn Sensitive on.
   await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
   await expect(page.locator('.dialog')).toBeVisible()
-  const sensitiveRow = page.locator('.dialog .model-setting-row').filter({ hasText: 'Sensitive' })
+  // "Update memory" is the sensitive flag, inverted: On means not sensitive.
+  const sensitiveRow = page.locator('.dialog .model-setting-row').filter({ hasText: 'Update memory' })
   await sensitiveRow.locator('.toggle-btn').click()
 
   // The chat re-fetches and the header title disappears; a private chip appears — visible
   // even with the dialog still open, since it sits in the header behind it.
   await expect(page.locator('.chat-header h2')).toHaveCount(0, { timeout: 10_000 })
   await expect(page.locator('.chat-header .private-chip')).toBeVisible()
-  await expect(sensitiveRow.locator('.toggle-btn')).toHaveText('On')
+  await expect(sensitiveRow.locator('.toggle-btn')).toHaveText('Off')
 
   // Turn it back off — title returns.
   await sensitiveRow.locator('.toggle-btn').click()
@@ -68,7 +71,7 @@ test('Chat details dialog toggles Sensitive/Auto-delete independently on an exis
 test('Header "Private" button is a one-click shortcut for both flags together', async ({ page }) => {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Private shortcut test answer."')
@@ -79,10 +82,10 @@ test('Header "Private" button is a one-click shortcut for both flags together', 
 
   await page.locator('.composer-toolbar .btn-private-toggle').click()
   await expect(page.locator('.composer-toolbar .btn-private-toggle')).toHaveClass(/active/, { timeout: 10_000 })
-  await expect(page.locator('.chat-header .private-chip')).toContainText('Private')
+  await expect(page.locator('.chat-header h2')).toHaveCount(0, { timeout: 10_000 })
 
   // Both flags landed independently-verifiable via the dialog.
   await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
-  await expect(page.locator('.dialog .model-setting-row').filter({ hasText: 'Sensitive' }).locator('.toggle-btn')).toHaveText('On')
+  await expect(page.locator('.dialog .model-setting-row').filter({ hasText: 'Update memory' }).locator('.toggle-btn')).toHaveText('Off')
   await expect(page.locator('.dialog .model-setting-row').filter({ hasText: 'Auto-delete' }).locator('.toggle-btn')).toHaveText('On')
 })

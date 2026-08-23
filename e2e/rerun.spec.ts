@@ -17,7 +17,7 @@ test('re-run produces a new answer and persists after reload', async ({ page }) 
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
   // Known-good model, no data-retention issues
-  await page.locator('.composer-select').selectOption({ label: THINKING_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: THINKING_MODEL_LABEL })
 
   // Send a short deterministic prompt
   const input = page.locator('.message-input')

@@ -16,7 +16,7 @@ test('plan approval: revise on substantive feedback, approve on empty input', as
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  await page.locator('.composer-select').first().selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
   await page.locator('select[title^="Research depth"]').selectOption('deep')
 
   await page.locator('.message-input').fill('What are the main causes of coral bleaching?')

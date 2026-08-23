@@ -14,7 +14,7 @@ test('depth picker defaults to Brief and sticks once changed', async ({ page }) 
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  await page.locator('.composer-select').first().selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
 
   const depthPicker = page.locator('select[title^="Research depth"]')
   await expect(depthPicker).toBeVisible({ timeout: 5_000 })
