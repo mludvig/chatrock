@@ -25,11 +25,12 @@ test('thinking and search results survive page reload', async ({ page }) => {
   // Open the Chat details dialog (header cog) to enable thinking effort for this chat
   await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
   await expect(page.locator('.dialog-title')).toHaveText('Chat details')
-  // Enable thinking by clicking a non-off effort button (e.g. "Low")
-  const lowEffortBtn = page.locator('.dialog .model-settings .effort-btn', { hasText: 'Low' })
-  if (await lowEffortBtn.isVisible()) {
-    await lowEffortBtn.click()
-  }
+  // Thinking effort is a select in the Model settings block. Pick 'high': thinking is
+  // adaptive, so at 'low' the model routinely answers with no thinking block at all.
+  const effortSelect = page.locator('.dialog .model-setting-row')
+    .filter({ hasText: 'Thinking effort' })
+    .locator('select')
+  await effortSelect.selectOption('high')
   // Close the dialog so the message input is accessible
   await page.keyboard.press('Escape')
 
@@ -42,23 +43,28 @@ test('thinking and search results survive page reload', async ({ page }) => {
   await expect(page.locator('.waiting-indicator')).toBeVisible({ timeout: 10_000 })
 
   // At some point a thinking block should appear (Sonnet with thinking enabled)
-  await expect(page.locator('.thinking-block')).toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('.thinking-block').first()).toBeVisible({ timeout: 60_000 })
 
   // A web search tool pill should appear (model may emit multiple tool calls)
   await expect(page.locator('.tool-pill').first()).toBeVisible({ timeout: 60_000 })
 
-  // Wait for streaming to complete — the blinking cursor disappears when done.
-  // (Don't use btn-send enabled as a signal: it's also disabled when input is empty)
+  // Wait for streaming to complete. The cursor is absent between agentic rounds too, so
+  // it alone is not a done-signal — the turn is over once the composer swaps its Stop
+  // button back for Send. (btn-send enabled is no signal either: it's also disabled when
+  // the input is empty.)
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 120_000 })
+  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 120_000 })
 
   // Capture the current chat URL (now has a real chatId)
   const chatUrl = page.url()
   expect(chatUrl).toMatch(/\/c\/[^/]+$/)
   expect(chatUrl).not.toContain('/c/new')
 
-  // Expand the tool pill to reveal search result cards (if collapsed)
-  const toolPillHeader = page.locator('.tool-pill-header').first()
-  await toolPillHeader.click()
+  // Expand the web_search pill to reveal its result cards. Target it by label: a
+  // web_fetch pill carries no cards, so ".first()" is not necessarily the right one.
+  const searchPill = page.locator('.tool-pill').filter({ hasText: 'Search:' }).first()
+  await expect(searchPill).not.toHaveClass(/pending/, { timeout: 30_000 })
+  await searchPill.locator('.tool-pill-header').click()
   await expect(page.locator('.search-result-card').first()).toBeVisible({ timeout: 5_000 })
   const cardCountBefore = await page.locator('.search-result-card').count()
   expect(cardCountBefore).toBeGreaterThanOrEqual(1)
@@ -73,13 +79,14 @@ test('thinking and search results survive page reload', async ({ page }) => {
   await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 15_000 })
 
   // After reload: thinking block should still render
-  await expect(page.locator('.thinking-block')).toBeVisible({ timeout: 10_000 })
+  await expect(page.locator('.thinking-block').first()).toBeVisible({ timeout: 10_000 })
 
   // Tool pill(s) should still render
   await expect(page.locator('.tool-pill').first()).toBeVisible({ timeout: 5_000 })
 
-  // Expand the tool pill again and verify search result cards are back
-  await page.locator('.tool-pill-header').first().click()
+  // Expand the same pill again and verify search result cards are back
+  await page.locator('.tool-pill').filter({ hasText: 'Search:' }).first()
+    .locator('.tool-pill-header').click()
   const cardCountAfter = await page.locator('.search-result-card').count()
   expect(cardCountAfter).toBeGreaterThanOrEqual(1)
 
