@@ -10,7 +10,7 @@ import {
 import type { DocumentType } from '@smithy/types'
 import { getCapabilities, type ModelSettings } from '../../../config/models'
 import { ensureBedrockAuth, bedrockRegion } from '../../bedrockAuth'
-import type { StreamChunk, TurnResult, TurnRequest, OnceRequest, ChatProvider, TokenUsage } from '../types'
+import type { StreamChunk, TurnResult, TurnRequest, OnceRequest, OnceResult, ChatProvider, TokenUsage } from '../types'
 import type { ToolSpec } from '../toolSpec'
 import type { NeutralMessage } from '../blocks'
 import { toNeutral, fromNeutralMessage, toNeutralMessage } from './converseTranslate'
@@ -278,12 +278,14 @@ async function* streamOneTurn(
 
 // ── One-shot non-streaming call (used for title generation) ──────────────────
 
-export async function converseOnce(
+// Provider-internal: the exported entry point is `once` below (and loop.ts's
+// converseOnce above it), which is where the call gets logged.
+async function sendConverseOnce(
   modelId: string,
   systemPrompt: string,
   messages: Message[],
   options?: { maxTokens?: number },
-): Promise<string> {
+): Promise<OnceResult> {
   const caps = getCapabilities(modelId)
   // This is a one-shot deterministic-output helper (title/summary/JSON extraction) —
   // never reasoning. On the 5-series models, Bedrock auto-emits a reasoningContent
@@ -299,9 +301,16 @@ export async function converseOnce(
   })
   await ensureBedrockAuth()
   const res = await bedrockClient.send(cmd)
+  const u = res.usage
+  const usage = u ? {
+    inputTokens: u.inputTokens ?? 0,
+    outputTokens: u.outputTokens ?? 0,
+    ...(u.cacheReadInputTokens !== undefined ? { cacheReadInputTokens: u.cacheReadInputTokens } : {}),
+    ...(u.cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens: u.cacheWriteInputTokens } : {}),
+  } : undefined
   const block = res.output?.message?.content?.find(b => 'text' in b)
-  if (block && 'text' in block) return (block.text ?? '').trim()
-  return ''
+  const text = block && 'text' in block ? (block.text ?? '').trim() : ''
+  return { text, usage }
 }
 
 // ── ChatProvider implementation ────────────────────────────────────────────────
@@ -354,8 +363,8 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   }
 }
 
-async function once(req: OnceRequest): Promise<string> {
-  return converseOnce(req.modelId, req.systemPrompt, req.messages.map(fromNeutralMessage), { maxTokens: req.maxTokens })
+async function once(req: OnceRequest): Promise<OnceResult> {
+  return sendConverseOnce(req.modelId, req.systemPrompt, req.messages.map(fromNeutralMessage), { maxTokens: req.maxTokens })
 }
 
 export const bedrockConverseProvider: ChatProvider = {

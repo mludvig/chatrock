@@ -43,6 +43,10 @@ jest.mock('../../src/lib/attachments', () => ({
   signCloudFrontUrl: jest.fn(),
 }))
 
+// converseStream requires a call label (it emits the `llm_call` record itself) — these
+// tests exercise the stream mechanics, not the labelling, so they all share one.
+const TEST_CALL = { purpose: 'chat' } as const
+
 const mockExecuteTool = tools.executeTool as jest.MockedFunction<typeof tools.executeTool>
 const mockPutObjectBytes = (attachmentsLib as jest.Mocked<typeof attachmentsLib>).putObjectBytes
 const mockSignCloudFrontUrl = (attachmentsLib as jest.Mocked<typeof attachmentsLib>).signCloudFrontUrl
@@ -111,7 +115,7 @@ test('assembles verbatim turn chunk with reasoning text+signature, text, toolUse
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -164,7 +168,7 @@ test('captures redactedContent on a reasoning block', async () => {
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -192,7 +196,7 @@ test('emits a usage chunk from the metadata event', async () => {
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -225,7 +229,7 @@ test('yields a user turn chunk for tool results', async () => {
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -275,7 +279,7 @@ test('30 parallel tool calls in one round: aggregate tool-result content stays w
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -307,7 +311,7 @@ test('handles missing contentBlockStart for a text block (creates acc on-the-fly
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -360,7 +364,7 @@ test('after max tool-use rounds, does one final forced-answer call with no tools
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { researchDepth: 'extended' })) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: { researchDepth: 'extended' }, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -410,7 +414,7 @@ test('absent researchDepth defaults to brief (3 rounds), not the old 8-round def
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {})) { /* settings: {} — no researchDepth */ }
+  for await (const _chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) { /* settings: {} — no researchDepth */ }
 
   expect(getMockSend()).toHaveBeenCalledTimes(MAX + 1)
 })
@@ -437,7 +441,7 @@ test('budget-pacing note is injected into the live replay but never into the per
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -501,7 +505,7 @@ test('final forced call itself returns tool_use with no text: toolUse stripped, 
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { researchDepth: 'extended' })) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: { researchDepth: 'extended' }, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -541,7 +545,7 @@ test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false, searchEnabled: false }, undefined, undefined)) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false, searchEnabled: false }, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -560,7 +564,7 @@ test('f2: webSearchEnabled:true (default) sends toolConfig to Bedrock', async ()
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -581,7 +585,7 @@ test('tools: webSearchEnabled:false, memoryEnabled:true → manage_memory tool p
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], { webSearchEnabled: false, memoryEnabled: true }, undefined, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: { webSearchEnabled: false, memoryEnabled: true }, call: TEST_CALL })) {
     // drain
   }
 
@@ -605,7 +609,7 @@ test('tools: searchEnabled default (unset) → search_history present', async ()
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, undefined, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     // drain
   }
 
@@ -626,7 +630,7 @@ test('tools: searchEnabled:false → search_history absent', async () => {
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], { searchEnabled: false }, undefined, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: { searchEnabled: false }, call: TEST_CALL })) {
     // drain
   }
 
@@ -647,7 +651,7 @@ test('tools: searchEnabled:false but ctx.searchScope set (forced Search turn) �
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], { searchEnabled: false }, { sub: 'user-1', searchScope: 'global' }, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: { searchEnabled: false }, ctx: { sub: 'user-1', searchScope: 'global' }, call: TEST_CALL })) {
     // drain
   }
 
@@ -668,7 +672,7 @@ test('tools: browser settings default → Core tools (take_screenshot, get_rende
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, undefined, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     // drain
   }
 
@@ -691,7 +695,7 @@ test('tools: browserExtendedEnabled:true → browse_web present alongside the Co
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], { browserExtendedEnabled: true }, undefined, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: { browserExtendedEnabled: true }, call: TEST_CALL })) {
     // drain
   }
 
@@ -714,7 +718,7 @@ test('tools: browserCoreEnabled:false → take_screenshot/get_rendered_page abse
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], { browserCoreEnabled: false }, undefined, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: { browserCoreEnabled: false }, call: TEST_CALL })) {
     // drain
   }
 
@@ -736,7 +740,7 @@ test('tools: webSearchEnabled:true, memoryEnabled:true → both web tools AND me
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk2 of converseStream('test-model', '', [], { webSearchEnabled: true, memoryEnabled: true }, undefined, undefined)) {
+  for await (const _chunk2 of converseStream('test-model', '', [], { settings: { webSearchEnabled: true, memoryEnabled: true }, call: TEST_CALL })) {
     // drain
   }
 
@@ -774,7 +778,7 @@ test('ctx: loop threads ctx into executeTool call — 3rd arg is {sub}', async (
 
   const toolCtx = { sub: 'user-from-ctx' }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk3 of converseStream('test-model', '', [], {}, toolCtx, undefined)) {
+  for await (const _chunk3 of converseStream('test-model', '', [], { settings: {}, ctx: toolCtx, call: TEST_CALL })) {
     // drain
   }
 
@@ -805,7 +809,7 @@ test('memoryChanged: manage_memory tool success → memoryChanged chunk yielded'
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: { sub: 'user-1' }, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -834,7 +838,7 @@ test('memoryChanged NOT yielded when manage_memory returns error', async () => {
   ]))
 
   const chunks: unknown[] = []
-  for await (const chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: { sub: 'user-1' }, call: TEST_CALL })) {
     chunks.push(chunk)
   }
 
@@ -870,7 +874,7 @@ test('part1a: forced-final call after max rounds has non-empty toolConfig in its
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], { researchDepth: 'extended' })) { /* drain */ }
+  for await (const _chunk of converseStream('test-model', '', [], { settings: { researchDepth: 'extended' }, call: TEST_CALL })) { /* drain */ }
 
   // The final (MAX+1-th) send call must have toolConfig defined with real tools
   const finalCallInput = getMockSend().mock.calls[MAX][0].input as Record<string, unknown>
@@ -905,7 +909,9 @@ test('part1b: history with toolResult blocks forces toolConfig even when webSear
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _chunk of converseStream(
-    'test-model', '', historyWithToolBlock, { webSearchEnabled: false, memoryEnabled: false },
+    'test-model', '', historyWithToolBlock,
+    { settings: { webSearchEnabled: false, memoryEnabled: false },
+    call: TEST_CALL },
   )) { /* drain */ }
 
   // toolConfig MUST be defined (history forces it)
@@ -936,7 +942,7 @@ test('regression: converseStream heals a dangling tool_use tail in the replayed 
   ]
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', historyWithDanglingToolUse, {})) { /* drain */ }
+  for await (const _chunk of converseStream('test-model', '', historyWithDanglingToolUse, { settings: {}, call: TEST_CALL })) { /* drain */ }
 
   const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
   const sentMessages = cmdInput.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>
@@ -961,7 +967,9 @@ test('part1c: clean history with webSearchEnabled+memory disabled still sends no
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   for await (const _chunk of converseStream(
-    'test-model', '', [], { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false, searchEnabled: false },
+    'test-model', '', [],
+    { settings: { webSearchEnabled: false, memoryEnabled: false, browserCoreEnabled: false, browserExtendedEnabled: false, searchEnabled: false },
+    call: TEST_CALL },
   )) { /* drain */ }
 
   // No tool blocks in history → no toolConfig needed (same as before)
@@ -996,7 +1004,7 @@ test('still emits thinking_delta, thinking_done, delta, tool_call_start, tool_ca
   ]))
 
   const types: string[] = []
-  for await (const chunk of converseStream('test-model', '', [], {})) {
+  for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
     types.push((chunk as {type: string}).type)
   }
 
@@ -1023,7 +1031,7 @@ test('project memory: manage_project_memory tool included when ctx.projectId set
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: {}, ctx: { sub: 'user-1', projectId: 'proj-abc' }, call: TEST_CALL })) {
     // drain
   }
 
@@ -1046,7 +1054,7 @@ test('project memory: manage_project_memory tool excluded when no ctx.projectId'
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: {}, ctx: { sub: 'user-1' }, call: TEST_CALL })) {
     // drain
   }
 
@@ -1067,7 +1075,7 @@ test('project memory: CACHE_POINT_TOOL always last in tool list when project mem
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream(DEFAULT_CHAT_MODEL, '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+  for await (const _chunk of converseStream(DEFAULT_CHAT_MODEL, '', [], { settings: {}, ctx: { sub: 'user-1', projectId: 'proj-abc' }, call: TEST_CALL })) {
     // drain
   }
 
@@ -1091,7 +1099,7 @@ test('read tools: read_project_file and read_project_chat included when ctx.proj
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: {}, ctx: { sub: 'user-1', projectId: 'proj-abc' }, call: TEST_CALL })) {
     // drain
   }
 
@@ -1114,7 +1122,7 @@ test('read tools: read_project_file and read_project_chat excluded when no ctx.p
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' }, undefined)) {
+  for await (const _chunk of converseStream('test-model', '', [], { settings: {}, ctx: { sub: 'user-1' }, call: TEST_CALL })) {
     // drain
   }
 
@@ -1136,7 +1144,7 @@ test('read tools: cachePoint is always last when read tools present', async () =
   ]))
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  for await (const _chunk of converseStream(DEFAULT_CHAT_MODEL, '', [], {}, { sub: 'user-1', projectId: 'proj-abc' }, undefined)) {
+  for await (const _chunk of converseStream(DEFAULT_CHAT_MODEL, '', [], { settings: {}, ctx: { sub: 'user-1', projectId: 'proj-abc' }, call: TEST_CALL })) {
     // drain
   }
 
@@ -1173,8 +1181,12 @@ describe('converseStream forceToolName (forced Search turn)', () => {
 
     const chunks: unknown[] = []
     for await (const chunk of converseStream(
-      'global.anthropic.claude-sonnet-4-6', '', [], { thinkingEffort: 'low' }, { sub: 'user-1', searchScope: 'global' }, undefined, 'search_history',
-    )) {
+      'global.anthropic.claude-sonnet-4-6', '', [],
+    { settings: { thinkingEffort: 'low' },
+    ctx: { sub: 'user-1', searchScope: 'global' },
+    forceToolName: 'search_history',
+    call: TEST_CALL },
+  )) {
       chunks.push(chunk)
     }
 
@@ -1198,7 +1210,7 @@ describe('converseStream forceToolName (forced Search turn)', () => {
     ]))
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for await (const _chunk of converseStream('test-model', '', [], {})) { /* drain */ }
+    for await (const _chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) { /* drain */ }
 
     const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
     expect((cmdInput.toolConfig as { toolChoice?: unknown } | undefined)?.toolChoice).toBeUndefined()
@@ -1348,7 +1360,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     mockBrowseWebRound()
 
     const turnChunks: Array<{ role: string; content: unknown[] }> = []
-    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) {
       if ((chunk as { type: string }).type === 'turn') turnChunks.push(chunk as { role: string; content: unknown[] })
     }
 
@@ -1364,7 +1376,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     mockBrowseWebRound()
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for await (const _chunk of converseStream('test-model', '', [], {}, CTX)) { /* drain */ }
+    for await (const _chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) { /* drain */ }
 
     // Second send() call is the next round's request, replaying newMessages
     const secondCallInput = getMockSend().mock.calls[1][0].input as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> }
@@ -1379,7 +1391,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     mockBrowseWebRound()
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for await (const _chunk of converseStream('test-model', '', [], {}, CTX)) { /* drain */ }
+    for await (const _chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) { /* drain */ }
 
     expect(mockPutObjectBytes).toHaveBeenCalledTimes(1)
     const [key, bytes, contentType] = mockPutObjectBytes.mock.calls[0]
@@ -1393,7 +1405,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     mockBrowseWebRound()
 
     const toolResultChunks: Array<{ content: string; screenshotUrls?: string[] }> = []
-    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) {
       if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string; screenshotUrls?: string[] })
     }
 
@@ -1427,7 +1439,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     ]))
 
     const chunkTypes: string[] = []
-    for await (const chunk of converseStream('test-model', '', [], {}, { sub: 'user-1' })) {
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: { sub: 'user-1' }, call: TEST_CALL })) {
       chunkTypes.push((chunk as { type: string }).type)
     }
 
@@ -1453,7 +1465,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     ]))
 
     const toolResultChunks: Array<{ content: string }> = []
-    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) {
       if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string })
     }
 
@@ -1486,7 +1498,7 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     ]))
 
     const toolResultChunks: Array<{ content: string }> = []
-    for await (const chunk of converseStream('test-model', '', [], {}, CTX)) {
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) {
       if ((chunk as { type: string }).type === 'tool_result') toolResultChunks.push(chunk as { content: string })
     }
 

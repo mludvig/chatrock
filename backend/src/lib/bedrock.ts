@@ -4,4 +4,4 @@
 // tests/lib/bedrock.test.ts and tests/ws/sendMessage.test.ts's `jest.mock('../../src/lib/bedrock')`
 // — import from here. Real implementation lives under lib/llm/.
 export { converseStream, converseOnce, HEARTBEAT_INTERVAL_MS, coalesceMessages, healDanglingToolUse, bedrockClient } from './llm/loop'
-export type { StreamChunk, TokenUsage } from './llm/types'
+export type { StreamChunk, TokenUsage, LlmCallContext, LlmPurpose } from './llm/types'

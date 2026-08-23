@@ -5,11 +5,12 @@ import {
 } from './blocks'
 import type { ModelSettings } from '../../config/models'
 import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from '../attachments'
-import type { StreamChunk, TurnResult } from './types'
+import type { StreamChunk, TurnResult, TokenUsage, LlmCallContext } from './types'
 import { getProvider } from './registry'
 import { buildToolList } from './toolGating'
+import { logLlmCall, addUsage } from './observability'
 
-export type { StreamChunk, TokenUsage } from './types'
+export type { StreamChunk, TokenUsage, LlmCallContext, LlmPurpose } from './types'
 export { coalesceMessages, healDanglingToolUse } from './sanitize'
 export { bedrockClient } from './providers/bedrockConverse'
 
@@ -21,19 +22,68 @@ export const HEARTBEAT_INTERVAL_MS = 4000
 // Max concurrent tool executions within a single round — see docs/adr/0016-parallel-tool-execution.md.
 const TOOL_CONCURRENCY = 5
 
-export async function* converseStream(
-  modelId: string,
-  systemPrompt: string,
-  messages: NeutralMessage[],
-  settings: ModelSettings = {},
-  ctx?: ToolContext,
-  abortSignal?: AbortSignal,
+export interface ConverseStreamOptions {
+  settings?: ModelSettings
+  ctx?: ToolContext
+  abortSignal?: AbortSignal
   // Set only for a forced/explicit Search turn (ws/sendMessage.ts) — forces the
   // provider's toolChoice to this tool name on the FIRST round only (subsequent
   // rounds, if any, are auto-choice as normal). The named tool must already be in
   // `tools` (ctx.searchScope makes buildToolList include SEARCH_HISTORY_TOOL even
   // when searchEnabled:false) or the provider rejects the request.
-  forceToolName?: string,
+  forceToolName?: string
+  // Required: what this call is for. The wrapper logs it — no call site logs its own
+  // token stats. See docs/adr/0029-llm-observability-in-the-wrapper.md.
+  call: LlmCallContext
+}
+
+// The public entry point is a thin observability shell around `streamRounds` below: it
+// forwards every chunk untouched and, whether the loop finishes, aborts mid-stream, or
+// throws, emits exactly one `llm_call` record with the invocation's summed token usage.
+// A `finally` (not a trailing statement) because the agentic loop `return`s from four
+// different places and the consumer may also break out of the for-await early.
+export async function* converseStream(
+  modelId: string,
+  systemPrompt: string,
+  messages: NeutralMessage[],
+  opts: ConverseStreamOptions,
+): AsyncGenerator<StreamChunk> {
+  const startedAt = Date.now()
+  let usage: TokenUsage | undefined
+  let rounds = 0
+  let stopReason: string | undefined
+  let error: unknown
+  try {
+    for await (const chunk of streamRounds(modelId, systemPrompt, messages, opts)) {
+      if (chunk.type === 'usage') usage = addUsage(usage, chunk.usage)
+      // One assistant turn per provider round — usage chunks can't be the counter, since a
+      // provider that reports no usage metadata would make every round invisible.
+      else if (chunk.type === 'turn' && chunk.role === 'assistant') rounds++
+      else if (chunk.type === 'stop') stopReason = chunk.stopReason
+      yield chunk
+    }
+  } catch (e) {
+    error = e
+    throw e
+  } finally {
+    logLlmCall({
+      call: opts.call,
+      modelId,
+      provider: getProvider(modelId).id,
+      startedAt,
+      usage,
+      rounds,
+      stopReason: stopReason ?? (opts.abortSignal?.aborted ? 'aborted' : undefined),
+      error,
+    })
+  }
+}
+
+async function* streamRounds(
+  modelId: string,
+  systemPrompt: string,
+  messages: NeutralMessage[],
+  { settings = {}, ctx, abortSignal, forceToolName }: ConverseStreamOptions,
 ): AsyncGenerator<StreamChunk> {
   const provider = getProvider(modelId)
   const tools = buildToolList(settings, ctx)
@@ -310,14 +360,25 @@ export async function* converseStream(
   }
 }
 
-// ── One-shot non-streaming call (used for title generation) ──────────────────
+// ── One-shot non-streaming call (titles, summaries, JSON extraction) ─────────
 
+// Returns just the text: no caller wants the usage, they want the string. The token
+// stats the provider reports go straight to the same `llm_call` record `converseStream`
+// emits, so a one-shot call is as visible in CloudWatch as a full chat turn.
 export async function converseOnce(
   modelId: string,
   systemPrompt: string,
   messages: NeutralMessage[],
-  options?: { maxTokens?: number },
+  options: { maxTokens?: number; call: LlmCallContext },
 ): Promise<string> {
   const provider = getProvider(modelId)
-  return provider.once({ modelId, systemPrompt, messages, maxTokens: options?.maxTokens })
+  const startedAt = Date.now()
+  try {
+    const result = await provider.once({ modelId, systemPrompt, messages, maxTokens: options.maxTokens })
+    logLlmCall({ call: options.call, modelId, provider: provider.id, startedAt, usage: result.usage, rounds: 1 })
+    return result.text
+  } catch (error) {
+    logLlmCall({ call: options.call, modelId, provider: provider.id, startedAt, error })
+    throw error
+  }
 }

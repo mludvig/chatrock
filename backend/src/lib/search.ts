@@ -73,7 +73,7 @@ export async function searchHistory(
       MEMORY_EXTRACTION_MODEL,
       SEARCH_HISTORY_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ kind: 'text', text: userMsg }] }],
-      { maxTokens: 1024 },
+      { maxTokens: 1024, call: { purpose: 'search_history', chatId: opts?.chatId } },
     )
 
     const obj = safeParse(response)

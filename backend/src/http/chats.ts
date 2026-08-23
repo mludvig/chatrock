@@ -302,7 +302,7 @@ export const handler = async (
     const titlePrompt = `Generate a very short chat title (max 6 words) that captures the main topic of this conversation. Reply with ONLY the title, no quotes, no punctuation at the end.\n\n${transcript}`
     const title = await converseOnce(TITLE_MODEL, '', [
       { role: 'user', content: [{ kind: 'text', text: titlePrompt }] },
-    ])
+    ], { call: { purpose: 'chat_title', sub, chatId } })
     if (!title) return err(500, 'Title generation failed')
     await updateChatTitle(sub, chatId, title)
     return ok({ title })

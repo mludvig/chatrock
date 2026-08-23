@@ -65,7 +65,9 @@ lib/llm/
                                     wire-shaped helpers used internally by bedrockConverse's sanitizeHistory
   registry.ts                    — CHAT_PROVIDERS[], getProvider(modelId)
   loop.ts                        — converseStream()/converseOnce(), 100% provider-agnostic (dispatches via
-                                    getProvider, no branch on provider anywhere in this file)
+                                    getProvider, no branch on provider anywhere in this file); the public
+                                    converseStream is an observability shell around the agentic loop
+  observability.ts               — logLlmCall(): the one place an `llm_call` record is written
   providers/bedrockConverse.ts   — Anthropic (and any future Converse-served vendor) via Bedrock ConverseStream
   providers/converseTranslate.ts — pure Block[] <-> Bedrock ContentBlock[] translation, no I/O
   providers/bedrockMantle.ts     — OpenAI GPT-5.6 via Bedrock Mantle's Responses API
@@ -213,9 +215,7 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout:
 
 | `event` | Where | Key fields |
 |---------|-------|-----------|
-| `llm_call` purpose=`chat` | `sendMessage.ts` on stop | model, chatId, stopReason, inputTokens, outputTokens, cacheRead/WriteInputTokens |
-| `llm_call` purpose=`enrich_turn` | `sendMessage.ts` post-turn | model, chatId, userAdded, projectAdded, hasSummary, hasTitle |
-| `llm_call` purpose=`file_summary` | `http/projects.ts` finalize | model, projectId, fileId, filename |
+| `llm_call` | `lib/llm/loop.ts` — every `converseStream`/`converseOnce` invocation | purpose, model, provider, ok, durationMs, sub/chatId/projectId/runId (whichever the caller set), rounds, stopReason, inputTokens, outputTokens, cacheRead/WriteInputTokens, error |
 | `memory_tool` | `memory.ts` per call | op (remember/update/forget), scope (user/project), result |
 | `web_search` | `tools.ts` per call | provider (jina/agentcore), result |
 | `browser_tool` | `tools.ts` per call | tool, result, stepCount?, screenshotCount, chatId |
@@ -226,6 +226,15 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout:
 | `manifest_truncated` | `sendMessage.ts` manifest build | kind (files/chats), total, kept, projectId, chatId |
 | `forced_files_truncated` | `sendMessage.ts` forced files build | skipped, totalKept, projectId, chatId |
 | `chat_created/updated/deleted/forked`, `branch_deleted` | `http/chats.ts` | — |
+
+`llm_call` is emitted **only** by the wrapper — no call site logs its own token stats (why:
+`docs/adr/0029-llm-observability-in-the-wrapper.md`). Both `converseStream` and `converseOnce`
+require a `call: LlmCallContext` — `purpose` (a closed union: `chat`, `chat_title`,
+`chat_summary`, `enrich_user_facts`, `enrich_project_facts`, `extract_user_facts`,
+`file_summary`, `search_history`, `research_plan`, `research_worker`, `research_assess`,
+`research_report`) plus whichever of `sub`/`chatId`/`projectId`/`runId` correlate that call —
+so a new call site can't be added unlabelled. A failed call emits the same event with
+`ok:false` + `error` on stderr, so one Insights filter on `event = "llm_call"` covers both.
 
 ## Projects
 
