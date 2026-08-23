@@ -17,7 +17,7 @@ test('a truncated Brief research answer shows Continue and completes when clicke
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  await page.locator('.composer-select').first().selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
   await expect(page.locator('select[title^="Research depth"]')).toHaveValue('brief')
 
   await page.locator('.message-input').fill(

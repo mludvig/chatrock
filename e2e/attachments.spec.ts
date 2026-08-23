@@ -18,7 +18,7 @@ const TXT_FIXTURE = path.join(__dirname, 'fixtures', 'hello.txt')
 async function startNewChat(page: import('@playwright/test').Page) {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.composer-select').selectOption({ label: FAST_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
 }
 
 /** Wait for streaming to fully finish. */

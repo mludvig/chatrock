@@ -54,7 +54,7 @@ test.describe('redesigned chrome', () => {
     await expect(page.locator('.chat-header .btn-icon[title="Chat details"]')).toBeVisible()
 
     // Composer toolbar carries the per-send controls.
-    await expect(page.locator('.composer-toolbar .composer-select').first()).toBeVisible()
+    await expect(page.locator('.composer-toolbar .model-picker')).toBeVisible()
     await expect(page.locator('select[title^="Research depth"]')).toBeVisible()
     await expect(page.locator('.composer-toolbar .btn-private-toggle')).toBeVisible()
 
@@ -150,7 +150,7 @@ test.describe('redesigned chrome', () => {
     // Nothing per-send left in the header.
     await expect(page.locator('.chat-header .composer-select')).toHaveCount(0)
     await expect(page.locator('.chat-header .btn-private-toggle')).toHaveCount(0)
-    await expect(page.locator('.composer-toolbar .composer-select').first()).toBeVisible()
+    await expect(page.locator('.composer-toolbar .model-picker')).toBeVisible()
 
     await assertNoHorizontalOverflow(page)
     await assertAllControlsReachable(page)
@@ -160,14 +160,14 @@ test.describe('redesigned chrome', () => {
   test('models render from cache on a reload (no empty picker)', async ({ page }) => {
     await page.setViewportSize(DESKTOP)
     await page.goto('/c/new')
-    await expect(page.locator('.composer-toolbar .composer-select').first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.composer-toolbar .model-picker')).toBeVisible({ timeout: 15_000 })
     await page.waitForLoadState('networkidle')
 
     // Second load: block GET /api/models entirely. The picker must still be populated
     // from the localStorage cache.
     await page.route('**/api/models', route => route.abort())
     await page.reload()
-    const modelSelect = page.locator('.composer-toolbar .composer-select').first()
+    const modelSelect = page.locator('.composer-toolbar .model-picker')
     await expect(modelSelect).toBeVisible({ timeout: 15_000 })
     const optionCount = await modelSelect.locator('option').count()
     expect(optionCount).toBeGreaterThan(1)

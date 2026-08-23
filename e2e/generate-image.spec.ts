@@ -19,7 +19,7 @@ test.describe('generate_image tool', () => {
 
     // Pin an explicit, known-valid model — a stale persisted lastModel can otherwise trigger
     // a server-side "Invalid model" rejection unrelated to this test.
-    await page.locator('.composer-select').selectOption({ label: THINKING_MODEL_LABEL })
+    await page.locator('.model-picker').selectOption({ label: THINKING_MODEL_LABEL })
 
     // Enable Image generation for this chat (opt-in — off by default)
     await page.locator('.chat-header .btn-icon[title="Chat details"]').click()

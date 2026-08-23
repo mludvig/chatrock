@@ -5,7 +5,7 @@ test('edit question creates sibling branch, sibling nav works, persists after re
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
-  await page.locator('.composer-select').selectOption({ label: THINKING_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: THINKING_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Original answer."')
@@ -17,7 +17,10 @@ test('edit question creates sibling branch, sibling nav works, persists after re
   // Wait for streaming to complete and sending state to clear
   await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
-  await expect(page.locator('.message-input')).toBeEnabled({ timeout: 10_000 })
+  // The cursor disappears with the last delta, but the turn is only really over once the
+  // composer swaps its Stop button back for Send — sending a second message before that
+  // is a no-op (handleSend bails while `sending` is set).
+  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
 
   // ── Edit the user question ──
   await page.locator('.message.user').hover()
@@ -25,10 +28,12 @@ test('edit question creates sibling branch, sibling nav works, persists after re
   await expect(editBtn).toBeVisible({ timeout: 5_000 })
   await editBtn.click()
 
-  const textarea = page.locator('.message.user .edit-textarea')
-  await expect(textarea).toBeVisible({ timeout: 5_000 })
-  await textarea.fill('Reply with exactly: "Edited answer."')
-  await page.locator('button[title="Send edited message"]').click()
+  // Editing loads the question back into the composer and shows a banner — there is no
+  // inline textarea in the bubble.
+  await expect(page.locator('.edit-banner')).toBeVisible({ timeout: 5_000 })
+  await expect(input).toHaveValue('Reply with exactly: "Original answer."')
+  await input.fill('Reply with exactly: "Edited answer."')
+  await input.press('Enter')
 
   // Wait for the new stream to start and finish
   await expect(

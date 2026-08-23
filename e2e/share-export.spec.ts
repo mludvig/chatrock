@@ -6,7 +6,7 @@ test.use({ permissions: ['clipboard-read', 'clipboard-write'] })
 async function sendOneMessage(page: import('@playwright/test').Page) {
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
-  await page.locator('.composer-select').selectOption({ label: THINKING_MODEL_LABEL })
+  await page.locator('.model-picker').selectOption({ label: THINKING_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Share test answer."')
