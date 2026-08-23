@@ -5,15 +5,18 @@ test('fork on assistant bubble creates new chat with cloned thread; original unc
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
+  // The fork button asks for confirmation; Playwright dismisses dialogs unless told otherwise.
+  page.on('dialog', d => d.accept())
+
   await page.locator('.model-picker').selectOption({ label: THINKING_MODEL_LABEL })
 
   const input = page.locator('.message-input')
   await input.fill('Reply with exactly: "Fork test answer."')
 
-  // Set up the response watcher BEFORE pressing Enter so we capture the post-stream reload.
-  // We need the SECOND /messages call (the post-stream reload that hydrates real DB msgIds),
-  // not the first (which is the initial load triggered by URL change from /c/new → /c/<chatId>).
-  // Approach: collect all /messages responses after the send, wait for at least 2.
+  // Set up the response watcher BEFORE pressing Enter so we capture the post-stream reload —
+  // the call that hydrates real DB msgIds into the bubbles, which fork needs. A chat created
+  // from /c/new makes no initial /messages call (the bubbles are already in the store), so
+  // this reload is the only one.
   const messagesResponses: number[] = []
   page.on('response', res => {
     if (res.url().includes('/messages') && res.status() === 200) messagesResponses.push(Date.now())
@@ -28,12 +31,13 @@ test('fork on assistant bubble creates new chat with cloned thread; original unc
   // Wait for streaming to complete and messages to reload from DB
   await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
-  await expect(page.locator('.message-input')).toBeEnabled({ timeout: 10_000 })
+  // The composer textarea is never disabled, so toBeEnabled() is not a wait — the turn is
+  // only over once the composer swaps its Stop button back for Send.
+  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
 
-  // Wait until we've seen at least 2 /messages calls: initial load + post-stream reload.
-  // This guarantees the bubbles carry real DB msgIds before we click fork.
+  // The post-stream reload must have landed before we click fork.
   await expect(async () => {
-    expect(messagesResponses.length).toBeGreaterThanOrEqual(2)
+    expect(messagesResponses.length).toBeGreaterThanOrEqual(1)
   }).toPass({ timeout: 15_000 })
 
   // ── Fork on the assistant bubble ──
@@ -70,6 +74,9 @@ test('fork on user bubble: new chat opens with user text pre-filled as draft', a
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
+  // The fork button asks for confirmation; Playwright dismisses dialogs unless told otherwise.
+  page.on('dialog', d => d.accept())
+
   await page.locator('.model-picker').selectOption({ label: THINKING_MODEL_LABEL })
 
   const input = page.locator('.message-input')
@@ -79,13 +86,17 @@ test('fork on user bubble: new chat opens with user text pre-filled as draft', a
 
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
-  await expect(page.locator('.message-input')).toBeEnabled({ timeout: 10_000 })
+  // The composer textarea is never disabled, so toBeEnabled() is not a wait — the turn is
+  // only over once the composer swaps its Stop button back for Send. Sending the second
+  // message before that is a no-op (handleSend bails while `sending` is set).
+  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
 
   // Send a second message to create a multi-turn conversation
   await input.fill('What did you just say?')
   await input.press('Enter')
+  await expect(page.locator('.message.user')).toHaveCount(2, { timeout: 15_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
-  await expect(page.locator('.message-input')).toBeEnabled({ timeout: 10_000 })
+  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
 
   // Wait for the messages reload that comes after the second stream's done event.
   // We can't distinguish it from other /messages calls, so we use the fact that
