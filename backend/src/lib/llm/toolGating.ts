@@ -24,9 +24,9 @@ export function buildToolList(settings: ModelSettings, ctx?: ToolContext): ToolS
   // named tool to be present in the offered tool list.
   if (settings.searchEnabled !== false || ctx?.searchScope) list.push(SEARCH_HISTORY_TOOL)
   if (settings.imageGenerationEnabled === true) list.push(GENERATE_IMAGE_TOOL)
-  // A sensitive chat gets no project/dossier (docs/adr/0024) — this is its only way back
-  // to a completed Deep Research run's findings.
-  if (ctx?.chatId && ctx?.sensitive) list.push(READ_RESEARCH_FINDINGS_TOOL)
+  // The way back to a completed Deep Research run's findings in any chat — they live on the
+  // RUN# row, not in a project. See docs/adr/0031-deep-research-is-not-a-project.md.
+  if (ctx?.chatId && ctx?.hasResearch) list.push(READ_RESEARCH_FINDINGS_TOOL)
   return list
 }
 

@@ -487,16 +487,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         setActiveResearch(id, null)
         if (id === chatIdRef.current) reloadMessages(id)
         else useChatStore.getState().invalidateMessagesCache(id)
-        // A run with no project of its own creates one and moves the chat into it
-        // (backend/src/research/report.ts's writeDossier). `research_done` carries that in a
-        // frame; the run row doesn't, so re-read the chat to catch the move.
-        api.getChat(id).then(fresh => {
-          if (!fresh.projectId) return
-          patchChat(id, { projectId: fresh.projectId })
-          if (!useChatStore.getState().projects.some(p => p.projectId === fresh.projectId)) {
-            void api.getProject(fresh.projectId).then(({ project }) => useChatStore.getState().addProject(project))
-          }
-        }).catch(() => {})
+        // Same unlock research_done does — a run that finished while the tab was away still
+        // has to surface its findings. See docs/adr/0031-deep-research-is-not-a-project.md.
+        if (run.status === 'done') patchChat(id, { hasResearch: true })
         return
       }
       setActiveResearch(id, {
@@ -568,27 +561,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           patchActiveResearch(evt.chatId, { findingCount: evt.findingCount, done: evt.done })
         } else if (evt.type === 'research_done') {
           setActiveResearch(evt.chatId, null)
-          // A run without an existing project creates one and moves the chat into it
-          // (backend/src/research/report.ts's writeDossier) — the store never learns
-          // about either side effect from a WS frame alone, so pull both in here.
-          if (evt.projectId) {
-            patchChat(evt.chatId, { projectId: evt.projectId })
-            if (!useChatStore.getState().projects.some(p => p.projectId === evt.projectId)) {
-              void api.getProject(evt.projectId).then(({ project }) => useChatStore.getState().addProject(project))
-            }
-            // A newly-created project moves the chat out of the LHS list's default
-            // filter (project chats are hidden unless "show project chats" is on) —
-            // that's a surprising side effect since the user never asked to move it,
-            // so point at where it went rather than let it quietly vanish.
-            if (evt.newProjectName) {
-              pushToast({
-                kind: 'info',
-                text: `Research complete — saved to project "${evt.newProjectName}"`,
-                linkTo: `/p/${evt.projectId}`,
-                linkLabel: 'View project',
-              })
-            }
-          }
+          // Unlocks the Research section in ChatDetailsDialog (and read_research_findings on
+          // the backend) without a chat refetch — a run never moves the chat anywhere now.
+          // See docs/adr/0031-deep-research-is-not-a-project.md.
+          patchChat(evt.chatId, { hasResearch: true })
           if (evt.chatId === chatIdRef.current) {
             reloadMessages(evt.chatId)
           } else {

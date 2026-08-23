@@ -6,9 +6,8 @@ approval gate works end to end over WebSocket, each Wave researcher runs a real 
 investigation, the supervisor Assess handler drives the wave loop (more waves, or done)
 with a working round cap, `ws/sendMessage.ts` intercepts mid-flight steering messages for
 an active run, `report` synthesises the cited final answer, persists it as a normal
-assistant turn, and writes the findings dossier as a project file, and a sensitive chat
-gets neither — its findings stay chat-scoped and are read back via the
-`read_research_findings` tool. The WS `startResearch` action starts a run, every state
+assistant turn, and keeps the findings on the `RUN#` row, read back via the
+`read_research_findings` tool. A run never creates a project (docs/adr/0031). The WS `startResearch` action starts a run, every state
 pushes a best-effort progress frame, and `GET /api/chats/{chatId}/research` re-syncs a
 client that missed one. Read this file before touching anything in this directory; it is
 kept up to date as each handler is filled in.
@@ -47,7 +46,7 @@ State names there (`Recon`, `Plan`, `AwaitApproval`, `ApprovalChoice`, `Replan`,
 | `awaitApproval.ts` | `AwaitApproval` | Persists `question`/`plan`/`taskToken` onto the `RUN#` row (via `updateRun`, upserting the row on its first write) with `status: 'awaiting_approval'` and the `findings`/`gapsNotPursued`/`steeringNotes`/`roundsSpent` defaults the downstream states need. **Returning from this handler does not complete the state** — only a task-token call against a *different* Lambda invocation, `ws/researchApprove.ts`, does. |
 | `researcher.ts` | `Wave` (Map iterator) | Runs one bounded `converseStream` (`lib/llm/loop.ts`, `extended`/8-round budget) over a single sub-question, same machinery `ws/sendMessage.ts` uses but with only `web_search`/`web_fetch` enabled (no memory/project/image tools — a researcher has no chat context to draw on) and no WS connection to stream to. The system prompt (`prompts/research-researcher.txt`) asks for a final turn shaped as plain-text prose followed by a trailing `SOURCES: [...]` JSON-array line, parsed via a regex split rather than `safeParse`-over-the-whole-turn — nesting long free-text prose inside a JSON string is fragile (unescaped quotes/newlines routinely broke `JSON.parse`, observed live as raw JSON leaking into the `research_finding` summary). A turn with no `SOURCES:` line falls back to the legacy nested-JSON `{summary, sourceUrls}` shape (`safeParse`d like `plan.ts`), and if that also fails to parse, to `{summary: <raw text>, sourceUrls: []}` — never throws. Steering notes, if any, are appended to the sub-question in the initial user message. |
 | `assess.ts` | `Assess` | Flattens this wave's raw `waveFindings` into `Finding[]` (`item.result.finding`), merges into the running `findings` total, then calls Bedrock once (the run's model, JSON out, prompt in `prompts/research-assess.txt`) to decide `done` vs. `nextSubQuestions` for another wave. `gapsNotPursued` accumulates across rounds; `steeringNotes` are cleared every round (consumed, not carried forward). Malformed model output falls back to `done: true` rather than looping forever. Like `AwaitApproval`, this state has no `ResultPath` — the handler's return value (`AssessResult`) is the *entire* next state, so it must re-emit every field `Wave`/`Report` need, not just its own verdict. |
-| `report.ts` | `Report` | Calls Bedrock once (the run's model, plain markdown out — no `safeParse`, this is prose not JSON — prompt in `prompts/research-report.txt`) over the accumulated `findings`/`gapsNotPursued` to write the cited final answer. `citations.ts`'s `linkifyReportCitations()` deterministically rewrites the model's `[n]` markers and its `n. <url>`-format Sources list into markdown links before anything is persisted — parsing the model's own link syntax was judged less reliable than a plain URL list. The (linkified) report is then persisted as a normal assistant turn: `getChat` for the chat's current `activeLeafId` (used as `parentId`, `null` if unset), `putMessage` with a fresh `msgId`/`responseId` (same `uuidv4()` convention `ws/sendMessage.ts` uses for turn ids, not `newId()`), then `updateChatActiveLeaf` so it becomes the new leaf. `updateRun` sets `status: 'done'` and stores `reportText` on the `RUN#` row in the same call. Deep Research bypasses `ws/sendMessage.ts` entirely, so its own `chat.title === 'New Chat'` title-gen call never fires — `report.ts` runs the same `generateChatTitle()` call itself right after persisting the turn, and pushes `titleUpdated` the same way. Then `writeDossier()` writes the findings as a project file — see "The research dossier" below. |
+| `report.ts` | `Report` | Calls Bedrock once (the run's model, plain markdown out — no `safeParse`, this is prose not JSON — prompt in `prompts/research-report.txt`) over the accumulated `findings`/`gapsNotPursued` to write the cited final answer. `citations.ts`'s `linkifyReportCitations()` deterministically rewrites the model's `[n]` markers and its `n. <url>`-format Sources list into markdown links before anything is persisted — parsing the model's own link syntax was judged less reliable than a plain URL list. The (linkified) report is then persisted as a normal assistant turn: `getChat` for the chat's current `activeLeafId` (used as `parentId`, `null` if unset), `putMessage` with a fresh `msgId`/`responseId` (same `uuidv4()` convention `ws/sendMessage.ts` uses for turn ids, not `newId()`), then `updateChatActiveLeaf` so it becomes the new leaf. `updateRun` sets `status: 'done'` and stores `reportText` on the `RUN#` row in the same call. Deep Research bypasses `ws/sendMessage.ts` entirely, so its own `chat.title === 'New Chat'` title-gen call never fires — `report.ts` runs the same `generateChatTitle()` call itself right after persisting the turn, and pushes `titleUpdated` the same way. `updateChatHasResearch` then unlocks `read_research_findings` on the chat. A dossier file is written only when the chat already belongs to a project — see "The research dossier" below. |
 | `ws/startResearch.ts` | — (starts the execution) | WS action `startResearch`, outside the state machine itself. Persists the question as a normal user turn (`putMessage`, chained under the chat's current `activeLeafId`) and advances `activeLeafId` to it — the same durability the question would get from a normal send, and what `report.ts`'s final answer chains under — then mints a `runId` (`newId()`), writes the initial `RUN#` row (`status: 'recon'`, `model` snapshotted from the chat — see "The run's model" below), and calls `StartExecutionCommand` with `{chatId, runId, sub, question, connId}` as the execution input — see "Invocation" below. |
 
 ## Data model
@@ -140,38 +139,34 @@ wave (see "The wave loop" above).
 
 ## The research dossier
 
-Why every run keeps its findings as a project file, why a missing project gets created
-rather than the findings staying chat-scoped, and why the dossier is built from merged
-findings rather than full per-wave history: `docs/adr/0024-research-dossier-as-a-project-file.md`.
+Why a run never creates a project, and why the dossier is built from merged findings rather
+than full per-wave history: `docs/adr/0031-deep-research-is-not-a-project.md`.
 
-`report.ts`'s `writeDossier()` runs after the turn/run writes. It resolves the target
-project from `chat.projectId`; if unset, it creates one (`putProject`, named from the same
-title `generateChatTitle()` produces for the chat just above — falling back to
-`event.question.slice(0, 80)` only if title-gen failed or the chat already had a real
-title) and moves the chat into it with the same three calls `http/chats.ts`'s
-`PATCH .../projectId` uses for a user-initiated move (`updateChatProject`,
-`summarizeChatById`, `enrichProjectFactsByChatId`) — so a Deep Research run has identical
-side effects to a manual move. A newly-created project's name is also carried on the
-`research_done` frame as `newProjectName` (unset for a dossier written into an
-already-existing project) — the frontend uses it to toast, since the chat moving out of
-the LHS list's default filter is otherwise a silent surprise. `buildDossierMarkdown()` renders
-the final report, plan (clarifying questions + sub-questions), each merged finding with its
-source URLs, and gaps not pursued into one markdown document, written directly to S3
-(`projectFilePrefix(sub, projectId)<fileId>/research-dossier.md`, a plain `PutObjectCommand`
-— there's no client to drive the presigned-PUT flow `http/projects.ts`'s file routes use)
-then run through `lib/projectFiles.ts`'s `summarizeFile()` for `microLabel`/`summary`
-exactly like an uploaded file, and written straight to `status: 'ready'` (no
-`uploading`/`processing` intermediate — those states exist for the client round-trip this
-path doesn't have). `inclusion: 'auto'`, so it costs only a manifest line until something
-reads it.
+A completed run's full record lives on the `RUN#` row. `read_research_findings`
+(`lib/researchFindings.ts`) is how it is read back: `toolGating.ts` offers it whenever
+`ctx.chatId && ctx.hasResearch`, where `hasResearch` comes from the chat row's flag that
+`report.ts` sets via `updateChatHasResearch` when the run finishes. It pulls the most
+recently completed run for the chat via `listRuns(chatId)` and renders the report, plan,
+findings with sources, and gaps at `summary` or `full` detail. For the user, the same
+document is rendered on demand by `GET /api/chats/{chatId}/research?dossier=1` and
+downloadable from `ChatDetailsDialog`'s Info tab.
 
-`writeDossier()` is skipped outright for a sensitive chat (`chat?.sensitive` check ahead
-of the call in `handler`, not a branch buried inside `writeDossier` itself) — no project,
-no dossier file. Its findings stay reachable only from within the chat, via
-`read_research_findings` (`lib/researchFindings.ts`): gated on `ToolContext.sensitive` in
-`toolGating.ts` (offered only when `ctx.chatId && ctx.sensitive`), it pulls the most
-recently completed run for the chat via `listRuns(chatId)` (`lib/dynamo.ts`) and renders
-the same report/plan/findings/gaps shape as the dossier, at `summary` or `full` detail.
+`lib/researchDossier.ts` additionally files that document as a project file, but only for a
+chat that already belongs to a project — `report.ts` calls `writeResearchDossier()` when
+`chat.projectId` is set and the chat isn't sensitive, and `http/chats.ts`'s
+`PATCH .../projectId` calls `writeDossiersForChatMove()` when a chat with a completed run is
+moved into one. Each write records `dossierProjectId` on the run row, so moving a chat
+between projects files one copy per project rather than duplicates. The markdown is written
+directly to S3 (`projectFilePrefix(sub, projectId)<fileId>/research-dossier.md`, a plain
+`PutObjectCommand` — there's no client to drive the presigned-PUT flow `http/projects.ts`'s
+file routes use), then run through `lib/projectFiles.ts`'s `summarizeFile()` for
+`microLabel`/`summary` exactly like an uploaded file, and written straight to
+`status: 'ready'` (no `uploading`/`processing` intermediate — those states exist for the
+client round-trip this path doesn't have). `inclusion: 'auto'`, so it costs only a manifest
+line until something reads it.
+
+A sensitive chat never gets a dossier file even inside a project — its findings stay on the
+`RUN#` row, reachable only from within the chat.
 
 ## Plan approval gate
 
@@ -221,7 +216,7 @@ always the source of truth, these frames are a live-UI convenience only:
 | `research_wave_start` | `researchApprove.ts` (first wave), `assess.ts` (subsequent waves) | `runId`, `chatId`, `subQuestions` |
 | `research_finding` | `researcher.ts`, once per sub-question | `runId`, `chatId`, `subQuestionId`, `summary`, `sourceUrls` |
 | `research_assess` | `assess.ts`, every round | `runId`, `chatId`, `findingCount`, `done` |
-| `research_done` | `report.ts` | `runId`, `chatId`, `msgId`, `projectId` |
+| `research_done` | `report.ts` | `runId`, `chatId`, `msgId` |
 | `research_phase` | `progress.ts`'s `notifyPhase`, called by `recon.ts`/`plan.ts`/`assess.ts`/`report.ts` | `runId`, `chatId`, `phase` (`recon\|planning\|assessing\|reporting\|dossier`), `detail?` |
 | `research_step` | `progress.ts`'s `notifyStep`, called directly by `recon.ts` and via `stepEmitter` by `researcher.ts` | `runId`, `chatId`, `subQuestionId?`, `step` (one `thinking` or `tool` step, shaped as the frontend's own `Step`) |
 

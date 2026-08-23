@@ -42,7 +42,7 @@ export type WSEvent =
   // see backend/src/research/progress.ts.
   | { type: 'research_phase';      runId: string; chatId: string; phase: ResearchPhase; detail?: string }
   | { type: 'research_step';       runId: string; chatId: string; subQuestionId?: string; step: Step }
-  | { type: 'research_done';       runId: string; chatId: string; msgId: string; projectId?: string; newProjectName?: string }
+  | { type: 'research_done';       runId: string; chatId: string; msgId: string }
   // Mid-flight steering ack — see ws/sendMessage.ts's active-run interception.
   | { type: 'research_steering_noted'; runId: string; msgId: string }
 
