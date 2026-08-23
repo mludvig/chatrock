@@ -9,9 +9,10 @@ test.describe('AgentCore web search provider', () => {
 
     // Switch the Defaults web search provider to AgentCore
     await page.locator('[data-panel="prefs"]').click()
+    // The provider picker is a <select> (EffortRow), not a row of buttons.
     await page.locator('.pref-section', { hasText: 'Web search provider' })
-      .locator('.effort-btn', { hasText: 'AgentCore' })
-      .click()
+      .locator('select')
+      .selectOption('agentcore')
     await page.waitForTimeout(1200) // debounced save
 
     // Ask something that forces a real web_search tool call
@@ -31,7 +32,10 @@ test.describe('AgentCore web search provider', () => {
     await pill.locator('.tool-pill-header').click()
     await expect(page.locator('.search-result-card').first()).toBeVisible({ timeout: 10000 })
 
-    // The assistant should produce a final answer grounded in those results
+    // The assistant should produce a final answer grounded in those results. The bubble
+    // itself appears optimistically, so wait for the composer to swap Stop back for Send.
     await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
+    await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 60000 })
+    await expect(page.locator('.message.assistant .md').first()).toBeVisible({ timeout: 10000 })
   })
 })
