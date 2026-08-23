@@ -1064,20 +1064,16 @@ $header-h: 45px;
   letter-spacing: 0;
 }
 
-.research-panel-feedback {
-  width: 100%;
-  min-height: 44px;
-  resize: vertical;
-  border: 1px solid $border;
-  border-radius: $radius;
-  padding: 8px 10px;
-  font: inherit;
-  font-size: 14px;
-}
-
 .research-panel-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.research-panel-hint {
+  font-size: 13px;
+  color: $muted;
 }
 
 .research-panel-findings {

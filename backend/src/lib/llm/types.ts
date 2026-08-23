@@ -60,6 +60,7 @@ export type LlmPurpose =
   | 'file_summary'
   | 'search_history'
   | 'research_plan'
+  | 'research_plan_feedback'
   | 'research_worker'
   | 'research_assess'
   | 'research_report'

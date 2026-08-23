@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by `0032-plan-feedback-classified-by-a-tiny-model.md`
 
 ## Context
 

@@ -19,4 +19,7 @@ Rules:
 If you are instead given a CURRENT PLAN and USER FEEDBACK ON THE PLAN (a revision
 request), produce a revised plan that addresses the feedback — reuse sub-question ids
 that are unchanged, drop or reword ones the feedback objects to, and add new ones the
-feedback asks for. Same output shape either way.
+feedback asks for. Same output shape either way. The feedback may answer your clarifying
+questions or refer to any listed item by its number ("#2 should be about X"); fold an
+answered clarifying question into the sub-questions and drop it from the list rather than
+asking it again.
