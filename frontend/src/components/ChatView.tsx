@@ -29,6 +29,38 @@ interface Props {
 // (or its arrow) is the only way to submit.
 const isMobileViewport = () => window.matchMedia('(max-width: 720px)').matches
 
+// Unsent composer text survives a reload/app-close until the send it belongs to is
+// confirmed delivered (see armAckWatchdog/handleAckTimeout below) — one global slot rather
+// than one per chat, since keeping stale drafts around per-chat was judged not worth the
+// clutter for a single-user composer.
+const DRAFT_STORAGE_KEY = 'chatrock:draft'
+
+interface PersistedDraft {
+  chatId: string
+  content: string
+}
+
+function readPersistedDraft(): PersistedDraft | null {
+  try {
+    const raw = localStorage.getItem(DRAFT_STORAGE_KEY)
+    return raw ? (JSON.parse(raw) as PersistedDraft) : null
+  } catch {
+    return null
+  }
+}
+
+function savePersistedDraft(chatId: string, content: string) {
+  if (content.trim()) {
+    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ chatId, content }))
+  } else {
+    localStorage.removeItem(DRAFT_STORAGE_KEY)
+  }
+}
+
+function clearPersistedDraftIfMatches(chatId: string) {
+  if (readPersistedDraft()?.chatId === chatId) localStorage.removeItem(DRAFT_STORAGE_KEY)
+}
+
 // Parses each tool step's raw result JSON into cards (web_search / search_history) — shared
 // between the initial load, background reloads, and older-page fetches.
 function enrichMessages(bubbles: Message[]): Message[] {
@@ -139,6 +171,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // msgId of the optimistic user bubble for the in-flight send (removed on ack-timeout).
   const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
+  const draftSaveTimerRef = useRef<number | null>(null)
+  // The localStorage draft key a send just flushed, so the next inbound frame (delivery
+  // confirmation) knows what to clear — cleared without touching storage on ack-timeout,
+  // since a failed send must leave the draft in place for the user to retry.
+  const pendingDraftKeyRef = useRef<string | null>(null)
   const pendingNewChatIdRef = useRef<string | null>(null)
   // Set right before navigate() when a /c/new send creates its own chat, so the
   // chatId-seed effect below can tell "still the same session, just got its real URL"
@@ -387,6 +424,21 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }).catch(() => {}).finally(() => setLoadingOlder(false))
   }, [chatId, hasMoreOlder, oldestMsgId, loadingOlder, conversationUsage, setMessages])
 
+  // Restore an unsent draft (see savePersistedDraft in the composer's onChange and the
+  // flush in handleSend) if it belongs to the chat/draft currently being viewed and
+  // nothing's been typed here yet.
+  useEffect(() => {
+    const draft = readPersistedDraft()
+    if (!draft || !draft.content) return
+    if (draft.chatId !== (isNew ? 'new' : chatId)) return
+    setInput(prev => {
+      if (prev) return prev
+      pushToast({ kind: 'info', text: 'Restored an unsent draft' })
+      return draft.content
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, isNew])
+
   // Sync newModel when defaultModel resolves (models loaded async)
   useEffect(() => {
     if (isNew && defaultModel && !newModel) setNewModel(defaultModel)
@@ -537,6 +589,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setWSHandlers((evt: WSEvent) => {
       // Any frame proves the WebSocket is live → disarm the delivery watchdog.
       clearAckTimer()
+      // Same signal confirms the send that flushed this draft actually landed.
+      if (pendingDraftKeyRef.current) {
+        clearPersistedDraftIfMatches(pendingDraftKeyRef.current)
+        pendingDraftKeyRef.current = null
+      }
       if (evt.type === 'ack') return  // delivery confirmation only; nothing to render
       // Allow titleUpdated (title gen runs independently of stream cancel) and
       // error (always show server errors) and cancelled (needed for timely reload
@@ -1135,6 +1192,9 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
   function handleAckTimeout() {
     ackTimerRef.current = null
+    // The send never landed, so the draft it flushed must stay in storage for the
+    // restored content below to be resent — just stop tracking it as "in flight".
+    pendingDraftKeyRef.current = null
     clearIdleTimer()
     clearStream()
     setSending(false)
@@ -1217,6 +1277,15 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
     const editMsgId = editingMsgId
     const editPid = editParentId
+    // Flush synchronously so the debounced save (composer onChange) can't lose anything
+    // sitting in its ~400ms window right as the send goes out.
+    if (draftSaveTimerRef.current !== null) {
+      clearTimeout(draftSaveTimerRef.current)
+      draftSaveTimerRef.current = null
+    }
+    const draftKey = isNew ? 'new' : chatId!
+    savePersistedDraft(draftKey, content)
+    pendingDraftKeyRef.current = draftKey
     setInput('')
     setAttachments([])
     setEditingMsgId(null)
@@ -1880,10 +1949,18 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             placeholder={isNew ? 'Start the conversation…' : 'Send a message…'}
             value={input}
             onChange={e => {
-              setInput(e.target.value)
+              const value = e.target.value
+              setInput(value)
               const el = e.target
               el.style.height = 'auto'
               el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+              // Debounced rather than a useEffect on `input` — handleSend's own setInput('')
+              // must not itself trigger a save that would immediately re-persist the draft
+              // it just cleared.
+              if (draftSaveTimerRef.current !== null) clearTimeout(draftSaveTimerRef.current)
+              draftSaveTimerRef.current = window.setTimeout(() => {
+                savePersistedDraft(isNew ? 'new' : chatId!, value)
+              }, 400)
             }}
             onKeyDown={e => {
               if (e.key !== 'Enter' || isMobileViewport()) return
