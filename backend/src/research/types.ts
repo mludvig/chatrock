@@ -5,6 +5,8 @@
 // wrapping needed. See docs/adr/0023-deep-research-step-functions-orchestration.md
 // and backend/src/research/CLAUDE.md.
 
+import type { AttachmentMeta } from '../lib/attachments'
+
 export interface RunContext {
   chatId: string
   runId: string
@@ -149,6 +151,10 @@ export interface RunRow {
   // instructions/memories for a project chat. Snapshotted at startResearch, read back by
   // plan.ts. See docs/adr/0033-research-runs-see-the-users-memory.md.
   context?: string
+  // Refs to the question's attachments (images/documents), never bytes — snapshotted at
+  // startResearch, read back by plan.ts/report.ts via resolveRunAttachmentBlocks. See
+  // docs/adr/0034-research-runs-carry-the-questions-attachments.md.
+  attachments?: AttachmentMeta[]
   plan?: PlanResult
   findings: Finding[]
   gapsNotPursued: string[]

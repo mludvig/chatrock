@@ -1,3 +1,6 @@
+// Set before loading the module — lib/attachments.ts reads this into a top-level const.
+process.env.ATTACHMENTS_BUCKET = 'chatrock-attachments-test'
+
 import { handler } from '../../src/ws/startResearch'
 import * as dynamo from '../../src/lib/dynamo'
 import { SFNClient } from '@aws-sdk/client-sfn'
@@ -134,4 +137,31 @@ test('snapshots the user/project context onto the RUN# row, and omits the attrib
 
   expect(mockBuildRunContext).toHaveBeenCalledWith('user-1', undefined)
   expect(mockDynamo.putRun.mock.calls[0][0]).not.toHaveProperty('context')
+})
+
+test('attachments are turned into blocks on the user turn and snapshotted onto the RUN# row, refs only', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', model: 'model-x', activeLeafId: 'leaf-9' })
+  const attachments = [{ s3Key: 'attachments/user-1/chat-1/f/shot.png', contentType: 'image/png', filename: 'shot.png' }]
+
+  await handler(makeEvent({ chatId: 'chat-1', question: 'What is X?', attachments }))
+
+  const userTurn = mockDynamo.putMessage.mock.calls[0][0] as Record<string, unknown>
+  const blocks = userTurn.blocks as unknown[]
+  expect(blocks).toEqual([
+    { kind: 'text', text: 'What is X?' },
+    { kind: 'image', image: { format: 'png', source: { s3Uri: `s3://${process.env.ATTACHMENTS_BUCKET}/attachments/user-1/chat-1/f/shot.png` } } },
+  ])
+
+  const runRow = mockDynamo.putRun.mock.calls[0][0]
+  expect(runRow.attachments).toEqual(attachments)
+})
+
+test('omits the attachments attribute on the RUN# row when none were sent', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', model: 'model-x', activeLeafId: 'leaf-9' })
+
+  await handler(makeEvent({ chatId: 'chat-1', question: 'What is X?' }))
+
+  expect(mockDynamo.putRun.mock.calls[0][0]).not.toHaveProperty('attachments')
 })

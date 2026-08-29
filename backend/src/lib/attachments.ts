@@ -180,6 +180,16 @@ export interface AttachmentMeta {
   mode?: 'standard' | 'rich'
 }
 
+// Shared by ws/sendMessage.ts (normal sends) and ws/startResearch.ts (Deep Research) so the
+// two entry points can't drift on block ordering or the attachment-only-send rule.
+export function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: Block): Block[] {
+  const attachBlocks: Block[] = attachments.map(a => attachmentBlock(a))
+  const prefix: Block[] = tsBlock ? [tsBlock] : []
+  if (content) return [...prefix, { kind: 'text', text: content }, ...attachBlocks]
+  // No text — attachment-only send: providers reject blank/whitespace text blocks
+  return [...prefix, ...attachBlocks]
+}
+
 export function attachmentBlock(meta: AttachmentMeta): Block {
   const spec = resolveAttachmentType(meta.contentType, meta.filename) ?? { kind: 'document', format: 'txt', maxBytes: DOCUMENT_MAX_BYTES }
   const uri = `s3://${BUCKET}/${meta.s3Key}`

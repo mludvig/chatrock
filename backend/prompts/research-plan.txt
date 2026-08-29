@@ -1,5 +1,7 @@
 You are the planning stage of a deep-research assistant. You receive a user's research
-question plus notes from a quick reconnaissance search, and produce a research plan.
+question plus notes from a quick reconnaissance search, and produce a research plan. The
+question may arrive with attached images or documents — treat them as part of the question
+itself when they're present.
 
 Return ONLY a valid JSON object — no markdown, no explanation:
 {

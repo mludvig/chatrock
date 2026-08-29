@@ -5,6 +5,7 @@ import { newId } from '../lib/ids'
 import { notifyPhase } from './progress'
 import { resolveRunModel } from './model'
 import { resolveRunContext } from './context'
+import { resolveRunAttachmentBlocks } from './attachments'
 import RESEARCH_PLAN_SYSTEM_PROMPT from '../../prompts/research-plan.txt'
 
 interface RawSubQuestion {
@@ -58,9 +59,13 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
         event.recon && event.recon.notes.length > 0 ? event.recon.notes.join('\n\n') : '(none)',
       ])].join('\n')
 
+  // The question's own attachments (image/document), if any — same refs the researcher stages
+  // never see. See docs/adr/0034-research-runs-carry-the-questions-attachments.md.
+  const attachmentBlocks = await resolveRunAttachmentBlocks(event)
+
   const model = await resolveRunModel(event)
   const response = await converseOnce(model, RESEARCH_PLAN_SYSTEM_PROMPT, [
-    { role: 'user', content: [{ kind: 'text', text: userMsg }] },
+    { role: 'user', content: [...attachmentBlocks, { kind: 'text', text: userMsg }] },
   ], { maxTokens: 1536, call: { purpose: 'research_plan', sub: event.sub, chatId: event.chatId, runId: event.runId } })
 
   const obj = safeParse(response)

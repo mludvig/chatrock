@@ -154,6 +154,15 @@ export function disconnect() {
   onConnectionStateCb?.('closed')
 }
 
+// Shared attachment wire shape for both sendMessage and startResearch — mirrors
+// backend/src/lib/attachments.ts's AttachmentMeta.
+export interface WSAttachment {
+  s3Key: string
+  contentType: string
+  filename: string
+  mode?: 'standard' | 'rich'
+}
+
 export function sendMessage(payload: {
   chatId: string
   content?: string
@@ -162,12 +171,7 @@ export function sendMessage(payload: {
   modelSettings?: ModelSettings
   parentId?: string | null
   continue?: boolean
-  attachments?: Array<{
-    s3Key: string
-    contentType: string
-    filename: string
-    mode?: 'standard' | 'rich'
-  }>
+  attachments?: WSAttachment[]
   // Explicit Search entry (header search box) — forces the search_history tool on this turn.
   // See backend/src/ws/sendMessage.ts's WS payload contract.
   search?: { scope: 'project' | 'global' }
@@ -186,7 +190,7 @@ export function cancelMessage() {
 // Starts a Deep Research run — see backend/src/research/CLAUDE.md's "Invocation".
 // Returns {runId} via the WS route's Lambda response, not a pushed frame; the caller
 // awaits it like an HTTP call (see ChatView.tsx's handleSend deep-research branch).
-export function startResearch(payload: { chatId: string; question: string }) {
+export function startResearch(payload: { chatId: string; question: string; attachments?: WSAttachment[] }) {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     throw new Error('WebSocket not connected')
   }

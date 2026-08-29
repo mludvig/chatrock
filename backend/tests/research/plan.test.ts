@@ -4,9 +4,11 @@ import * as bedrock from '../../src/lib/bedrock'
 jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
 jest.mock('../../src/research/context', () => ({ resolveRunContext: jest.fn() }))
+jest.mock('../../src/research/attachments', () => ({ resolveRunAttachmentBlocks: jest.fn().mockResolvedValue([]) }))
 
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockResolveRunContext = jest.requireMock('../../src/research/context').resolveRunContext as jest.Mock
+const mockResolveRunAttachmentBlocks = jest.requireMock('../../src/research/attachments').resolveRunAttachmentBlocks as jest.Mock
 
 const sentUserMsg = () => (mockBedrock.converseOnce.mock.calls[0][2][0].content[0] as { text: string }).text
 
@@ -107,4 +109,16 @@ test('plan handler — no context block when the run has none', async () => {
   await handler(BASE_INPUT)
 
   expect(sentUserMsg().startsWith('QUESTION: what is X')).toBe(true)
+})
+
+test('plan handler — prepends the question\'s attachment blocks ahead of the text block', async () => {
+  const imageBlock = { kind: 'image', image: { format: 'png', source: { bytes: new Uint8Array([1]) } } }
+  mockResolveRunAttachmentBlocks.mockResolvedValue([imageBlock])
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({ subQuestions: [{ id: 'sq1', question: 'X?' }] }))
+
+  await handler(BASE_INPUT)
+
+  const content = mockBedrock.converseOnce.mock.calls[0][2][0].content
+  expect(content[0]).toEqual(imageBlock)
+  expect(content[1]).toMatchObject({ kind: 'text' })
 })
