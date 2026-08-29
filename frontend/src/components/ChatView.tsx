@@ -1092,6 +1092,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         waveSubQuestions: [], findings: [], findingCount: 0, done: false,
         ...initialResearchProgress(),
       })
+      armAckWatchdog()
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1146,11 +1147,26 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setMessages(remaining)
     }
     optimisticMsgIdRef.current = null
+    // A startResearch send never got an ack either — the optimistic 'recon' state
+    // (runId: '') would otherwise leave the panel showing "Researching…" forever,
+    // since reconcileResearch treats a missing RUN# row as inconclusive, not absent.
+    const currentId = chatIdRef.current
+    if (currentId && useChatStore.getState().activeResearch[currentId]?.runId === '') {
+      setActiveResearch(currentId, null)
+    }
     // Restore the typed content + attachments so a resend is one keypress away.
     const draft = pendingSendRef.current
     if (draft && draft.content) {
       setInput(draft.content)
       setAttachments(draft.attachments)
+    }
+    // New chat, first send never landed: the REST-created chat has no messages of its
+    // own (the failed send was the only thing that would have written one) — same
+    // orphan cleanup handleStop does for a Stop-before-any-answer on a fresh chat.
+    if (draft?.wasNew && currentId && currentId !== 'new') {
+      api.deleteChat(currentId).catch(() => {})
+      removeChat(currentId)
+      navigate('/c/new', { replace: true })
     }
     pushToast({ kind: 'error', text: 'Message not delivered — the connection dropped. Reconnecting; please send again.' })
     // Drop the stale socket and reopen so the resend uses a fresh connection.
@@ -1278,6 +1294,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             waveSubQuestions: [], findings: [], findingCount: 0, done: false,
             ...initialResearchProgress(),
           })
+          armAckWatchdog()
           // Seed the cache before navigating: the load effect blanks and refetches an
           // uncached chat, which would drop the question bubble in the window before
           // ws/startResearch.ts's user turn is queryable. A cache hit skips both, and
@@ -1386,6 +1403,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           waveSubQuestions: [], findings: [], findingCount: 0, done: false,
           ...initialResearchProgress(),
         })
+        armAckWatchdog()
         // Same reason as the new-chat branch above: keep the question bubble across a
         // switch to another chat and back, before the persisted turn is queryable.
         useChatStore.getState().setMessagesCache(chatId!, {
