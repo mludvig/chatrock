@@ -8,7 +8,7 @@ import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
 import { isValidModelId, type ModelSettings } from '../config/models'
-import { attachmentBlock, hydrateBlocks, type AttachmentMeta } from '../lib/attachments'
+import { hydrateBlocks, buildUserBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences, type UserPreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
 import { reconcileMemoryList } from '../lib/memory'
@@ -17,14 +17,6 @@ import { fetchS3Text } from '../lib/projectFiles'
 import { classifyPlanFeedback } from '../lib/planFeedback'
 import { resolvePlanApproval } from '../lib/researchApproval'
 import type { PlanResult } from '../research/types'
-
-function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: Block): Block[] {
-  const attachBlocks: Block[] = attachments.map(a => attachmentBlock(a))
-  const prefix: Block[] = tsBlock ? [tsBlock] : []
-  if (content) return [...prefix, { kind: 'text', text: content }, ...attachBlocks]
-  // No text — attachment-only send: providers reject blank/whitespace text blocks
-  return [...prefix, ...attachBlocks]
-}
 
 interface WSSendEvent {
   requestContext: {

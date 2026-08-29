@@ -22,6 +22,7 @@ jest.mock('../../src/lib/enrichment', () => ({
   generateChatTitle: jest.fn(),
 }))
 jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
+jest.mock('../../src/research/attachments', () => ({ resolveRunAttachmentBlocks: jest.fn().mockResolvedValue([]) }))
 jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn().mockImplementation(() => ({ send: jest.fn().mockResolvedValue({}) })),
   PutObjectCommand: jest.fn(),
@@ -30,6 +31,7 @@ jest.mock('@aws-sdk/client-s3', () => ({
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 const mockProjectFiles = projectFiles as jest.Mocked<typeof projectFiles>
+const mockResolveRunAttachmentBlocks = jest.requireMock('../../src/research/attachments').resolveRunAttachmentBlocks as jest.Mock
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -86,6 +88,19 @@ test('report handler — includes findings and gaps in the prompt sent to the mo
   expect(userText).toContain('X originated in Y.')
   expect(userText).toContain('https://example.com')
   expect(userText).toContain('Did not verify the exact date')
+})
+
+test('report handler — prepends the question\'s attachment blocks ahead of the text block', async () => {
+  const imageBlock = { kind: 'image', image: { format: 'png', source: { bytes: new Uint8Array([1]) } } }
+  mockResolveRunAttachmentBlocks.mockResolvedValue([imageBlock])
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', activeLeafId: 'leaf-9' })
+  mockBedrock.converseOnce.mockResolvedValue('answer')
+
+  await handler(BASE_INPUT)
+
+  const content = mockBedrock.converseOnce.mock.calls[0][2][0].content
+  expect(content[0]).toEqual(imageBlock)
+  expect(content[1]).toMatchObject({ kind: 'text' })
 })
 
 describe('research dossier', () => {

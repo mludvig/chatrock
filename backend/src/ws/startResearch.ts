@@ -4,6 +4,7 @@ import { getConnection, getChat, putRun, buildRunKey, buildTurnKey, putMessage, 
 import { newId } from '../lib/ids'
 import { buildRunContext } from '../research/context'
 import { DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
+import { buildUserBlocks, type AttachmentMeta } from '../lib/attachments'
 import { v4 as uuidv4 } from 'uuid'
 
 const sfn = new SFNClient({})
@@ -17,6 +18,7 @@ interface WSEvent {
 interface StartResearchBody {
   chatId: string
   question: string
+  attachments?: AttachmentMeta[]
 }
 
 // WS action "startResearch" — persists the question as a user turn, mints a runId, writes
@@ -30,7 +32,7 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
   if (!conn) return { statusCode: 410, body: 'Gone' }
 
   const body = JSON.parse(event.body ?? '{}') as StartResearchBody
-  const { chatId, question } = body
+  const { chatId, question, attachments = [] } = body
   if (!chatId || !question?.trim()) return { statusCode: 400, body: 'chatId and question are required' }
 
   const chat = await getChat(conn.userSub, chatId)
@@ -47,7 +49,7 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
     msgId: userMsgId,
     parentId: (chat.activeLeafId as string | undefined) ?? null,
     role: 'user',
-    blocks: [{ kind: 'text', text: question }],
+    blocks: buildUserBlocks(question, attachments),
     model: chat.model,
     createdAt: now,
     turnIndex: 0,
@@ -70,6 +72,9 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
     // mid-run — see docs/adr/0030-research-runs-use-the-chats-model.md.
     model: isValidModelId(chat.model as string) ? (chat.model as string) : DEFAULT_CHAT_MODEL,
     ...(context ? { context } : {}),
+    // Snapshotted here (refs only, never bytes — see docs/adr/0034) so plan.ts/report.ts can
+    // read them back the same way resolveRunModel/resolveRunContext do.
+    ...(attachments.length > 0 ? { attachments } : {}),
     connId,
     findings: [],
     gapsNotPursued: [],

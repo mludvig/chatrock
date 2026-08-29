@@ -8,7 +8,7 @@ import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResult
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
 import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove, isConnected } from '../api/ws'
-import type { WSEvent, ConnectionState } from '../api/ws'
+import type { WSEvent, ConnectionState, WSAttachment } from '../api/ws'
 import { useChatStore, initialResearchProgress } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
@@ -59,6 +59,15 @@ function savePersistedDraft(chatId: string, content: string) {
 
 function clearPersistedDraftIfMatches(chatId: string) {
   if (readPersistedDraft()?.chatId === chatId) localStorage.removeItem(DRAFT_STORAGE_KEY)
+}
+
+// Maps a past turn's persisted attachment steps back to the wire shape startResearch/
+// sendMessage expect — used by handleEscalate, which re-sends a past question rather than
+// building a fresh PendingAttachment tray (that richer mapping is handleEditRequest's job).
+function attachmentPayloadFromSteps(steps: Step[] | undefined): WSAttachment[] {
+  return (steps ?? [])
+    .filter((s): s is Extract<Step, { kind: 'attachment' }> => s.kind === 'attachment')
+    .map(s => ({ s3Key: s.s3Key, contentType: s.contentType, filename: s.filename, mode: s.mode }))
 }
 
 // Parses each tool step's raw result JSON into cards (web_search / search_history) — shared
@@ -1139,11 +1148,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     const ancestorUser = assistantMsg ? messages.find(m => 'msgId' in m && m.msgId === assistantMsg.parentId) as Message | undefined : undefined
     const questionText = ancestorUser?.content
     if (!questionText) return
+    const attachmentsPayload = attachmentPayloadFromSteps(ancestorUser?.steps)
     setSending(true)
     setErrorMsg(null)
     try {
       await ensureConnected(accessToken)
-      startResearch({ chatId: chatId!, question: questionText })
+      startResearch({ chatId: chatId!, question: questionText, attachments: attachmentsPayload })
       setActiveResearch(chatId!, {
         runId: '', status: 'recon', question: questionText, plan: null,
         waveSubQuestions: [], findings: [], findingCount: 0, done: false,
@@ -1277,6 +1287,21 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     }
     const editMsgId = editingMsgId
     const editPid = editParentId
+    // Deep Research starts a Step Functions run instead of a normal streamed turn — see
+    // backend/src/research/CLAUDE.md. Not offered on the edit-message path (undesigned:
+    // editing mid-run has no defined semantics), so editMsgId falls through to a normal send.
+    // Also not offered while a run is already active for this chat — the depth picker stays
+    // on "Deep Research" for the run's duration (sticky), so a follow-up sent mid-run must
+    // fall through to the normal sendMessage path, where the backend recognizes the active
+    // run and appends the message as a steering note instead of starting a second run.
+    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId && !liveResearchRun
+    // startResearch.ts rejects a blank question with a 400 that only surfaces as the ack
+    // watchdog's 12s timeout — an attachment-only Deep send has no other way to fail visibly,
+    // so block it here instead.
+    if (isDeepResearch && !content) {
+      pushToast({ kind: 'error', text: 'Deep Research needs a typed question' })
+      return
+    }
     // Flush synchronously so the debounced save (composer onChange) can't lose anything
     // sitting in its ~400ms window right as the send goes out.
     if (draftSaveTimerRef.current !== null) {
@@ -1325,15 +1350,6 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     pendingSendRef.current = { content, attachments: readyAttachments, wasNew: isNew }
     optimisticMsgIdRef.current = optimisticUser.msgId
 
-    // Deep Research starts a Step Functions run instead of a normal streamed turn — see
-    // backend/src/research/CLAUDE.md. Not offered on the edit-message path (undesigned:
-    // editing mid-run has no defined semantics), so editMsgId falls through to a normal send.
-    // Also not offered while a run is already active for this chat — the depth picker stays
-    // on "Deep Research" for the run's duration (sticky), so a follow-up sent mid-run must
-    // fall through to the normal sendMessage path, where the backend recognizes the active
-    // run and appends the message as a steering note instead of starting a second run.
-    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId && !liveResearchRun
-
     if (isNew) {
       setCreatingChat(true)
       const model = newModel || defaultModel
@@ -1357,7 +1373,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             updatedAt: now,
           })
           await ensureConnected(accessToken)
-          startResearch({ chatId: res.chatId, question: content })
+          startResearch({ chatId: res.chatId, question: content, attachments: attachmentsPayload })
           setActiveResearch(res.chatId, {
             runId: '', status: 'recon', question: content, plan: null,
             waveSubQuestions: [], findings: [], findingCount: 0, done: false,
@@ -1466,7 +1482,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setMessages(researchMessages)
       try {
         await ensureConnected(accessToken)
-        startResearch({ chatId: chatId!, question: content })
+        startResearch({ chatId: chatId!, question: content, attachments: attachmentsPayload })
         setActiveResearch(chatId!, {
           runId: '', status: 'recon', question: content, plan: null,
           waveSubQuestions: [], findings: [], findingCount: 0, done: false,

@@ -10,6 +10,7 @@ import { notifyConnection } from '../lib/wsNotify'
 import { notifyPhase } from './progress'
 import { linkifyReportCitations } from './citations'
 import { resolveRunModel } from './model'
+import { resolveRunAttachmentBlocks } from './attachments'
 import { v4 as uuidv4 } from 'uuid'
 import RESEARCH_REPORT_SYSTEM_PROMPT from '../../prompts/research-report.txt'
 
@@ -36,9 +37,13 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
     event.gapsNotPursued.length > 0 ? event.gapsNotPursued.join('\n') : '(none)',
   ].join('\n')
 
+  // The question's own attachments (image/document), if any — so the write-up can
+  // reference them. See docs/adr/0034-research-runs-carry-the-questions-attachments.md.
+  const attachmentBlocks = await resolveRunAttachmentBlocks(event)
+
   const model = await resolveRunModel(event)
   const rawReportText = await converseOnce(model, RESEARCH_REPORT_SYSTEM_PROMPT, [
-    { role: 'user', content: [{ kind: 'text', text: userMsg }] },
+    { role: 'user', content: [...attachmentBlocks, { kind: 'text', text: userMsg }] },
   ], { maxTokens: 4096, call: { purpose: 'research_report', sub: event.sub, chatId: event.chatId, runId: event.runId } })
   // Deterministic rewrite of [n] markers and the Sources list into markdown links —
   // see citations.ts for why this isn't left to the model's own link syntax.

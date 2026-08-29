@@ -5,10 +5,18 @@ import * as memoryLib from '../../src/lib/memory'
 import * as enrichmentLib from '../../src/lib/enrichment'
 import * as projectFilesMod from '../../src/lib/projectFiles'
 
-jest.mock('../../src/lib/attachments', () => ({
-  attachmentBlock: jest.fn().mockReturnValue({ kind: 'image', image: { format: 'png', source: { s3Uri: 's3://bucket/key.png' } } }),
-  hydrateBlocks: jest.fn().mockImplementation(async (blocks: unknown[]) => blocks),
-}))
+jest.mock('../../src/lib/attachments', () => {
+  const attachmentBlock = jest.fn().mockReturnValue({ kind: 'image', image: { format: 'png', source: { s3Uri: 's3://bucket/key.png' } } })
+  return {
+    attachmentBlock,
+    hydrateBlocks: jest.fn().mockImplementation(async (blocks: unknown[]) => blocks),
+    buildUserBlocks: jest.fn().mockImplementation((content: string | undefined, attachments: unknown[], tsBlock?: unknown) => {
+      const attachBlocks = attachments.map(a => attachmentBlock(a))
+      const prefix = tsBlock ? [tsBlock] : []
+      return content ? [...prefix, { kind: 'text', text: content }, ...attachBlocks] : [...prefix, ...attachBlocks]
+    }),
+  }
+})
 import * as attachmentsMod from '../../src/lib/attachments'
 const mockAttachments = attachmentsMod as jest.Mocked<typeof attachmentsMod>
 
