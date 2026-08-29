@@ -66,7 +66,7 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
   const model = await resolveRunModel(event)
   const response = await converseOnce(model, RESEARCH_PLAN_SYSTEM_PROMPT, [
     { role: 'user', content: [...attachmentBlocks, { kind: 'text', text: userMsg }] },
-  ], { maxTokens: 1536, call: { purpose: 'research_plan', sub: event.sub, chatId: event.chatId, runId: event.runId } })
+  ], { maxTokens: 4096, call: { purpose: 'research_plan', sub: event.sub, chatId: event.chatId, runId: event.runId } })
 
   const obj = safeParse(response)
   if (!obj) {
