@@ -564,7 +564,13 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       }
       setActiveResearch(id, {
         runId: run.runId, status: run.status, question: run.question, plan: run.plan,
-        waveSubQuestions: [], findings: run.findings, findingCount: run.findings.length, done: false,
+        // Seeded from the approved plan, not left empty: research_wave_start fires once per
+        // wave, so a client that reloads mid-wave would otherwise sit on "Researching 0
+        // sub-questions" until the *next* wave — on a single-wave run, forever. Later waves
+        // still append their own sub-questions on top of these.
+        waveSubQuestions: run.status === 'running' ? (run.plan?.subQuestions ?? []) : [],
+        findings: run.findings, findingCount: run.findings.length, done: false,
+        failureReason: run.failureReason,
         ...initialResearchProgress(),
       })
     }).catch(() => {})
@@ -634,7 +640,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           // visible above it as the record of how the run scoped the question.
           setActiveResearch(evt.chatId, {
             runId: evt.runId, status: 'awaiting_approval', question: activeResearch[evt.chatId]?.question ?? '',
-            plan: evt.plan, waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+            plan: evt.plan, waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
             ...initialResearchProgress(),
             reconSteps: activeResearch[evt.chatId]?.reconSteps ?? [],
           })
@@ -675,6 +681,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           } else {
             useChatStore.getState().invalidateMessagesCache(evt.chatId)
           }
+        } else if (evt.type === 'research_failed') {
+          // Terminal: the panel stops spinning and says why. The chat is usable again the
+          // moment the row goes terminal server-side (getActiveRun stops swallowing sends as
+          // steering notes), so nothing here needs to unlock anything.
+          patchActiveResearch(evt.chatId, { status: 'failed', phase: null, done: true, failureReason: evt.message })
+          pushToast({ kind: 'error', text: evt.message })
         } else if (evt.type === 'research_steering_noted') {
           releaseResearchSend('Steering note added — the researcher will pick it up shortly')
         } else if (evt.type === 'research_plan_decision') {
@@ -1156,7 +1168,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       startResearch({ chatId: chatId!, question: questionText, attachments: attachmentsPayload })
       setActiveResearch(chatId!, {
         runId: '', status: 'recon', question: questionText, plan: null,
-        waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+        waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
         ...initialResearchProgress(),
       })
       armAckWatchdog()
@@ -1376,7 +1388,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           startResearch({ chatId: res.chatId, question: content, attachments: attachmentsPayload })
           setActiveResearch(res.chatId, {
             runId: '', status: 'recon', question: content, plan: null,
-            waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+            waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
             ...initialResearchProgress(),
           })
           armAckWatchdog()
@@ -1485,7 +1497,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         startResearch({ chatId: chatId!, question: content, attachments: attachmentsPayload })
         setActiveResearch(chatId!, {
           runId: '', status: 'recon', question: content, plan: null,
-          waveSubQuestions: [], findings: [], findingCount: 0, done: false,
+          waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
           ...initialResearchProgress(),
         })
         armAckWatchdog()

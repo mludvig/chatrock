@@ -83,6 +83,9 @@ export interface ActiveResearch {
   // never persists steps, so a client that reconnects mid-run picks progress back up from
   // the next frame rather than replaying pills it already missed.
   phase: ResearchPhase | null
+  // Why the run stopped, for status 'failed' — from the research_failed frame or, if that
+  // frame was missed, from the RUN# row on re-sync. Null for every other status.
+  failureReason: string | null
   // Recon runs before any sub-question exists, so its steps can't be keyed by one.
   reconSteps: Step[]
   stepsBySubQuestion: Record<string, Step[]>

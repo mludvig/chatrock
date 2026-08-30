@@ -124,7 +124,7 @@ export default function ResearchPanel({ run, onApprove }: {
 
       {run.status === 'failed' && (
         <div className="research-panel-status research-panel-status--error">
-          The research run failed. You can start a new one from the composer.
+          {run.failureReason ?? 'The research run failed. You can start a new one from the composer.'}
         </div>
       )}
     </div>

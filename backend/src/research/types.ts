@@ -132,6 +132,20 @@ export interface ReportResult {
   reportText: string
 }
 
+// Every state's Catch routes here (terraform/research.tf's RunFailed). `error` is what
+// Step Functions merges in at ResultPath="$.error" — its own {Error, Cause} envelope, not
+// anything a handler produced.
+export interface FailInput {
+  chatId: string
+  runId: string
+  error?: { Error?: string; Cause?: string }
+}
+
+export interface FailResult {
+  // false when the row was already terminal and was left as it was — see fail.ts.
+  failed: boolean
+}
+
 export type RunStatus = 'recon' | 'planning' | 'awaiting_approval' | 'running' | 'done' | 'failed'
 
 // The PK=CHAT#<chatId> / SK=RUN#<runId> DynamoDB row — see backend/src/research/CLAUDE.md's
@@ -163,6 +177,9 @@ export interface RunRow {
   connId?: string
   taskToken?: string
   reportText?: string
+  // Set with status:'failed' by fail.ts — what the panel shows for a run that crashed, so a
+  // client that reconnects after the research_failed frame was missed still learns why.
+  failureReason?: string
   createdAt: string
   updatedAt: string
 }
