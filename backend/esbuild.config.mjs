@@ -28,6 +28,7 @@ const handlers = [
   { name: 'research-researcher',     entry: 'src/research/researcher.ts' },
   { name: 'research-assess',         entry: 'src/research/assess.ts' },
   { name: 'research-report',         entry: 'src/research/report.ts' },
+  { name: 'research-fail',           entry: 'src/research/fail.ts' },
 ]
 
 const distDir = path.join(__dirname, '..', 'terraform', 'dist')

@@ -1330,6 +1330,7 @@ test('GET /api/chats/{chatId}/research prefers the active run and shapes the DTO
       gapsNotPursued: ['some gap'],
       roundsSpent: 2,
       reportText: null,
+      failureReason: null,
     },
   })
   expect(mockDynamo.listRuns).not.toHaveBeenCalled()

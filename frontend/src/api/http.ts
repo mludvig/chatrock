@@ -161,6 +161,9 @@ export interface ResearchRun {
   gapsNotPursued: string[]
   roundsSpent: number
   reportText: string | null
+  // Set only for status 'failed' (backend/src/research/fail.ts) — the re-sync path's copy
+  // of what the research_failed frame carried, for a client that missed the frame.
+  failureReason: string | null
 }
 
 export interface UserMemory {

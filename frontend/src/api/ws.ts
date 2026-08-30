@@ -45,6 +45,10 @@ export type WSEvent =
   | { type: 'research_phase';      runId: string; chatId: string; phase: ResearchPhase; detail?: string }
   | { type: 'research_step';       runId: string; chatId: string; subQuestionId?: string; step: Step }
   | { type: 'research_done';       runId: string; chatId: string; msgId: string }
+  // Terminal failure — a state crashed or timed out and the run is over. Unlike every other
+  // frame here this one is not merely a UI convenience: without it the panel spins on a run
+  // that no longer exists. Its durable counterpart is the row's own status/failureReason.
+  | { type: 'research_failed';     runId: string; chatId: string; message: string }
   // Mid-flight steering ack — see ws/sendMessage.ts's active-run interception.
   | { type: 'research_steering_noted'; runId: string; msgId: string }
   // A composer message that answered the plan-approval gate instead of becoming a

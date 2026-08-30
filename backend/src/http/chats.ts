@@ -614,6 +614,7 @@ export const handler = async (
         gapsNotPursued: run.gapsNotPursued ?? [],
         roundsSpent: run.roundsSpent ?? 0,
         reportText: run.reportText ?? null,
+        failureReason: run.failureReason ?? null,
       },
     })
   }

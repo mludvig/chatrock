@@ -9,13 +9,19 @@
 # same way ws/sendMessage.ts does.
 
 locals {
+  # A researcher runs an 8-round agentic loop with a web search or fetch in most rounds;
+  # measured wall-clock is routinely 220-250s, so anything near the old 300s ceiling made
+  # Sandbox.Timedout a matter of when, not if. 900s is the Lambda maximum and costs nothing
+  # extra — billing is by actual duration, and a researcher that genuinely wedges is now
+  # caught by the wave's Catch rather than by the clock.
   research_handlers = {
     recon          = { name = "research-recon", timeout = 60 }
-    plan           = { name = "research-plan", timeout = 60 }
+    plan           = { name = "research-plan", timeout = 120 }
     await_approval = { name = "research-awaitApproval", timeout = 15 }
-    researcher     = { name = "research-researcher", timeout = 300 }
-    assess         = { name = "research-assess", timeout = 60 }
-    report         = { name = "research-report", timeout = 120 }
+    researcher     = { name = "research-researcher", timeout = 900 }
+    assess         = { name = "research-assess", timeout = 120 }
+    report         = { name = "research-report", timeout = 300 }
+    fail           = { name = "research-fail", timeout = 15 }
   }
 }
 
@@ -28,6 +34,11 @@ resource "aws_lambda_function" "research" {
   handler          = "index.handler"
   runtime          = local.lambda_runtime
   timeout          = each.value.timeout
+  # These ran at the 128 MB default and sat pinned at 128/128 MB used, which is both an OOM
+  # risk and a hard CPU throttle (Lambda scales vCPU with memory) on handlers whose whole job
+  # is a long agentic loop. 1024 MB is roughly one full vCPU; the duration it buys back is
+  # very nearly cost-neutral.
+  memory_size = 1024
   environment { variables = local.lambda_env_base }
   tags = { Env = var.env }
 }
@@ -98,6 +109,26 @@ resource "aws_cloudwatch_log_group" "research_sfn" {
 # One researcher Task per sub-question, run inside the Wave Map state. Kept as a locals
 # fragment so the outer state machine JSON below stays readable.
 locals {
+  # Every Task state routes its failures here. A run that dies with its RUN# row still on a
+  # non-terminal status is worse than a run that fails loudly: the panel spins forever and
+  # getActiveRun() keeps swallowing the chat's next messages as steering notes.
+  # See docs/adr/0035-a-failed-research-run-is-a-terminal-state.md.
+  research_catch_all = [{
+    ErrorEquals = ["States.ALL"]
+    ResultPath  = "$.error"
+    Next        = "RunFailed"
+  }]
+
+  # Transient Lambda-plane errors only. A researcher that timed out is deliberately NOT
+  # retried — it already burned its full 900s budget, and a second attempt would spend it
+  # again to reach the same place. Those fall through to the Catch below instead.
+  research_lambda_retry = [{
+    ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"]
+    IntervalSeconds = 2
+    MaxAttempts     = 2
+    BackoffRate     = 2
+  }]
+
   research_wave_iterator = {
     StartAt = "Researcher"
     States = {
@@ -105,7 +136,34 @@ locals {
         Type       = "Task"
         Resource   = aws_lambda_function.research["researcher"].arn
         ResultPath = "$.result"
-        End        = true
+        Retry      = local.research_lambda_retry
+        # One dead researcher must not take the other sub-questions of its wave down with it:
+        # a Map iteration failure aborts every sibling and the whole execution. Degrading to a
+        # placeholder finding keeps the run alive with an honest gap in it, which assess.ts
+        # can then decide to re-research in a later wave.
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          ResultPath  = "$.error"
+          Next        = "ResearcherFailed"
+        }]
+        End = true
+      }
+      # Shaped exactly like a successful iteration's output ({subQuestion, steeringNotes,
+      # result:{finding}}) so assess.ts's flatten needs no special case for it.
+      ResearcherFailed = {
+        Type = "Pass"
+        Parameters = {
+          "subQuestion.$"   = "$.subQuestion"
+          "steeringNotes.$" = "$.steeringNotes"
+          result = {
+            finding = {
+              "subQuestionId.$" = "$.subQuestion.id"
+              summary           = "This sub-question could not be researched — the researcher failed or ran out of time. Treat it as an unanswered gap."
+              sourceUrls        = []
+            }
+          }
+        }
+        End = true
       }
     }
   }
@@ -118,12 +176,16 @@ locals {
         Type       = "Task"
         Resource   = aws_lambda_function.research["recon"].arn
         ResultPath = "$.recon"
+        Retry      = local.research_lambda_retry
+        Catch      = local.research_catch_all
         Next       = "Plan"
       }
       Plan = {
         Type       = "Task"
         Resource   = aws_lambda_function.research["plan"].arn
         ResultPath = "$.plan"
+        Retry      = local.research_lambda_retry
+        Catch      = local.research_catch_all
         Next       = "AwaitApproval"
       }
       # .waitForTaskToken: the Lambda persists the token and returns immediately; the state
@@ -147,6 +209,8 @@ locals {
           }
         }
         TimeoutSeconds = 86400
+        Retry          = local.research_lambda_retry
+        Catch          = local.research_catch_all
         Next           = "ApprovalChoice"
       }
       # "Revise" (researchApprove.ts) resolves the same waitForTaskToken with
@@ -182,6 +246,8 @@ locals {
           "feedback.$"  = "$.feedback"
         }
         ResultPath = "$.plan"
+        Retry      = local.research_lambda_retry
+        Catch      = local.research_catch_all
         Next       = "AwaitApproval"
       }
       # ItemsPath points at $.nextSubQuestions, not $.plan.subQuestions — the first wave
@@ -208,6 +274,7 @@ locals {
           "connId.$"        = "$.connId"
         }
         Iterator = local.research_wave_iterator
+        Catch    = local.research_catch_all
         Next     = "Assess"
       }
       # No ResultPath — Assess's Result entirely replaces the state (same pattern as
@@ -231,7 +298,9 @@ locals {
           "roundsSpent.$"    = "$.roundsSpent"
           "connId.$"         = "$.connId"
         }
-        Next = "AssessChoice"
+        Retry = local.research_lambda_retry
+        Catch = local.research_catch_all
+        Next  = "AssessChoice"
       }
       # Backstop against a runaway supervisor: the supervisor decides when it's satisfied
       # (assess.ts's done), but a hard round cap still wins if it never is. See plan's
@@ -256,7 +325,32 @@ locals {
         Type       = "Task"
         Resource   = aws_lambda_function.research["report"].arn
         ResultPath = "$.report"
+        Retry      = local.research_lambda_retry
+        Catch      = local.research_catch_all
         End        = true
+      }
+      # Marks the RUN# row failed and tells the client, then re-fails the execution so the
+      # Step Functions console/alarms still see a FAILED run. fail.ts leaves an already-done
+      # row alone — Report's own Catch can fire after the report was persisted.
+      RunFailed = {
+        Type     = "Task"
+        Resource = aws_lambda_function.research["fail"].arn
+        Parameters = {
+          # Only the two ids and the error envelope. connId is read off the RUN# row by
+          # fail.ts instead of being passed here: a "$.connId" reference throws
+          # States.Runtime — failing the failure handler — for any state whose input never
+          # carried one, which is exactly the situation this state exists to survive.
+          "chatId.$" = "$.chatId"
+          "runId.$"  = "$.runId"
+          "error.$"  = "$.error"
+        }
+        ResultPath = "$.failResult"
+        Next       = "RunFailedTerminal"
+      }
+      RunFailedTerminal = {
+        Type  = "Fail"
+        Error = "ResearchRunFailed"
+        Cause = "A Deep Research state failed; the RUN# row was marked failed by RunFailed."
       }
     }
   }
