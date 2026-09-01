@@ -84,7 +84,7 @@ Browser → CloudFront (single distribution, custom domain)
 ### DynamoDB single-table
 
 Why one table instead of one per entity: `docs/adr/0003-single-dynamodb-table.md`. Table `chatrock-prod` with PK/SK:
-- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?, topics?, hasResearch?
+- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?, topics?, hasResearch?, streamingSince?, streamingResponseId?
 - Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearchEnabled?
 - WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL, cancelRequested?
 - User prefs: `PK=USER#<sub>` / `SK=PREF#USER` — `prefs` attribute (`UserPreferences` JSON blob), updatedAt
@@ -118,6 +118,8 @@ Key helpers in `backend/src/lib/tree.ts`:
 - Normal send: `{ chatId, content, model, systemPrompt, modelSettings, search? }` — persists user turn at current leaf, streams answer. `search: { scope: 'project'|'global' }` forces `search_history` tool on this turn.
 - Re-run: `{ chatId, parentId, model, systemPrompt, modelSettings }` — no `content`; streams new sibling answer under `parentId`
 - Edit: `{ chatId, parentId, content, model, systemPrompt, modelSettings }` — persists new user sibling under `parentId`, streams answer
+
+`GET /messages` also returns `streaming`: a turn is being generated for this chat right now, possibly for a connection this client no longer holds. The client polls on it to catch up after a dropped socket — see `docs/adr/0037-catching-up-on-a-dropped-stream.md`.
 
 **Display bubble shape** (from `GET /messages`): each bubble includes `msgId`, `parentId`, `siblingIndex` (1-based), `siblingCount`, `siblings` (ordered msgId array).
 

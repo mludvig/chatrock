@@ -597,3 +597,41 @@ describe('browse_web screenshot steps in tool results', () => {
     expect(toolStep.screenshotUrls).toEqual(['https://cdn.example.com/attachments/sub/chat/fid/shot.png?Sig=x'])
   })
 })
+
+// ── streaming marker ──────────────────────────────────────────────────────────
+
+describe('streaming flag', () => {
+  const oneTurn = () => [
+    row({ SK: `MSG#${TS}#0000#u1`, msgId: 'u1', parentId: null, role: 'user', blocks: [{ kind: 'text', text: 'q' }], responseId: 'user-r' }),
+  ]
+
+  test('false when the chat row carries no marker', async () => {
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1' })
+    mockDynamo.listMessages.mockResolvedValue(oneTurn())
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(JSON.parse(res.body!).streaming).toBe(false)
+  })
+
+  test('true while a recent marker is set', async () => {
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1',
+      streamingSince: new Date(Date.now() - 30_000).toISOString(),
+    })
+    mockDynamo.listMessages.mockResolvedValue(oneTurn())
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(JSON.parse(res.body!).streaming).toBe(true)
+  })
+
+  test('false once the marker is older than a Lambda could live — debris from a killed run', async () => {
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1',
+      streamingSince: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    })
+    mockDynamo.listMessages.mockResolvedValue(oneTurn())
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(JSON.parse(res.body!).streaming).toBe(false)
+  })
+})

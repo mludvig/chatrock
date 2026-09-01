@@ -94,6 +94,26 @@ export async function updateChatActiveLeaf(sub: string, chatId: string, activeLe
   }))
 }
 
+// A turn is streaming for this chat right now. The client can't learn this any other way:
+// the answer is persisted only as each round completes, and the WS frames went to a
+// connection that may be long gone. See docs/adr/0037-catching-up-on-a-dropped-stream.md.
+export async function setChatStreaming(sub: string, chatId: string, responseId: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET streamingSince = :s, streamingResponseId = :r',
+    ExpressionAttributeValues: { ':s': new Date().toISOString(), ':r': responseId },
+  }))
+}
+
+export async function clearChatStreaming(sub: string, chatId: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'REMOVE streamingSince, streamingResponseId',
+  }))
+}
+
 // Set once by research/report.ts when a run completes. Gates read_research_findings in
 // lib/llm/toolGating.ts so a plain chat's tool list isn't padded with a tool that has
 // nothing to read — see docs/adr/0031-deep-research-is-not-a-project.md.

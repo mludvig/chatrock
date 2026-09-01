@@ -22,6 +22,7 @@ Why per-send controls were moved out of the chat header: `docs/adr/0028-composer
 frontend/src/
   api/http.ts             — REST client; types: Model/ModelCapabilities/ModelSettings/UserPreferences/UserMemory/Project/ProjectMemory/ProjectFile; migrateSettings(); requestUpload/uploadToS3; project + file API methods
   api/ws.ts               — WebSocket client (connect/send/cancelMessage/event routing); routes 'warning' frame → error toast
+                            Takes a token provider (set by App.tsx) and reads a token per connect/reconnect, so a reconnect after a long sleep renews rather than replaying an expired one — docs/adr/0036-websocket-reads-the-token-late.md. Connection states: open | connecting | closed | unauthorized (retries given up on; ChatView offers reconnectNow()).
   store/chatStore.ts      — Zustand store; persists lastModel, sidebarWidth, activePanel, userPreferences, models; projects[] slice
   lib/viewportHeight.ts   — keeps --app-h in sync with visualViewport so a mobile keyboard can't push the chrome off-screen
   lib/toolResults.ts      — shared helpers: parses web_search JSON into SearchResult[], and search_history JSON into SearchHistoryResult[], for cards

@@ -56,12 +56,22 @@ export type WSEvent =
   | { type: 'research_plan_decision'; runId: string; chatId: string; msgId: string; decision: 'approve' | 'revise' }
 
 type EventHandler = (evt: WSEvent) => void
-export type ConnectionState = 'open' | 'connecting' | 'closed'
+// 'unauthorized' is the give-up state: repeated $connect failures, which in practice means
+// an access token the authorizer rejects. Distinct from 'connecting' so the UI can offer a
+// button instead of a spinner that would never stop.
+export type ConnectionState = 'open' | 'connecting' | 'closed' | 'unauthorized'
+
+// Reconnect must never reuse a token captured at first connect: Cognito access tokens live
+// 60 minutes, and a phone that sleeps through the expiry would otherwise retry a dead token
+// forever. The provider renews on demand — see docs/adr/0036-websocket-reads-the-token-late.md.
+type TokenProvider = () => Promise<string>
+
+const MAX_RECONNECT_ATTEMPTS = 5
 
 let socket: WebSocket | null = null
 let onEventCb: EventHandler | null = null
 let onConnectionStateCb: ((state: ConnectionState) => void) | null = null
-let lastAccessToken: string | null = null
+let tokenProvider: TokenProvider | null = null
 let explicitDisconnect = false
 // Set by the caller (ChatView, mirroring its `sending` flag) so onclose knows whether a
 // drop is worth chasing. Kept out of the store to avoid ws.ts <-> chatStore coupling.
@@ -81,13 +91,17 @@ export function setTurnInFlight(active: boolean) {
   turnInFlight = active
 }
 
-export function connect(accessToken: string): Promise<void> {
-  lastAccessToken = accessToken
+export function setTokenProvider(provider: TokenProvider) {
+  tokenProvider = provider
+}
+
+export async function connect(): Promise<void> {
   explicitDisconnect = false
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    return Promise.resolve()
-  }
+  if (socket && socket.readyState === WebSocket.OPEN) return
+  if (!tokenProvider) throw new Error('WebSocket token provider not set')
   onConnectionStateCb?.('connecting')
+  // Read the token here, per connect — not once at startup.
+  const accessToken = await tokenProvider()
   return new Promise((resolve, reject) => {
     let attempts = 0
     const MAX_ATTEMPTS = 3
@@ -136,15 +150,33 @@ export function connect(accessToken: string): Promise<void> {
 }
 
 function scheduleReconnect() {
-  if (reconnectTimer !== null || !lastAccessToken) return
+  if (reconnectTimer !== null || !tokenProvider) return
+  // A handshake rejected by the authorizer is indistinguishable from a network failure in
+  // the browser (no status code reaches JS), so failures are counted rather than classified:
+  // past the cap, stop and hand the user a Reconnect button.
+  if (reconnectAttempt >= MAX_RECONNECT_ATTEMPTS) {
+    onConnectionStateCb?.('unauthorized')
+    return
+  }
   onConnectionStateCb?.('connecting')
   const delay = Math.min(1000 * 2 ** reconnectAttempt, 10000)
   reconnectAttempt++
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null
-    if (explicitDisconnect || !lastAccessToken) return
-    connect(lastAccessToken).catch(() => {})
+    if (explicitDisconnect) return
+    connect().catch(() => {})
   }, delay)
+}
+
+// The Reconnect button's action: clears the give-up state and starts over with a freshly
+// fetched (renewed if needed) token.
+export function reconnectNow(): Promise<void> {
+  reconnectAttempt = 0
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  return connect()
 }
 
 export function disconnect() {
@@ -216,8 +248,8 @@ export function isConnected() {
   return socket !== null && socket.readyState === WebSocket.OPEN
 }
 
-export async function ensureConnected(accessToken: string) {
+export async function ensureConnected() {
   if (!isConnected()) {
-    await connect(accessToken)
+    await connect()
   }
 }

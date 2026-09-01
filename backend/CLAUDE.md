@@ -29,7 +29,7 @@ backend/src/
   lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
   lib/preferences.ts      — UserPreferences type + resolvePreferences() layering
   http/chats.ts           — chat CRUD, retitle, fork, branch delete, attachment presign; PATCH accepts projectId for project membership
-  http/messages.ts        — GET /messages: tree walk + attachment URL signing
+  http/messages.ts        — GET /messages: tree walk + attachment URL signing + `streaming` flag
   http/models.ts          — GET /models
   http/memory.ts          — GET /memory, DELETE /memory/{memId}
   http/preferences.ts     — GET /preferences, PUT /preferences

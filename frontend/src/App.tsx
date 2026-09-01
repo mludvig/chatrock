@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faComments, faPlus, faFolderPlus, faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons'
 import { api, setAccessToken } from './api/http'
+import { setTokenProvider } from './api/ws'
 import { ENV } from './env'
 import { useChatStore } from './store/chatStore'
 import ActivityBar from './components/ActivityBar'
@@ -12,6 +13,10 @@ import ChatView from './components/ChatView'
 import ProjectView from './components/ProjectView'
 import Toaster from './components/Toaster'
 import './app.scss'
+
+// Renew this far ahead of expiry rather than at it: a token that dies mid-handshake looks
+// exactly like a network failure, and the retry would carry the same dead token.
+const TOKEN_RENEW_SLACK_S = 120
 
 function AuthedApp() {
   const navigate = useNavigate()
@@ -30,6 +35,48 @@ function AuthedApp() {
   // see the token immediately on first mount.  A useEffect would run after children's
   // effects — too late on the first render after a page reload.
   setAccessToken(accessToken)
+
+  // oidc-client-ts only renews on its `accessTokenExpiring` event, which fires 60 s before
+  // expiry — a phone asleep through that window wakes up holding a dead token and nothing
+  // ever re-triggers a renew. So both the WebSocket's token provider and the resume handler
+  // below renew on demand instead. See docs/adr/0036-websocket-reads-the-token-late.md.
+  const authRef = useRef(auth)
+  useEffect(() => { authRef.current = auth })
+
+  // `focus` and `visibilitychange` both fire on a resume, and a reconnect can land on top of
+  // them — one shared in-flight renewal keeps that from becoming three token requests.
+  const renewalRef = useRef<Promise<string> | null>(null)
+
+  const freshAccessToken = async () => {
+    const user = authRef.current.user
+    if (user && !user.expired && (user.expires_in ?? 0) > TOKEN_RENEW_SLACK_S) return user.access_token
+    if (!renewalRef.current) {
+      renewalRef.current = authRef.current.signinSilent()
+        .then(renewed => {
+          // Hand the renewed token to the REST client too — its copy is otherwise only
+          // refreshed on the next render, too late for a request already in flight.
+          if (renewed?.access_token) setAccessToken(renewed.access_token)
+          return renewed?.access_token ?? user?.access_token ?? ''
+        })
+        .finally(() => { renewalRef.current = null })
+    }
+    return renewalRef.current
+  }
+
+  useEffect(() => { setTokenProvider(freshAccessToken) })
+
+  useEffect(() => {
+    function renewIfStale() {
+      if (document.visibilityState === 'hidden') return
+      void freshAccessToken().catch(() => {})
+    }
+    document.addEventListener('visibilitychange', renewIfStale)
+    window.addEventListener('focus', renewIfStale)
+    return () => {
+      document.removeEventListener('visibilitychange', renewIfStale)
+      window.removeEventListener('focus', renewIfStale)
+    }
+  }, [])
 
   useEffect(() => {
     if (!auth.isAuthenticated || !accessToken) return
@@ -162,7 +209,6 @@ function AuthedApp() {
             path="/c/:chatId"
             element={
               <ChatView
-                accessToken={accessToken}
                 models={models}
                 defaultModel={defaultModel}
                 onModelChange={setLastModel}
