@@ -10,6 +10,11 @@ import { groupTurnsToBubbles, signBubbleAttachments, type RawBubble, type TurnRo
 // screen instead of growing with total chat length.
 const DEFAULT_PAGE_LIMIT = 40
 
+// How long a `streamingSince` marker is believed. ws/sendMessage.ts clears it on every exit
+// it can reach, but a Lambda killed at its 600 s ceiling clears nothing — past this window
+// the marker is treated as debris rather than a live turn, so the client stops polling.
+const STREAM_STALE_MS = 11 * 60 * 1000
+
 const ok = (body: unknown): APIGatewayProxyResultV2 => ({
   statusCode: 200,
   headers: { 'Content-Type': 'application/json' },
@@ -35,6 +40,16 @@ interface MessagesResponse {
   conversationUsage: ReturnType<typeof groupTurnsToBubbles>['conversationUsage']
   hasMore: boolean
   oldestMsgId: string | null
+  // A turn is being streamed for this chat right now, by a connection that may not be this
+  // client's. The signal a returning/reloaded client polls on — see
+  // docs/adr/0037-catching-up-on-a-dropped-stream.md.
+  streaming: boolean
+}
+
+const isStreaming = (since: string | undefined): boolean => {
+  if (!since) return false
+  const startedAt = Date.parse(since)
+  return Number.isFinite(startedAt) && Date.now() - startedAt < STREAM_STALE_MS
 }
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
@@ -99,6 +114,7 @@ export const handler = async (
     conversationUsage: rawResponse.conversationUsage,
     hasMore,
     oldestMsgId,
+    streaming: isStreaming(chat.streamingSince as string | undefined),
   }
   return ok(response)
 }

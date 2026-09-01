@@ -3,7 +3,7 @@ import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import type { Block, NeutralMessage } from '../lib/llm/blocks'
-import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats, getActiveRun, appendRunSteeringNote } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, setChatStreaming, clearChatStreaming, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats, getActiveRun, appendRunSteeringNote } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
@@ -465,6 +465,16 @@ export const buildHandler = (postFn: PostFn) => async (
 
   console.log(JSON.stringify({ event: 'stream_start', chatId, model, connId }))
 
+  // Mark the chat as streaming so a client that reconnects (or reloads on a different
+  // device) can tell "the answer is still coming" from "nothing is coming" — the frames
+  // below only ever reach this one connection. Cleared once the loop exits, below.
+  // See docs/adr/0037-catching-up-on-a-dropped-stream.md.
+  try {
+    await setChatStreaming(sub, chatId, continueResponseId ?? responseId)
+  } catch (e) {
+    console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
+  }
+
   // Clear any stale cancel flag from a previous stream on this connection
   await clearStreamCancel(connId)
 
@@ -674,6 +684,15 @@ export const buildHandler = (postFn: PostFn) => async (
   }
 
   clearTimeout(pollTimer)
+
+  // One clear covers all three exits below (errored, cancelled, normal) and runs before the
+  // slow post-turn enrichment, so a polling client stops as soon as the answer is complete.
+  // A killed Lambda can't reach this — hence the staleness window in http/messages.ts.
+  try {
+    await clearChatStreaming(sub, chatId)
+  } catch (e) {
+    console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
+  }
 
   if (errored) {
     // Advance activeLeafId to the last persisted turn (partial or prior round) so

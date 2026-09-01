@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faFolder, faEyeSlash, faTriangleExclamation, faGear } from '@fortawesome/free-solid-svg-icons'
+import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faFolder, faEyeSlash, faTriangleExclamation, faGear, faRotate } from '@fortawesome/free-solid-svg-icons'
 import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS } from '../api/http'
 import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
-import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove, isConnected } from '../api/ws'
+import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove, isConnected, reconnectNow } from '../api/ws'
 import type { WSEvent, ConnectionState, WSAttachment } from '../api/ws'
 import { useChatStore, initialResearchProgress } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
@@ -16,7 +16,6 @@ import ResearchPanel from './ResearchPanel'
 import { describeChatPrivacy } from '../lib/privacyDescription'
 
 interface Props {
-  accessToken: string
   models: Model[]
   defaultModel: string
   onModelChange: (modelId: string) => void
@@ -34,6 +33,9 @@ const isMobileViewport = () => window.matchMedia('(max-width: 720px)').matches
 // than one per chat, since keeping stale drafts around per-chat was judged not worth the
 // clutter for a single-user composer.
 const DRAFT_STORAGE_KEY = 'chatrock:draft'
+// How often to re-ask for a turn that is streaming to somebody else's connection. Each pass is
+// one GET /messages, and only runs while the backend says a turn is actually in flight.
+const STREAM_POLL_MS = 3000
 
 interface PersistedDraft {
   chatId: string
@@ -89,7 +91,7 @@ function enrichMessages(bubbles: Message[]): Message[] {
   })
 }
 
-export default function ChatView({ accessToken, models, defaultModel, onModelChange, onOpenSidebar, onNewChat }: Props) {
+export default function ChatView({ models, defaultModel, onModelChange, onOpenSidebar, onNewChat }: Props) {
   const { chatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -130,6 +132,10 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // Only used to surface a "Reconnecting…" banner while ws.ts is chasing a dropped socket
   // during an in-flight turn — see docs/adr/0021-websocket-reconnect-and-refocus-catchup.md.
   const [wsConnectionState, setWsConnectionState] = useState<ConnectionState>('open')
+  // The backend says a turn is still streaming for this chat, but not to this client — the
+  // frames went to a connection that dropped. Polled, not pushed; see
+  // docs/adr/0037-catching-up-on-a-dropped-stream.md.
+  const [serverStreaming, setServerStreaming] = useState(false)
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -391,6 +397,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
   // was backgrounded and there's no live stream left to protect.
   const reloadMessages = useCallback((id: string, opts?: { force?: boolean }) => {
     api.listMessages(id).then(r => {
+      if (id === chatIdRef.current) setServerStreaming(r.streaming)
       if (useChatStore.getState().sending && !opts?.force) return
       const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
@@ -942,7 +949,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       // reflects rounds already persisted, then race against the live frames still arriving
       // for the in-flight round — rendering as two stacked bubbles.
       const wasConnected = isConnected()
-      ensureConnected(accessToken).catch(() => {})
+      ensureConnected().catch(() => {})
       const id = chatIdRef.current
       // Only force a reconcile when this tab is actually looking at the chat the
       // in-flight stream belongs to — refocusing on an unrelated chat shouldn't touch it.
@@ -959,6 +966,12 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       if (shownRun && shownRun.status !== 'done') {
         reconcileResearch(id!)
       }
+      // Otherwise just re-ask: a plain (unforced) refetch is what tells us whether a turn is
+      // still streaming for this chat on a connection we no longer hold, which starts the poll
+      // below. Unforced, so it can't clobber a live stream of our own.
+      if (id && id !== 'new' && !useChatStore.getState().sending) {
+        reloadMessages(id)
+      }
     }
     document.addEventListener('visibilitychange', handleRefocus)
     window.addEventListener('focus', handleRefocus)
@@ -967,7 +980,27 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       window.removeEventListener('focus', handleRefocus)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, reloadMessages, reconcileResearch])
+  }, [reloadMessages, reconcileResearch])
+
+  // A turn that outlived our socket can only be observed by asking. Poll while the backend
+  // says one is running and we have no live stream of our own — each pass paints the rounds
+  // persisted so far, so a long tool-using turn visibly advances.
+  useEffect(() => { setServerStreaming(false) }, [chatId])
+
+  useEffect(() => {
+    if (isNew || !chatId || !serverStreaming || sending) return
+    const timer = window.setInterval(() => reloadMessages(chatId), STREAM_POLL_MS)
+    return () => clearInterval(timer)
+  }, [chatId, isNew, serverStreaming, sending, reloadMessages])
+
+  // Manual catch-up: refetch the transcript and re-sync any research run, for when the user
+  // just wants to know whether anything arrived while they were away.
+  const handleRefresh = useCallback(() => {
+    if (!chatId || isNew) return
+    reloadMessages(chatId, { force: !useChatStore.getState().sending })
+    if (useChatStore.getState().activeResearch[chatId]) reconcileResearch(chatId)
+    if (wsConnectionState !== 'open') void reconnectNow().catch(() => {})
+  }, [chatId, isNew, reloadMessages, reconcileResearch, wsConnectionState])
 
   function handleMessagesScroll() {
     const el = messagesRef.current
@@ -1101,7 +1134,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
     optimisticMsgIdRef.current = null  // re-run has no optimistic user bubble
     try {
-      await ensureConnected(accessToken)
+      await ensureConnected()
       sendMessage({
         chatId: chatId!,
         model: activeChat.model,
@@ -1114,7 +1147,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, messages, chatId, accessToken, modelSettingsForSend, startStream])
+  }, [activeChat, creatingChat, messages, chatId, modelSettingsForSend, startStream])
 
   const handleContinue = useCallback(async (msgId: string, researchDepthOverride?: ResearchDepth) => {
     if (!activeChat || useChatStore.getState().sending || creatingChat) return
@@ -1129,7 +1162,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
 
     optimisticMsgIdRef.current = null  // continue has no optimistic user bubble
     try {
-      await ensureConnected(accessToken)
+      await ensureConnected()
       sendMessage({
         chatId: chatId!,
         model: activeChat.model,
@@ -1145,7 +1178,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       setSending(false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, chatId, accessToken, modelSettingsForSend, startStream])
+  }, [activeChat, creatingChat, chatId, modelSettingsForSend, startStream])
 
   // "Go deeper" on a shallow answer. Extended reuses the continue path (builds on the
   // research already done); Deep Research can't continue a turn — it starts a run, seeded
@@ -1164,7 +1197,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     setSending(true)
     setErrorMsg(null)
     try {
-      await ensureConnected(accessToken)
+      await ensureConnected()
       startResearch({ chatId: chatId!, question: questionText, attachments: attachmentsPayload })
       setActiveResearch(chatId!, {
         runId: '', status: 'recon', question: questionText, plan: null,
@@ -1177,7 +1210,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     } finally {
       setSending(false)
     }
-  }, [activeChat, creatingChat, chatId, accessToken, messages, handleContinue])
+  }, [activeChat, creatingChat, chatId, messages, handleContinue])
 
   const stepHasContent = (st: Step) =>
     (st.kind === 'text' && st.text.trim() !== '') ||
@@ -1253,7 +1286,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     pushToast({ kind: 'error', text: 'Message not delivered — the connection dropped. Reconnecting; please send again.' })
     // Drop the stale socket and reopen so the resend uses a fresh connection.
     disconnect()
-    ensureConnected(accessToken).catch(() => {})
+    ensureConnected().catch(() => {})
   }
 
   function handleStop() {
@@ -1384,7 +1417,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             createdAt: now,
             updatedAt: now,
           })
-          await ensureConnected(accessToken)
+          await ensureConnected()
           startResearch({ chatId: res.chatId, question: content, attachments: attachmentsPayload })
           setActiveResearch(res.chatId, {
             runId: '', status: 'recon', question: content, plan: null,
@@ -1437,7 +1470,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
             updatedAt: now,
           })
         }
-        await ensureConnected(accessToken)
+        await ensureConnected()
         sendMessage({
           chatId: res.chatId, content, model, systemPrompt, modelSettings: modelSettingsForSend, attachments: attachmentsPayload,
           ...(search ? { search } : {}),
@@ -1471,7 +1504,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       startStream()
       pendingScrollTopRef.current = true
       try {
-        await ensureConnected(accessToken)
+        await ensureConnected()
         sendMessage({
           chatId: chatId!,
           content,
@@ -1493,7 +1526,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
       const researchMessages = [...messages, optimisticUser]
       setMessages(researchMessages)
       try {
-        await ensureConnected(accessToken)
+        await ensureConnected()
         startResearch({ chatId: chatId!, question: content, attachments: attachmentsPayload })
         setActiveResearch(chatId!, {
           runId: '', status: 'recon', question: content, plan: null,
@@ -1523,7 +1556,7 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
     pendingScrollTopRef.current = true
 
     try {
-      await ensureConnected(accessToken)
+      await ensureConnected()
       sendMessage({
         chatId: chatId!,
         content,
@@ -1711,6 +1744,11 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
           <button className="btn-icon btn-header-new-chat" onClick={onNewChat} title="New chat">
             <FontAwesomeIcon icon={faPlus} />
           </button>
+          {!isNew && (
+            <button className="btn-icon" onClick={handleRefresh} title="Refresh — fetch anything that arrived while this tab was away">
+              <FontAwesomeIcon icon={faRotate} />
+            </button>
+          )}
           <button className="btn-icon" onClick={() => setDetailsOpen(true)} title="Chat details">
             <FontAwesomeIcon icon={faGear} />
           </button>
@@ -1721,6 +1759,28 @@ export default function ChatView({ accessToken, models, defaultModel, onModelCha
         <div className="error-banner warning">
           <span>
             <FontAwesomeIcon icon={faSpinner} spin /> Connection lost, reconnecting…
+          </span>
+        </div>
+      )}
+
+      {/* Retries have been given up on — almost always an access token the authorizer rejects
+          after a long sleep. A button, not a spinner: reconnectNow() fetches a fresh token, and
+          if that fails too the user needs to know rather than watch it spin forever. */}
+      {wsConnectionState === 'unauthorized' && (
+        <div className="error-banner warning">
+          <span>
+            <FontAwesomeIcon icon={faTriangleExclamation} /> Disconnected. Your session may have expired.
+          </span>
+          <button onClick={() => void reconnectNow().catch(() => {})}>Reconnect</button>
+        </div>
+      )}
+
+      {/* The answer is still being generated somewhere else — this tab is watching it by
+          polling, not receiving it. See docs/adr/0037-catching-up-on-a-dropped-stream.md. */}
+      {serverStreaming && !sending && (
+        <div className="error-banner warning">
+          <span>
+            <FontAwesomeIcon icon={faSpinner} spin /> A reply is still being generated — catching up…
           </span>
         </div>
       )}

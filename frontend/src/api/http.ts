@@ -295,7 +295,9 @@ export const api = {
     if (opts?.limit) params.set('limit', String(opts.limit))
     if (opts?.before) params.set('before', opts.before)
     const qs = params.toString()
-    return req<{ bubbles: Message[]; conversationUsage: TokenUsage; hasMore: boolean; oldestMsgId: string | null }>(
+    // `streaming`: the backend is generating an answer for this chat right now, possibly for
+    // a connection that is no longer ours — what ChatView polls on after a dropped socket.
+    return req<{ bubbles: Message[]; conversationUsage: TokenUsage; hasMore: boolean; oldestMsgId: string | null; streaming: boolean }>(
       'GET', `/api/chats/${chatId}/messages${qs ? `?${qs}` : ''}`)
   },
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
