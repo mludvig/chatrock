@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted
+Accepted. The unbounded reconnect accepted under Consequences below is superseded by
+`0036-websocket-reads-the-token-late.md`: retries with an expired token can never succeed,
+so they are now capped and end in a Reconnect button. The general rules both ADRs apply are
+collected in `docs/realtime-reliability.md`.
 
 ## Context
 

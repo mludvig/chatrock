@@ -144,6 +144,15 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `heartbeat` | — sent every `HEARTBEAT_INTERVAL_MS` (4s) while a single tool call is still in flight |
 | `error` | `message` |
 
+## Real-time reliability
+
+Clients are frequently phones that background mid-turn, sleep past a token's expiry, and
+resume on another network. `docs/realtime-reliability.md` is the standing set of rules that
+follow from that — the server finishes work with nobody listening, catch-up is a refetch
+rather than a re-attach, every push path needs a pull equivalent, liveness markers expire,
+credentials are read at connect time, and retry loops end in something the user can act on.
+Read it before adding anything that streams, polls, or reconnects; it ends in a checklist.
+
 ## Key gotchas
 
 - **Inference profiles**: models use `global.*` cross-region inference profiles (`global.anthropic.claude-opus-4-8` etc.), not direct model IDs. Verify with `aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED`.
