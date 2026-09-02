@@ -163,3 +163,13 @@ Read it before adding anything that streams, polls, or reconnects; it ends in a 
 - **AgentCore Gateway target type**: `aws_bedrockagentcore_gateway_target` (AWS provider v6.51.0) doesn't yet support the `connector` target type that Web Search needs — only the *gateway* is a real Terraform resource (`terraform/agentcore.tf`); the target is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step (comment in that file has the exact command). Needs AWS CLI ≥ 2.35.7 — older builds reject the `connector` parameter outright.
 - **AgentCore Browser IAM ARN**: the AWS-managed system browser lives under the literal `aws` pseudo-account, not the caller's own account — the IAM resource must be `arn:aws:bedrock-agentcore:<region>:aws:browser/aws.browser.v1` (same pattern as Web Search's `arn:...:aws:tool/web-search.v1`). Scoping it to the caller's account ID instead produces an opaque `AccessDeniedException` on `StartBrowserSession`.
 - **Stability AI image models are `us-west-2`-only**: as of July 2026, Stability's Stable Image Ultra/Core/SD3.5 Large exist as on-demand Bedrock foundation models only in `us-west-2` — confirmed absent from `ap-southeast-2` (where this backend otherwise runs), `us-east-1`, and `eu-west-1` via `aws bedrock list-foundation-models --by-provider stability-ai --region <region>`. Nova Canvas/Titan Image Generator (the only image models `ap-southeast-2`/`us-east-1`/`eu-west-1` do offer) are Legacy, EOL 2026-09-30 — don't build on them. `backend/src/lib/imageGen/providers/bedrockStability.ts` uses its own `us-west-2`-pinned `BedrockRuntimeClient`, a plain cross-region `InvokeModel` call (image models have no cross-region inference profile equivalent to the `global.*` one above).
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
