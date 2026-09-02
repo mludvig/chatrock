@@ -26,3 +26,4 @@ backend/scripts/migrate-blocks.mjs
 backend/scripts/backup-table.mjs
 backend/scripts/restore-table.mjs
 backend/scripts/*.backup.jsonl
+graphify-out/
