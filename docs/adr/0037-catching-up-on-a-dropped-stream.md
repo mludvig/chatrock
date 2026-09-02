@@ -17,3 +17,5 @@ Stream frames are addressed to one connection id. When a client drops mid-turn t
 Catch-up shows completed rounds rather than live tokens — a long agentic turn advances in 3-second steps instead of streaming — which is the honest limit of a refetch. The marker is written on the chat row without touching `updatedAt`, so polling does not reorder the sidebar. Two extra DynamoDB writes per turn.
 
 Alternatives rejected: re-attaching a new connection to the running stream — the Lambda holds one connection id and buffering frames server-side for an absent client is a queue with no owner; inferring "still streaming" from the transcript shape — a trailing user turn looks identical whether the answer is coming or the Lambda died.
+
+The general rules this decision applies are collected in `docs/realtime-reliability.md`.

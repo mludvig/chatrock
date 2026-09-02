@@ -17,3 +17,5 @@ Accepted.
 Renewal happens when a connection is actually needed rather than on a timer the browser may never fire, so a resumed tab reconnects with a valid token. The cap means a genuinely unreachable backend stops retrying after roughly 30 seconds and asks the user, rather than spinning forever; `reconnectNow()` resets it.
 
 Alternatives rejected: relying on `automaticSilentRenew` alone — it is exactly the timer a sleeping tab misses; classifying handshake failures as auth vs. network — the browser exposes no status code for a failed WebSocket upgrade, so failures can only be counted, not distinguished; passing the token into `connect()` from each call site — the reconnect path has no call site, which is how the bug arose.
+
+The general rules this decision applies are collected in `docs/realtime-reliability.md`.
