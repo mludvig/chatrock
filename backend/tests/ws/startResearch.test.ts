@@ -22,7 +22,7 @@ jest.mock('../../src/lib/dynamo', () => ({
 }))
 
 jest.mock('../../src/lib/ids', () => ({ newId: () => 'run-1' }))
-jest.mock('../../src/research/context', () => ({ buildRunContext: jest.fn() }))
+jest.mock('../../src/research/context', () => ({ buildRunContext: jest.fn(), buildRunProjectContext: jest.fn() }))
 
 const mockBuildRunContext = jest.requireMock('../../src/research/context').buildRunContext as jest.Mock
 

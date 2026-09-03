@@ -2,7 +2,7 @@ import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn'
 import { getConnection, getChat, putRun, buildRunKey, buildTurnKey, putMessage, updateChatActiveLeaf } from '../lib/dynamo'
 import { newId } from '../lib/ids'
-import { buildRunContext } from '../research/context'
+import { buildRunContext, buildRunProjectContext } from '../research/context'
 import { DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { buildUserBlocks, type AttachmentMeta } from '../lib/attachments'
 import { v4 as uuidv4 } from 'uuid'
@@ -60,7 +60,11 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
   const runId = newId()
   // What the planner is told about the person asking — snapshotted here for the same reason
   // the model is. See docs/adr/0033-research-runs-see-the-users-memory.md.
-  const context = await buildRunContext(conn.userSub, chat.projectId as string | undefined)
+  const projectId = chat.projectId as string | undefined
+  const [context, projectContext] = await Promise.all([
+    buildRunContext(conn.userSub, projectId),
+    buildRunProjectContext(projectId),
+  ])
   await putRun({
     ...buildRunKey(chatId, runId),
     runId,
@@ -72,6 +76,7 @@ export const handler = async (event: WSEvent): Promise<APIGatewayProxyResultV2> 
     // mid-run — see docs/adr/0030-research-runs-use-the-chats-model.md.
     model: isValidModelId(chat.model as string) ? (chat.model as string) : DEFAULT_CHAT_MODEL,
     ...(context ? { context } : {}),
+    ...(projectContext ? { projectContext } : {}),
     // Snapshotted here (refs only, never bytes — see docs/adr/0034) so plan.ts/report.ts can
     // read them back the same way resolveRunModel/resolveRunContext do.
     ...(attachments.length > 0 ? { attachments } : {}),

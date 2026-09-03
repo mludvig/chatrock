@@ -165,6 +165,10 @@ export interface RunRow {
   // instructions/memories for a project chat. Snapshotted at startResearch, read back by
   // plan.ts. See docs/adr/0033-research-runs-see-the-users-memory.md.
   context?: string
+  // Navigational file manifest + forced-inclusion file content for a project chat.
+  // Snapshotted at startResearch, read back by plan.ts/report.ts. See
+  // docs/adr/0038-research-runs-see-project-files.md.
+  projectContext?: string
   // Refs to the question's attachments (images/documents), never bytes — snapshotted at
   // startResearch, read back by plan.ts/report.ts via resolveRunAttachmentBlocks. See
   // docs/adr/0034-research-runs-carry-the-questions-attachments.md.

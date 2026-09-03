@@ -22,6 +22,7 @@ jest.mock('../../src/lib/enrichment', () => ({
   generateChatTitle: jest.fn(),
 }))
 jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
+jest.mock('../../src/research/context', () => ({ resolveRunProjectContext: jest.fn() }))
 jest.mock('../../src/research/attachments', () => ({ resolveRunAttachmentBlocks: jest.fn().mockResolvedValue([]) }))
 jest.mock('@aws-sdk/client-s3', () => ({
   S3Client: jest.fn().mockImplementation(() => ({ send: jest.fn().mockResolvedValue({}) })),
@@ -32,6 +33,7 @@ const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 const mockProjectFiles = projectFiles as jest.Mocked<typeof projectFiles>
 const mockResolveRunAttachmentBlocks = jest.requireMock('../../src/research/attachments').resolveRunAttachmentBlocks as jest.Mock
+const mockResolveRunProjectContext = jest.requireMock('../../src/research/context').resolveRunProjectContext as jest.Mock
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -88,6 +90,19 @@ test('report handler — includes findings and gaps in the prompt sent to the mo
   expect(userText).toContain('X originated in Y.')
   expect(userText).toContain('https://example.com')
   expect(userText).toContain('Did not verify the exact date')
+})
+
+test('report handler — includes the project file snapshot when the chat is in a project', async () => {
+  mockResolveRunProjectContext.mockResolvedValue('Always-included project files (full content):\n\n--- spec.md ---\nThe spec text.')
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#chat-1', activeLeafId: 'leaf-9' })
+  mockBedrock.converseOnce.mockResolvedValue('answer')
+
+  await handler(BASE_INPUT)
+
+  const [, , messages] = mockBedrock.converseOnce.mock.calls[0]
+  const userText = (messages[0].content[0] as { text: string }).text
+  expect(userText).toContain('PROJECT FILES:\nAlways-included project files (full content):\n\n--- spec.md ---\nThe spec text.')
+  expect(userText.indexOf('PROJECT FILES:')).toBeLessThan(userText.indexOf('QUESTION:'))
 })
 
 test('report handler — prepends the question\'s attachment blocks ahead of the text block', async () => {
