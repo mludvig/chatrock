@@ -4,7 +4,7 @@ import { safeParse } from '../lib/enrichment'
 import { newId } from '../lib/ids'
 import { notifyPhase } from './progress'
 import { resolveRunModel } from './model'
-import { resolveRunContext } from './context'
+import { resolveRunContext, resolveRunProjectContext } from './context'
 import { resolveRunAttachmentBlocks } from './attachments'
 import RESEARCH_PLAN_SYSTEM_PROMPT from '../../prompts/research-plan.txt'
 
@@ -37,8 +37,14 @@ export const handler = async (event: PlanInput): Promise<PlanResult> => {
   // that would otherwise become clarifying questions, and writes what it learned into the
   // sub-questions themselves, since a researcher has no user context of its own.
   // See docs/adr/0033-research-runs-see-the-users-memory.md.
-  const context = await resolveRunContext(event)
-  const preamble = context ? [`ABOUT THE USER:`, context, ``] : []
+  const [context, projectContext] = await Promise.all([
+    resolveRunContext(event),
+    resolveRunProjectContext(event),
+  ])
+  const preamble = [
+    ...(context ? [`ABOUT THE USER:`, context, ``] : []),
+    ...(projectContext ? [`PROJECT FILES:`, projectContext, ``] : []),
+  ]
 
   const userMsg = [...preamble, ...(event.priorPlan
     ? [

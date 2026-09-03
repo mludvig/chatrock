@@ -10,6 +10,7 @@ import { notifyConnection } from '../lib/wsNotify'
 import { notifyPhase } from './progress'
 import { linkifyReportCitations } from './citations'
 import { resolveRunModel } from './model'
+import { resolveRunProjectContext } from './context'
 import { resolveRunAttachmentBlocks } from './attachments'
 import { v4 as uuidv4 } from 'uuid'
 import RESEARCH_REPORT_SYSTEM_PROMPT from '../../prompts/research-report.txt'
@@ -25,7 +26,12 @@ export const handler = async (event: ReportInput): Promise<ReportResult> => {
   console.log(JSON.stringify({ event: 'research_report_start', runId: event.runId, chatId: event.chatId }))
   await notifyPhase(event, 'reporting')
 
+  // Same project-file manifest/forced-file snapshot the planner sees, so the write-up can
+  // draw on force-included file content. See docs/adr/0038-research-runs-see-project-files.md.
+  const projectContext = await resolveRunProjectContext(event)
+
   const userMsg = [
+    ...(projectContext ? [`PROJECT FILES:`, projectContext, ``] : []),
     `QUESTION: ${event.question}`,
     ``,
     `FINDINGS:`,

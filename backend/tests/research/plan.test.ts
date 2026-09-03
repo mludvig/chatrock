@@ -3,11 +3,12 @@ import * as bedrock from '../../src/lib/bedrock'
 
 jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/research/model', () => ({ resolveRunModel: jest.fn().mockResolvedValue('test-model') }))
-jest.mock('../../src/research/context', () => ({ resolveRunContext: jest.fn() }))
+jest.mock('../../src/research/context', () => ({ resolveRunContext: jest.fn(), resolveRunProjectContext: jest.fn() }))
 jest.mock('../../src/research/attachments', () => ({ resolveRunAttachmentBlocks: jest.fn().mockResolvedValue([]) }))
 
 const mockBedrock = bedrock as jest.Mocked<typeof bedrock>
 const mockResolveRunContext = jest.requireMock('../../src/research/context').resolveRunContext as jest.Mock
+const mockResolveRunProjectContext = jest.requireMock('../../src/research/context').resolveRunProjectContext as jest.Mock
 const mockResolveRunAttachmentBlocks = jest.requireMock('../../src/research/attachments').resolveRunAttachmentBlocks as jest.Mock
 
 const sentUserMsg = () => (mockBedrock.converseOnce.mock.calls[0][2][0].content[0] as { text: string }).text
@@ -109,6 +110,19 @@ test('plan handler — no context block when the run has none', async () => {
   await handler(BASE_INPUT)
 
   expect(sentUserMsg().startsWith('QUESTION: what is X')).toBe(true)
+})
+
+test('plan handler — prepends the project file snapshot so a sub-question can reference a file', async () => {
+  mockResolveRunProjectContext.mockResolvedValue('Project files (labels only...):\n- [f1] spec.md — the spec')
+  mockBedrock.converseOnce.mockResolvedValue(JSON.stringify({
+    clarifyingQuestions: [], subQuestions: [{ id: 'sq1', question: 'What does spec.md say about X?' }],
+  }))
+
+  await handler(BASE_INPUT)
+
+  const userMsg = sentUserMsg()
+  expect(userMsg).toContain('PROJECT FILES:\nProject files (labels only...):\n- [f1] spec.md — the spec')
+  expect(userMsg.indexOf('PROJECT FILES:')).toBeLessThan(userMsg.indexOf('QUESTION:'))
 })
 
 test('plan handler — prepends the question\'s attachment blocks ahead of the text block', async () => {
