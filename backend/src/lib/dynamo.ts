@@ -106,7 +106,7 @@ export async function setChatStreaming(sub: string, chatId: string, responseId: 
     Key: buildChatKey(sub, chatId),
     UpdateExpression: deadlineAt !== undefined
       ? 'SET streamingSince = :s, streamingResponseId = :r, streamingDeadlineAt = :d'
-      : 'SET streamingSince = :s, streamingResponseId = :r',
+      : 'SET streamingSince = :s, streamingResponseId = :r REMOVE streamingDeadlineAt',
     ExpressionAttributeValues: deadlineAt !== undefined
       ? { ':s': new Date().toISOString(), ':r': responseId, ':d': deadlineAt }
       : { ':s': new Date().toISOString(), ':r': responseId },
