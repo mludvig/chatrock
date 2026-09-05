@@ -98,13 +98,10 @@ export default function PreferencesPanel() {
 
         <EffortRow
           label="Research depth"
-          // 'deep' (Deep Research) isn't routed yet — Phase 3. EffortRow has no per-option
-          // disabled state, so it's simply left out of the default picker until then,
-          // matching the composer/ToolsPanel pickers where it's shown but disabled.
-          options={RESEARCH_DEPTHS.filter(d => d !== 'deep')}
+          options={RESEARCH_DEPTHS}
           value={prefs.researchDepth ?? 'brief'}
           onChange={v => patch({ researchDepth: v })}
-          format={d => d === 'brief' ? 'Brief' : 'Extended'}
+          format={d => d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep'}
           title="How many tool rounds the model budgets for research before it must answer. Brief is the default. See docs/adr/0020-research-depth-and-budget-pacing.md."
         />
 

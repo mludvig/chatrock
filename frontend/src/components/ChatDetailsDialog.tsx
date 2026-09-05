@@ -8,7 +8,6 @@ import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
 import ModelTuningPanel from './ModelTuningPanel'
 import ShareTab from './ShareTab'
-import ResearchInfoSection from './ResearchInfoSection'
 import SaveIndicator from './SaveIndicator'
 
 // Item-scoped settings dialog — see docs/adr/0009-consolidate-item-scoped-settings-into-one-dialog.md.
@@ -132,8 +131,6 @@ export default function ChatDetailsDialog({
               </div>
             )}
           </div>
-
-          {chat?.hasResearch && <ResearchInfoSection chatId={chat.chatId} />}
         </div>
       ) : (
         <div className="prefs-tab-content">

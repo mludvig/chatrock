@@ -42,9 +42,6 @@ export interface Chat {
   sensitive?: boolean
   ephemeral?: boolean
   expiresAt?: string
-  // Set once a Deep Research run in this chat completes — its findings live on the run row,
-  // reachable from the chat itself. See docs/adr/0031-deep-research-is-not-a-project.md.
-  hasResearch?: boolean
   // Present exactly once, the first time this chat is read after its stored model was
   // retired from config/models.ts — the backend already swapped `model` to the current
   // default and persisted it; this is only here so the UI can show a one-time notice.
@@ -149,22 +146,6 @@ export interface ModelSettings {
 
 export const RESEARCH_DEPTHS = ['brief', 'extended', 'deep'] as const
 export type ResearchDepth = typeof RESEARCH_DEPTHS[number]
-
-// GET /api/chats/{chatId}/research — re-sync shape for an active or most-recently-finished
-// Deep Research run; see backend/src/research/CLAUDE.md's "Progress frames and reconnect".
-export interface ResearchRun {
-  runId: string
-  status: 'recon' | 'planning' | 'awaiting_approval' | 'running' | 'done' | 'failed'
-  question: string
-  plan: { subQuestions: { id: string; question: string }[]; clarifyingQuestions: string[] } | null
-  findings: { subQuestionId: string; summary: string; sourceUrls: string[] }[]
-  gapsNotPursued: string[]
-  roundsSpent: number
-  reportText: string | null
-  // Set only for status 'failed' (backend/src/research/fail.ts) — the re-sync path's copy
-  // of what the research_failed frame carried, for a client that missed the frame.
-  failureReason: string | null
-}
 
 export interface UserMemory {
   memId: string
@@ -297,15 +278,11 @@ export const api = {
     const qs = params.toString()
     // `streaming`: the backend is generating an answer for this chat right now, possibly for
     // a connection that is no longer ours — what ChatView polls on after a dropped socket.
-    return req<{ bubbles: Message[]; conversationUsage: TokenUsage; hasMore: boolean; oldestMsgId: string | null; streaming: boolean }>(
+    // `streamingDeadlineAt`: present only while a deep turn is streaming — drives the countdown.
+    return req<{ bubbles: Message[]; conversationUsage: TokenUsage; hasMore: boolean; oldestMsgId: string | null; streaming: boolean; streamingDeadlineAt?: number }>(
       'GET', `/api/chats/${chatId}/messages${qs ? `?${qs}` : ''}`)
   },
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),
-  getResearchRun: (chatId: string) => req<{ run: ResearchRun | null }>('GET', `/api/chats/${chatId}/research`),
-  // ?dossier=1 asks the backend to render the full markdown record alongside the run — the
-  // same document a project chat's dossier file holds, for the download button.
-  getResearchDossier: (chatId: string) =>
-    req<{ run: ResearchRun | null; dossierMarkdown?: string }>('GET', `/api/chats/${chatId}/research?dossier=1`),
   listModels: ()                       => req<{ models: Model[] }>('GET', '/api/models'),
   retitleChat: (chatId: string)        => req<{ title: string }>('POST', `/api/chats/${chatId}/retitle`),
   resummarizeChat: (chatId: string)    => req<{ summary: string; topics: string[] }>('POST', `/api/chats/${chatId}/resummarize`),

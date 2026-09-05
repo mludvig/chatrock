@@ -1689,6 +1689,18 @@ $header-h: 45px;
   .tool-chevron { flex-shrink: 0; color: $muted; font-size: 11px; }
 }
 
+// Latest narration line from a run_research_task sub-agent — see StepBlocks.tsx.
+.tool-pill-progress {
+  padding: 0 10px 7px 31px;  // aligns under .tool-label, past the icon
+  background: $surface2;
+  color: $muted;
+  font-size: 12px;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tool-result-body {
   padding: 10px 12px;
   background: $surface;
