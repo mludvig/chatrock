@@ -219,16 +219,6 @@ resource "aws_apigatewayv2_route" "chat_export" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
 }
 
-# Re-sync for a client that reconnects mid-run or missed a WS progress frame — see
-# backend/src/research/CLAUDE.md's "Progress frames and reconnect".
-resource "aws_apigatewayv2_route" "chat_research" {
-  api_id             = aws_apigatewayv2_api.http.id
-  route_key          = "GET /api/chats/{chatId}/research"
-  target             = "integrations/${aws_apigatewayv2_integration.http_chats.id}"
-  authorization_type = "JWT"
-  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
-}
-
 # Public, unauthenticated share renderer — the unguessable ULID shareId is itself the
 # capability (see backend/CLAUDE.md "Chat sharing"), so this route deliberately has NO
 # authorizer, unlike every other /api/* route above. Matches /s/{shareId} including a

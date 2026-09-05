@@ -90,27 +90,3 @@ resource "aws_apigatewayv2_route" "ws_cancel" {
   route_key = "cancelMessage"
   target    = "integrations/${aws_apigatewayv2_integration.ws_cancel.id}"
 }
-
-resource "aws_apigatewayv2_integration" "ws_research_approve" {
-  api_id           = aws_apigatewayv2_api.ws.id
-  integration_type = "AWS_PROXY"
-  integration_uri  = aws_lambda_function.ws_research_approve.invoke_arn
-}
-
-resource "aws_apigatewayv2_route" "ws_research_approve" {
-  api_id    = aws_apigatewayv2_api.ws.id
-  route_key = "researchApprove"
-  target    = "integrations/${aws_apigatewayv2_integration.ws_research_approve.id}"
-}
-
-resource "aws_apigatewayv2_integration" "ws_start_research" {
-  api_id           = aws_apigatewayv2_api.ws.id
-  integration_type = "AWS_PROXY"
-  integration_uri  = aws_lambda_function.ws_start_research.invoke_arn
-}
-
-resource "aws_apigatewayv2_route" "ws_start_research" {
-  api_id    = aws_apigatewayv2_api.ws.id
-  route_key = "startResearch"
-  target    = "integrations/${aws_apigatewayv2_integration.ws_start_research.id}"
-}

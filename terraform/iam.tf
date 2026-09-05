@@ -122,21 +122,6 @@ data "aws_iam_policy_document" "lambda_policy" {
     resources = [aws_sqs_queue.chat_cleanup_dlq.arn]
   }
 
-  # Deep Research (terraform/research.tf): starting a run and resolving its approval-gate
-  # task token. SendTaskSuccess/Failure/Heartbeat aren't resource-scoped by AWS — the
-  # target execution is identified by the token itself, not an ARN.
-  statement {
-    sid       = "StartResearchExecution"
-    actions   = ["states:StartExecution", "states:DescribeExecution", "states:StopExecution"]
-    resources = [aws_sfn_state_machine.research.arn, "${replace(aws_sfn_state_machine.research.arn, ":stateMachine:", ":execution:")}*"]
-  }
-
-  statement {
-    sid       = "ResearchTaskToken"
-    actions   = ["states:SendTaskSuccess", "states:SendTaskFailure", "states:SendTaskHeartbeat"]
-    resources = ["*"]
-  }
-
   statement {
     actions = ["ssm:GetParameter"]
     resources = [
