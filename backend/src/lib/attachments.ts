@@ -173,8 +173,9 @@ export interface AttachmentMeta {
   mode?: 'standard' | 'rich'
 }
 
-// Shared by ws/sendMessage.ts (normal sends) and ws/startResearch.ts (Deep Research) so the
-// two entry points can't drift on block ordering or the attachment-only-send rule.
+// Used by ws/sendMessage.ts so every send (including a Deep-depth turn, which is an
+// ordinary send — docs/adr/0039) goes through the same block-ordering and
+// attachment-only-send rule.
 export function buildUserBlocks(content: string | undefined, attachments: AttachmentMeta[], tsBlock?: Block): Block[] {
   const attachBlocks: Block[] = attachments.map(a => attachmentBlock(a))
   const prefix: Block[] = tsBlock ? [tsBlock] : []
