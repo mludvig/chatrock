@@ -6,9 +6,10 @@ network hours later. Every outage this app has had in that area came back to the
 handful of mistakes. This note is the general rule behind them, so the next real-time
 feature starts from the conclusion rather than rediscovering it.
 
-The decisions themselves live in `docs/adr/` — 0021 (reconnect and refocus catch-up), 0022
-(per-chat stream identity), 0027 (research progress frames), 0036 (token read at connect),
-0037 (catch-up is a refetch). This is the reasoning they share.
+The decisions themselves live in `docs/adr/` — 0021 (reconnect and refocus catch-up), 0036
+(token read at connect), 0037 (catch-up is a refetch), 0039 (deep research as a sub-agent
+tool, live-only progress narration), 0040 (concurrent per-chat streaming, superseding 0022's
+per-chat stream identity fix). This is the reasoning they share.
 
 ## The premise
 
@@ -59,21 +60,23 @@ up until the push fails.
 
 - "A turn is running" existed only as a live stream → the chat row now carries
   `streamingSince`, exposed as `streaming` on `GET /messages`, and the client polls it.
-- "Your research run finished" existed only as a `research_done` frame → the `RUN#` row is
-  the source of truth and refocus re-reads it.
-- **Still open:** research plan approval travels only over the WebSocket (`researchApprove`).
-  A run parked at `AwaitApproval` with a dead socket cannot be approved, even though its
-  Step Functions task token is valid indefinitely. This wants an HTTP route.
+- `sub_agent_progress` (a deep-research sub-agent's live narration, docs/adr/0039) is the one
+  frame type deliberately exempt from this rule: dropping it costs nothing, because the
+  sub-agent's actual finding is persisted as that tool call's own `tool_result`, which the
+  frame is narrating but never the only record of.
 
 The test for a new frame type: if this frame is dropped, can the client ever find out what
-it said? If the only answer is "the user reloads and hopes", there is a missing pull path.
+it said? If the only answer is "the user reloads and hopes", there is a missing pull path —
+unless, as with `sub_agent_progress`, the frame is pure narration and the underlying fact is
+already covered by another rule.
 
 ### 5. A liveness marker written by a process that can be killed needs an expiry
 
 `streamingSince` is cleared on every exit `ws/sendMessage.ts` can reach — errored,
-cancelled, normal — but a Lambda killed at its 600 s ceiling clears nothing. So readers
-treat a marker older than 11 minutes as debris (`STREAM_STALE_MS` in `http/messages.ts`)
-rather than a live turn. Without that, one killed Lambda leaves a chat polling forever.
+cancelled, normal — but a Lambda killed at its 900 s ceiling (`docs/adr/0039` raised this
+from 600 s for deep-research's parallel sub-agent fan-out) clears nothing. So readers treat
+a marker older than 16 minutes as debris (`STREAM_STALE_MS` in `http/messages.ts`) rather
+than a live turn. Without that, one killed Lambda leaves a chat polling forever.
 
 Any flag meaning "something is happening right now" needs a defined answer to "what if the
 writer dies between setting and clearing it".

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by `0039-deep-research-as-a-sub-agent-tool.md`.
 
 ## Context
 

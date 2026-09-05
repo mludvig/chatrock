@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Superseded by `0040-concurrent-per-chat-streaming.md` — the "not concurrent multi-chat
+streaming" restriction below is lifted there.
 
 ## Context
 

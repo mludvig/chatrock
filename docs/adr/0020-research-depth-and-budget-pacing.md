@@ -20,13 +20,20 @@ number in a `for` loop; it's Deep Research, a separate durable multi-agent mode 
 separately, not built yet). This ADR covers only the single-turn loop: two depth tiers
 plus the pacing and recovery machinery around them.
 
+**Update (`0039-deep-research-as-a-sub-agent-tool.md`)**: Deep Research shipped as a third
+tier of this same loop rather than a separate durable mode — `'deep'` unlocks the
+`run_research_task` sub-agent tool and gets its own wider `ROUND_BUDGETS` entry, still
+subject to the pacing/recovery machinery described below.
+
 ## Decision
 
 - **Two tiers today, a third reserved**: `researchDepth: 'brief' | 'extended' | 'deep'` on
   `ModelSettings`/`UserPreferences`, layered user → project → chat like every other
   setting. `ROUND_BUDGETS = { brief: 3, extended: 8 }` in `loop.ts`. `'deep'` is accepted
   by the type from the start (so the composer/settings UI shape doesn't change again when
-  Deep Research lands) but is treated as `extended` until that mode exists.
+  Deep Research lands) but is treated as `extended` until that mode exists. (Superseded:
+  `'deep'` now has its own `ROUND_BUDGETS` entry and unlocks `run_research_task` — see
+  `0039-deep-research-as-a-sub-agent-tool.md`.)
 - **Brief is the default**, not a middle "Standard" tier. Most questions don't need eight
   rounds; the cost of guessing low is one click ("Go deeper"), while guessing high wastes
   rounds and latency on every trivial lookup. Naming the middle tier "Extended" rather
@@ -67,4 +74,5 @@ plus the pacing and recovery machinery around them.
   the model said or the user should read as conversation.
 - `'deep'` selecting silently behaves as `'extended'` until Deep Research ships; the
   composer picker and both settings-default pickers show it but keep it disabled so the
-  gap is visible rather than a silent no-op.
+  gap is visible rather than a silent no-op. (Superseded: `'deep'` is now a real, selectable
+  tier — see `0039-deep-research-as-a-sub-agent-tool.md`.)

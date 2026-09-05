@@ -21,9 +21,9 @@ Why per-send controls were moved out of the chat header: `docs/adr/0028-composer
 ```
 frontend/src/
   api/http.ts             — REST client; types: Model/ModelCapabilities/ModelSettings/UserPreferences/UserMemory/Project/ProjectMemory/ProjectFile; migrateSettings(); requestUpload/uploadToS3; project + file API methods
-  api/ws.ts               — WebSocket client (connect/send/cancelMessage/event routing); routes 'warning' frame → error toast
+  api/ws.ts               — WebSocket client (connect/send/cancelMessage/event routing); every frame carries chatId so a client tracking multiple in-flight chats can route it (docs/adr/0040); routes 'warning' frame → error toast
                             Takes a token provider (set by App.tsx) and reads a token per connect/reconnect, so a reconnect after a long sleep renews rather than replaying an expired one — docs/adr/0036-websocket-reads-the-token-late.md. Connection states: open | connecting | closed | unauthorized (retries given up on; ChatView offers reconnectNow()).
-  store/chatStore.ts      — Zustand store; persists lastModel, sidebarWidth, activePanel, userPreferences, models; projects[] slice
+  store/chatStore.ts      — Zustand store; persists lastModel, sidebarWidth, activePanel, userPreferences, models; projects[] slice; sendingByChat/streamingByChat are keyed per chatId, not global (docs/adr/0040)
   lib/viewportHeight.ts   — keeps --app-h in sync with visualViewport so a mobile keyboard can't push the chrome off-screen
   lib/toolResults.ts      — shared helpers: parses web_search JSON into SearchResult[], and search_history JSON into SearchHistoryResult[], for cards
   lib/useAsyncAction.ts   — hook: wraps async fn → {run, pending}; errors auto-push to toast store
@@ -41,12 +41,10 @@ frontend/src/
     PrefControls.tsx       — ToggleRow / EffortRow — shared row primitives used by PreferencesPanel, ChatDetailsDialog, ProjectDetailsDialog so a toggle looks identical everywhere
     ChatDetailsDialog.tsx  — two tabs on a saved chat (Settings, default open; Info — title/summary/topics), no tabs on a /c/new draft (Info has nothing to show pre-send); same component either way (see below)
     ProjectDetailsDialog.tsx — description, instructions, project memory toggle, default model, ToolsPanel, ModelTuningPanel
-    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; header cog opens ChatDetailsDialog; model/depth/project/"Private" live in the composer toolbar (see "Where a control lives")/tint/footer
+    ChatView.tsx           — main chat pane, URL-driven (/c/new or /c/:chatId); project chip in header when chat belongs to a project; header cog opens ChatDetailsDialog; model/depth/project/"Private" live in the composer toolbar (see "Where a control lives")/tint/footer; streaming state (sending/idle/ack timers, deadline countdown banner) is keyed per chatId so a deep-research turn can keep running in the background while another chat is viewed (docs/adr/0040)
     ToolsPanel.tsx          — what the model may call out to: web search, browser core/extended, memory, search history, inject-timestamp (all always shown, none capability-gated)
     ModelTuningPanel.tsx    — how the model reasons/writes: answer length, thinking effort (capability-gated), temperature (capability-gated). No Top P control — dropped as rarely-worth-tuning clutter.
-    StepBlocks.tsx         — ThinkingBlock / ToolCallPill (+ search-result cards, sanitizeUrl): how one step of a turn renders. Shared by MessageBubble and ResearchPanel so Deep Research progress looks identical to any other tool use
-    ResearchPanel.tsx      — Deep Research plan-approval gate + live progress (recon steps, per-researcher step lists, findings, phase status line). Approval is one "Approve & start" button; feedback and answers to clarifying questions go through the main composer, and the plan itself is a persisted assistant turn rather than panel content. The panel stays mounted in a `done` state once the report lands, listing every wave's researchers (docs/adr/0032)
-    ResearchInfoSection.tsx — ChatDetailsDialog Info-tab section for a chat with a completed run: question, counts, and a markdown dossier download (docs/adr/0031-deep-research-is-not-a-project.md)
+    StepBlocks.tsx         — ThinkingBlock / ToolCallPill (+ search-result cards, sanitizeUrl): how one step of a turn renders, including `run_research_task` calls and their live `sub_agent_progress` text (docs/adr/0039)
     MessageBubble.tsx      — markdown + syntax-highlighted code blocks (PrismLight) with copy button; thinking, tool pills, per-message metadata; sibling nav, re-run, edit, fork, copy, delete actions
     Toaster.tsx            — stacked toast notifications (bottom-center), auto-dismiss 3s
   env.ts                  — VITE_* env var access

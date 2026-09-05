@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Supersedes `0026-plan-approval-single-button.md`.
+Superseded by `0039-deep-research-as-a-sub-agent-tool.md`. Supersedes `0026-plan-approval-single-button.md`.
 
 ## Context
 
