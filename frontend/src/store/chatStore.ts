@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
-import type { MemoryUpdateItem, ResearchPhase } from '../api/ws'
+import type { MemoryUpdateItem } from '../api/ws'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
 
@@ -56,54 +56,16 @@ export interface PendingSearch {
   projectId?: string
 }
 
-// Ephemeral (not persisted, see partialize below) live state for a chat's active Deep
-// Research run — mirrors backend/src/research/CLAUDE.md's WS progress frames. Hydrated
-// either from a `startResearch` response or `api.getResearchRun` on chat load/reconnect,
-// then updated in place as `research_*` WS frames arrive. Cleared on `research_done`.
-export interface ResearchPlan {
-  subQuestions: { id: string; question: string }[]
-  clarifyingQuestions: string[]
-}
-export interface ResearchFinding {
-  subQuestionId: string
-  summary: string
-  sourceUrls: string[]
-}
-export interface ActiveResearch {
-  runId: string
-  status: 'recon' | 'planning' | 'awaiting_approval' | 'running' | 'done' | 'failed'
-  question: string
-  plan: ResearchPlan | null
-  waveSubQuestions: { id: string; question: string }[]
-  findings: ResearchFinding[]
-  findingCount: number
-  done: boolean
-  // Live progress (research_phase / research_step frames). Ephemeral like the rest of this
-  // slice, and unlike the rest it isn't restored by `api.getResearchRun` — the backend
-  // never persists steps, so a client that reconnects mid-run picks progress back up from
-  // the next frame rather than replaying pills it already missed.
-  phase: ResearchPhase | null
-  // Why the run stopped, for status 'failed' — from the research_failed frame or, if that
-  // frame was missed, from the RUN# row on re-sync. Null for every other status.
-  failureReason: string | null
-  // Recon runs before any sub-question exists, so its steps can't be keyed by one.
-  reconSteps: Step[]
-  stepsBySubQuestion: Record<string, Step[]>
-}
-
-// The live-progress half of ActiveResearch, which every construction site starts empty —
-// nothing hydrates it, since steps are never persisted server-side.
-export const initialResearchProgress = (): Pick<ActiveResearch, 'phase' | 'reconSteps' | 'stepsBySubQuestion'> =>
-  ({ phase: null, reconSteps: [], stepsBySubQuestion: {} })
-
 interface ChatState {
   chats: Chat[]
   activeChatId: string | null
   messages: Message[]
-  streamingMsg: StreamingMsg | null
+  // Keyed by chatId so more than one chat can stream at once (B3) — see
+  // docs/adr/0040-concurrent-per-chat-streaming.md.
+  streamingByChat: Record<string, StreamingMsg>
   models: Model[]
   loading: boolean
-  sending: boolean
+  sendingByChat: Record<string, boolean>
   lastModel: string
   sidebarWidth: number
   activePanel: ActivePanel
@@ -123,31 +85,31 @@ interface ChatState {
   setMessages: (messages: Message[]) => void
   pushToast: (toast: Omit<Toast, 'id'>) => void
   dismissToast: (id: number) => void
-  startStream: () => void
+  startStream: (chatId: string) => void
   /** Append text to the last text step; create a new text step if needed */
-  appendDelta: (text: string) => void
+  appendDelta: (chatId: string, text: string) => void
   /** Append text to the last thinking step; create a new thinking step if needed */
-  appendThinkingDelta: (text: string) => void
+  appendThinkingDelta: (chatId: string, text: string) => void
   /** Mark the current thinking step as done (subsequent deltas start a new step) */
-  markThinkingDone: () => void
+  markThinkingDone: (chatId: string) => void
   /** Push a new pending tool step */
-  addToolCall: (tc: { toolUseId: string; name: string; input: string }) => void
+  addToolCall: (chatId: string, tc: { toolUseId: string; name: string; input: string }) => void
   /** Set the JSON input on a tool step */
-  updateToolCallInput: (toolUseId: string, input: string) => void
+  updateToolCallInput: (chatId: string, toolUseId: string, input: string) => void
   /** Attach tool result to the matching tool step */
-  resolveToolCall: (toolUseId: string, result: string, isError: boolean, screenshotUrls?: string[]) => void
+  resolveToolCall: (chatId: string, toolUseId: string, result: string, isError: boolean, screenshotUrls?: string[]) => void
   /** Set live usage stats from the 'usage' WS event */
-  setStreamUsage: (usage: TokenUsage) => void
+  setStreamUsage: (chatId: string, usage: TokenUsage) => void
   /** Toggle idle indicator — churn-free: no-op when value unchanged */
-  setStreamIdle: (idle: boolean) => void
-  /** Move streamingMsg to messages[] as a DisplayBubble */
-  finalizeStream: () => void
-  /** Move streamingMsg to messages[] tagged as errored (partial answer from a stream error) */
-  finalizeStreamErrored: () => void
-  clearStream: () => void
+  setStreamIdle: (chatId: string, idle: boolean) => void
+  /** Pop streamingByChat[chatId] into a finalized Message, or undefined if there was none */
+  finalizeStream: (chatId: string) => Message | undefined
+  /** Same as finalizeStream but tags the result as errored (partial answer from a stream error) */
+  finalizeStreamErrored: (chatId: string) => Message | undefined
+  clearStream: (chatId: string) => void
   setModels: (models: Model[]) => void
   setLoading: (v: boolean) => void
-  setSending: (v: boolean) => void
+  setSending: (chatId: string, v: boolean) => void
   setLastModel: (modelId: string) => void
   setSidebarWidth: (w: number) => void
   setActivePanel: (panel: ActivePanel) => void
@@ -185,12 +147,6 @@ interface ChatState {
   getMessagesCache: (chatId: string) => CachedChatMessages | undefined
   setMessagesCache: (chatId: string, data: CachedChatMessages) => void
   invalidateMessagesCache: (chatId: string) => void
-
-  activeResearch: Record<string, ActiveResearch>
-  setActiveResearch: (chatId: string, run: ActiveResearch | null) => void
-  patchActiveResearch: (chatId: string, patch: Partial<ActiveResearch>) => void
-  addResearchFinding: (chatId: string, finding: ResearchFinding) => void
-  addResearchStep: (chatId: string, step: Step, subQuestionId?: string) => void
 }
 
 // ── Internal step-mutation helpers (pure, no React state) ─────────────────────
@@ -237,10 +193,10 @@ export const useChatStore = create<ChatState>()(
       chats: [],
       activeChatId: null,
       messages: [],
-      streamingMsg: null,
+      streamingByChat: {},
       models: [],
       loading: false,
-      sending: false,
+      sendingByChat: {},
       lastModel: '',
       sidebarWidth: 260,
       activePanel: 'chats',
@@ -258,7 +214,6 @@ export const useChatStore = create<ChatState>()(
       pendingSearch: null,
       messagesCache: {},
       cacheOrder: [],
-      activeResearch: {},
 
       setChats: (chats) => set({ chats }),
       addChat: (chat) => set((s) => ({ chats: [chat, ...s.chats] })),
@@ -270,13 +225,19 @@ export const useChatStore = create<ChatState>()(
       })),
       removeChat: (chatId) => set((s) => {
         const { [chatId]: _removed, ...messagesCache } = s.messagesCache
+        const { [chatId]: _removedStream, ...streamingByChat } = s.streamingByChat
+        const { [chatId]: _removedSending, ...sendingByChat } = s.sendingByChat
         void _removed
+        void _removedStream
+        void _removedSending
         return {
           chats: s.chats.filter(c => c.chatId !== chatId),
           activeChatId: s.activeChatId === chatId ? null : s.activeChatId,
           messages: s.activeChatId === chatId ? [] : s.messages,
           messagesCache,
           cacheOrder: s.cacheOrder.filter(id => id !== chatId),
+          streamingByChat,
+          sendingByChat,
         }
       }),
       renameChat: (chatId, title) => set((s) => ({
@@ -285,162 +246,197 @@ export const useChatStore = create<ChatState>()(
       updateChatSystemPrompt: (chatId, systemPrompt) => set((s) => ({
         chats: s.chats.map(c => c.chatId === chatId ? { ...c, systemPrompt } : c),
       })),
-      setActiveChat: (chatId) => set({ activeChatId: chatId, messages: [], streamingMsg: null }),
+      setActiveChat: (chatId) => set({ activeChatId: chatId, messages: [] }),
       setMessages: (messages) => set({ messages }),
 
-      startStream: () => set({
-        streamingMsg: { role: 'assistant', streaming: true, steps: [], waiting: true },
-      }),
+      startStream: (chatId) => set((s) => ({
+        streamingByChat: {
+          ...s.streamingByChat,
+          [chatId]: { role: 'assistant', streaming: true, steps: [], waiting: true },
+        },
+      })),
 
-      appendDelta: (text) => set((s) => {
-        const sm = s.streamingMsg ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
+      appendDelta: (chatId, text) => set((s) => {
+        const sm = s.streamingByChat[chatId] ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
         return {
-          streamingMsg: {
-            ...sm,
-            steps: appendToLastText(sm.steps, text),
-            waiting: false,
-          } as StreamingMsg,
+          streamingByChat: {
+            ...s.streamingByChat,
+            [chatId]: {
+              ...sm,
+              steps: appendToLastText(sm.steps, text),
+              waiting: false,
+            } as StreamingMsg,
+          },
         }
       }),
 
-      appendThinkingDelta: (text) => set((s) => {
-        const sm = s.streamingMsg ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
+      appendThinkingDelta: (chatId, text) => set((s) => {
+        const sm = s.streamingByChat[chatId] ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
         return {
-          streamingMsg: {
-            ...sm,
-            steps: appendToLastThinking(sm.steps, text),
-            waiting: false,
-          } as StreamingMsg,
+          streamingByChat: {
+            ...s.streamingByChat,
+            [chatId]: {
+              ...sm,
+              steps: appendToLastThinking(sm.steps, text),
+              waiting: false,
+            } as StreamingMsg,
+          },
         }
       }),
 
-      markThinkingDone: () => set((s) => {
-        if (!s.streamingMsg) return {}
-        const steps = s.streamingMsg.steps
+      markThinkingDone: (chatId) => set((s) => {
+        const sm = s.streamingByChat[chatId]
+        if (!sm) return {}
+        const steps = sm.steps
         if (steps.length === 0 || steps[steps.length - 1].kind !== 'thinking') return {}
         // Mark the last thinking step as done so subsequent thinking_delta events
         // start a new thinking step (appendToLastThinking checks _done).
         const lastStep = steps[steps.length - 1] as Step & { _done?: boolean }
         return {
-          streamingMsg: {
-            ...s.streamingMsg,
-            steps: [
-              ...steps.slice(0, -1),
-              { ...lastStep, _done: true },
-            ],
-          } as StreamingMsg,
+          streamingByChat: {
+            ...s.streamingByChat,
+            [chatId]: {
+              ...sm,
+              steps: [
+                ...steps.slice(0, -1),
+                { ...lastStep, _done: true },
+              ],
+            },
+          },
         }
       }),
 
-      addToolCall: (tc) => set((s) => {
-        const sm = s.streamingMsg ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
+      addToolCall: (chatId, tc) => set((s) => {
+        const sm = s.streamingByChat[chatId] ?? { role: 'assistant' as const, streaming: true as const, steps: [] }
         const toolStep: Step = { kind: 'tool', toolUseId: tc.toolUseId, name: tc.name, input: tc.input }
         return {
-          streamingMsg: {
-            ...sm,
-            steps: [...sm.steps, toolStep],
-            waiting: false,
-          } as StreamingMsg,
+          streamingByChat: {
+            ...s.streamingByChat,
+            [chatId]: {
+              ...sm,
+              steps: [...sm.steps, toolStep],
+              waiting: false,
+            } as StreamingMsg,
+          },
         }
       }),
 
-      updateToolCallInput: (toolUseId, input) => set((s) => {
-        if (!s.streamingMsg) return {}
+      updateToolCallInput: (chatId, toolUseId, input) => set((s) => {
+        const sm = s.streamingByChat[chatId]
+        if (!sm) return {}
         return {
-          streamingMsg: {
-            ...s.streamingMsg,
-            steps: s.streamingMsg.steps.map(step =>
-              step.kind === 'tool' && step.toolUseId === toolUseId
-                ? { ...step, input }
-                : step
-            ),
-          } as StreamingMsg,
+          streamingByChat: {
+            ...s.streamingByChat,
+            [chatId]: {
+              ...sm,
+              steps: sm.steps.map(step =>
+                step.kind === 'tool' && step.toolUseId === toolUseId
+                  ? { ...step, input }
+                  : step
+              ),
+            },
+          },
         }
       }),
 
-      resolveToolCall: (toolUseId, result, isError, screenshotUrls) => set((s) => {
-        if (!s.streamingMsg) return {}
+      resolveToolCall: (chatId, toolUseId, result, isError, screenshotUrls) => set((s) => {
+        const sm = s.streamingByChat[chatId]
+        if (!sm) return {}
         return {
-          streamingMsg: {
-            ...s.streamingMsg,
-            steps: s.streamingMsg.steps.map(step => {
-              if (step.kind !== 'tool' || step.toolUseId !== toolUseId) return step
-              const searchResults = parseSearchResults(step.name, result, isError)
-              const searchHistoryResults = parseSearchHistoryResults(step.name, result, isError)
-              return { ...step, result, isError, searchResults, searchHistoryResults, screenshotUrls }
-            }),
-          } as StreamingMsg,
+          streamingByChat: {
+            ...s.streamingByChat,
+            [chatId]: {
+              ...sm,
+              steps: sm.steps.map(step => {
+                if (step.kind !== 'tool' || step.toolUseId !== toolUseId) return step
+                const searchResults = parseSearchResults(step.name, result, isError)
+                const searchHistoryResults = parseSearchHistoryResults(step.name, result, isError)
+                return { ...step, result, isError, searchResults, searchHistoryResults, screenshotUrls }
+              }),
+            },
+          },
         }
       }),
 
-      setStreamUsage: (usage) => set((s) => ({
-        streamingMsg: s.streamingMsg
-          ? { ...s.streamingMsg, usage }
-          : null,
-      })),
-
-      setStreamIdle: (idle) => set((s) => {
-        if (!s.streamingMsg || (s.streamingMsg.idle ?? false) === idle) return {}
-        return { streamingMsg: { ...s.streamingMsg, idle } }
+      setStreamUsage: (chatId, usage) => set((s) => {
+        const sm = s.streamingByChat[chatId]
+        if (!sm) return {}
+        return { streamingByChat: { ...s.streamingByChat, [chatId]: { ...sm, usage } } }
       }),
 
-      finalizeStream: () => set((s) => {
-        if (!s.streamingMsg) return {}
+      setStreamIdle: (chatId, idle) => set((s) => {
+        const sm = s.streamingByChat[chatId]
+        if (!sm || (sm.idle ?? false) === idle) return {}
+        return { streamingByChat: { ...s.streamingByChat, [chatId]: { ...sm, idle } } }
+      }),
+
+      finalizeStream: (chatId) => {
+        const sm = get().streamingByChat[chatId]
+        if (!sm) return undefined
         // Strip internal `_done` sentinels from steps before persisting
-        const cleanSteps = s.streamingMsg.steps.map(step => {
+        const cleanSteps = sm.steps.map(step => {
           const { _done, ...rest } = step as Step & { _done?: boolean }
           void _done
           return rest as Step
         })
-        return {
-          messages: [
-            ...s.messages,
-            {
-              msgId: crypto.randomUUID(),
-              role: 'assistant' as const,
-              steps: cleanSteps,
-              model: '',
-              createdAt: new Date().toISOString(),
-              usage: s.streamingMsg.usage,
-            } satisfies Message,
-          ],
-          streamingMsg: null,
+        const msg: Message = {
+          msgId: crypto.randomUUID(),
+          role: 'assistant',
+          steps: cleanSteps,
+          model: '',
+          createdAt: new Date().toISOString(),
+          usage: sm.usage,
         }
-      }),
+        set((s) => {
+          const { [chatId]: _removed, ...streamingByChat } = s.streamingByChat
+          void _removed
+          return { streamingByChat }
+        })
+        return msg
+      },
 
-      finalizeStreamErrored: () => set((s) => {
-        if (!s.streamingMsg) return {}
+      finalizeStreamErrored: (chatId) => {
+        const sm = get().streamingByChat[chatId]
+        if (!sm) return undefined
         // Same as finalizeStream but tags the resulting message as errored so
         // the Continue button can appear on the preserved partial bubble.
-        const cleanSteps = s.streamingMsg.steps.map(step => {
+        const cleanSteps = sm.steps.map(step => {
           const { _done, ...rest } = step as Step & { _done?: boolean }
           void _done
           return rest as Step
         })
-        return {
-          messages: [
-            ...s.messages,
-            {
-              msgId: crypto.randomUUID(),
-              role: 'assistant' as const,
-              steps: cleanSteps,
-              model: '',
-              createdAt: new Date().toISOString(),
-              usage: s.streamingMsg.usage,
-              errored: true,
-            } satisfies Message,
-          ],
-          streamingMsg: null,
+        const msg: Message = {
+          msgId: crypto.randomUUID(),
+          role: 'assistant',
+          steps: cleanSteps,
+          model: '',
+          createdAt: new Date().toISOString(),
+          usage: sm.usage,
+          errored: true,
         }
-      }),
+        set((s) => {
+          const { [chatId]: _removed, ...streamingByChat } = s.streamingByChat
+          void _removed
+          return { streamingByChat }
+        })
+        return msg
+      },
 
       pushToast: (toast) => set((s) => ({ toasts: [...s.toasts, { ...toast, id: ++_toastSeq }] })),
       dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter(t => t.id !== id) })),
 
-      clearStream: () => set({ streamingMsg: null }),
+      clearStream: (chatId) => set((s) => {
+        const { [chatId]: _removed, ...streamingByChat } = s.streamingByChat
+        void _removed
+        return { streamingByChat }
+      }),
       setModels: (models) => set({ models }),
       setLoading: (loading) => set({ loading }),
-      setSending: (sending) => set({ sending }),
+      setSending: (chatId, sending) => set((s) => ({
+        sendingByChat: sending
+          ? { ...s.sendingByChat, [chatId]: true }
+          : Object.fromEntries(Object.entries(s.sendingByChat).filter(([id]) => id !== chatId)),
+      })),
       setLastModel: (lastModel) => set({ lastModel }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
       setActivePanel: (activePanel) => set({ activePanel }),
@@ -493,43 +489,6 @@ export const useChatStore = create<ChatState>()(
         const { [chatId]: _removed, ...messagesCache } = s.messagesCache
         void _removed
         return { messagesCache, cacheOrder: s.cacheOrder.filter(id => id !== chatId) }
-      }),
-
-      setActiveResearch: (chatId, run) => set((s) => {
-        if (run === null) {
-          const { [chatId]: _removed, ...activeResearch } = s.activeResearch
-          void _removed
-          return { activeResearch }
-        }
-        return { activeResearch: { ...s.activeResearch, [chatId]: run } }
-      }),
-      patchActiveResearch: (chatId, patch) => set((s) => {
-        const existing = s.activeResearch[chatId]
-        if (!existing) return {}
-        return { activeResearch: { ...s.activeResearch, [chatId]: { ...existing, ...patch } } }
-      }),
-      addResearchFinding: (chatId, finding) => set((s) => {
-        const existing = s.activeResearch[chatId]
-        if (!existing) return {}
-        return {
-          activeResearch: {
-            ...s.activeResearch,
-            [chatId]: { ...existing, findings: [...existing.findings, finding] },
-          },
-        }
-      }),
-      // A tool step arrives twice — once when the call starts, once with its result — so
-      // it replaces its earlier self by toolUseId rather than appending a duplicate pill.
-      addResearchStep: (chatId, step, subQuestionId) => set((s) => {
-        const existing = s.activeResearch[chatId]
-        if (!existing) return {}
-        const prev = subQuestionId ? (existing.stepsBySubQuestion[subQuestionId] ?? []) : existing.reconSteps
-        const at = step.kind === 'tool' ? prev.findIndex(p => p.kind === 'tool' && p.toolUseId === step.toolUseId) : -1
-        const next = at >= 0 ? prev.map((p, i) => (i === at ? step : p)) : [...prev, step]
-        const patch = subQuestionId
-          ? { stepsBySubQuestion: { ...existing.stepsBySubQuestion, [subQuestionId]: next } }
-          : { reconSteps: next }
-        return { activeResearch: { ...s.activeResearch, [chatId]: { ...existing, ...patch } } }
       }),
     }),
     {

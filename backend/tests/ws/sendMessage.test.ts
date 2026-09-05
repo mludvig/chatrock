@@ -958,7 +958,7 @@ test('ack: emits an ack frame as the first WS frame on a valid send', async () =
 
   const frames = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
   // ack must be the very first frame — and it must precede any content frame
-  expect(frames[0]).toEqual({ type: 'ack' })
+  expect(frames[0]).toEqual({ type: 'ack', chatId: 'c1' })
   const ackIdx = frames.findIndex(f => f.type === 'ack')
   const deltaIdx = frames.findIndex(f => f.type === 'delta')
   expect(ackIdx).toBeLessThan(deltaIdx)

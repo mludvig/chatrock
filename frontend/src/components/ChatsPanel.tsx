@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useMatch } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen, faFolderPlus } from '@fortawesome/free-solid-svg-icons'
+import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen, faFolderPlus, faCircleNotch } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import { useChatActions } from '../lib/useChatActions'
@@ -12,7 +12,7 @@ export default function ChatsPanel() {
   const navigate = useNavigate()
   const match = useMatch('/c/:chatId')
   const activeChatId = match?.params.chatId
-  const { chats, pushToast, projects, addProject, updateChatProjectId } = useChatStore()
+  const { chats, pushToast, projects, addProject, updateChatProjectId, sendingByChat } = useChatStore()
   const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
   const [movingId, setMovingId] = useState<string | null>(null)
   const [creatingProjectFor, setCreatingProjectFor] = useState<string | null>(null)
@@ -97,6 +97,9 @@ export default function ChatsPanel() {
               ) : (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                    {sendingByChat[chat.chatId] && (
+                      <FontAwesomeIcon icon={faCircleNotch} spin title="Generating a response…" style={{ color: '#6b7280', flexShrink: 0 }} />
+                    )}
                     <span className="chat-title">{chat.title}</span>
                     <div className="chat-actions">
                       <button
