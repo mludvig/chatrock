@@ -18,9 +18,6 @@ locals {
     EPHEMERAL_CHAT_TTL_SECONDS          = tostring(var.ephemeral_chat_ttl_seconds)
     BEDROCK_BEARER_TOKEN_SSM            = aws_ssm_parameter.bedrock_bearer_token.name
     BEDROCK_REGION                      = var.bedrock_region != "" ? var.bedrock_region : var.aws_region
-    # Deep Research state-machine handlers (backend/src/lib/wsNotify.ts) have no API Gateway
-    # event of their own to derive a management-API endpoint from, unlike ws/sendMessage.ts.
-    WS_MANAGEMENT_ENDPOINT = "https://${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com/${aws_apigatewayv2_stage.ws.name}"
   }
 }
 
@@ -259,25 +256,6 @@ resource "aws_lambda_function" "ws_cancel_message" {
 resource "aws_lambda_permission" "ws_cancel_apigw" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.ws_cancel_message.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
-}
-
-resource "aws_lambda_function" "ws_research_approve" {
-  function_name    = "chatrock-ws-researchApprove-${var.env}"
-  role             = aws_iam_role.lambda.arn
-  filename         = "${path.module}/dist/ws-researchApprove.zip"
-  source_code_hash = filebase64sha256("${path.module}/dist/ws-researchApprove.zip")
-  handler          = "index.handler"
-  runtime          = local.lambda_runtime
-  timeout          = 10
-  environment { variables = local.lambda_env_base }
-  tags = { Env = var.env }
-}
-
-resource "aws_lambda_permission" "ws_research_approve_apigw" {
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.ws_research_approve.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.ws.execution_arn}/*/*"
 }
