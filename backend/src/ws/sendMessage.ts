@@ -1,5 +1,5 @@
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk/client-apigatewaymanagementapi'
-import type { APIGatewayProxyResultV2 } from 'aws-lambda'
+import type { APIGatewayProxyResultV2, Context } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import type { Block, NeutralMessage } from '../lib/llm/blocks'
@@ -26,10 +26,19 @@ interface WSSendEvent {
 
 type PostFn = (params: { ConnectionId: string; Data: string }) => Promise<void>
 
+// Held back from the Lambda's remaining time for the final synthesis call plus persistence
+// and post-turn enrichment, so a deep turn's wall-clock cutoff always leaves room to write
+// up what it has instead of being killed mid-answer. See docs/adr/0039.
+const RESERVE_MS = 120_000
+
 export const buildHandler = (postFn: PostFn) => async (
   event: WSSendEvent,
+  context?: Context,
 ): Promise<APIGatewayProxyResultV2> => {
   const connId = event.requestContext.connectionId
+  // context is only absent in tests exercising buildHandler directly — a real invocation
+  // (handler(), below) always supplies it. No context ⇒ no wall-clock cutoff.
+  const deadlineAt = context ? Date.now() + context.getRemainingTimeInMillis() - RESERVE_MS : undefined
   const body = JSON.parse(event.body ?? '{}') as {
     chatId: string
     content?: string
@@ -95,7 +104,10 @@ export const buildHandler = (postFn: PostFn) => async (
   // The client arms a short watchdog after sending; receiving any frame (this
   // ack first) proves the WebSocket is live. No ack ⇒ the frame was dropped by
   // a stale connection, and the client recovers instead of hanging on "Processing…".
-  await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'ack' }) })
+  await safePost({ ConnectionId: connId, Data: JSON.stringify({
+    type: 'ack',
+    ...(modelSettings.researchDepth === 'deep' && deadlineAt !== undefined ? { deadlineAt } : {}),
+  }) })
   // If the ack itself 410'd, the client is already gone — no point starting an
   // expensive Bedrock call. Nothing to persist yet either, so return immediately.
   if (connectionGone) return { statusCode: 200, body: '' }
@@ -250,6 +262,7 @@ export const buildHandler = (postFn: PostFn) => async (
     projectManifest,
     forcedFiles: forcedFiles ?? undefined,
     projectReadToolsEnabled: !!projectId,
+    researchDepth: effectiveModelSettings.researchDepth,
   })
 
   // Build tool context for manage_memory / manage_project_memory / read_project_* / browse_web
@@ -263,7 +276,6 @@ export const buildHandler = (postFn: PostFn) => async (
     ...(effectiveModelSettings.webSearchProvider ? { webSearchProvider: effectiveModelSettings.webSearchProvider } : {}),
     ...(search ? { searchScope: search.scope } : {}),
     ...(chat.sensitive ? { sensitive: true } : {}),
-    ...(chat.hasResearch ? { hasResearch: true } : {}),
   }
 
   // Timestamp block: prepended to new user turns when injectCurrentDate is enabled.
@@ -411,7 +423,7 @@ export const buildHandler = (postFn: PostFn) => async (
   // below only ever reach this one connection. Cleared once the loop exits, below.
   // See docs/adr/0037-catching-up-on-a-dropped-stream.md.
   try {
-    await setChatStreaming(sub, chatId, continueResponseId ?? responseId)
+    await setChatStreaming(sub, chatId, continueResponseId ?? responseId, effectiveModelSettings.researchDepth === 'deep' ? deadlineAt : undefined)
   } catch (e) {
     console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
   }
@@ -489,6 +501,7 @@ export const buildHandler = (postFn: PostFn) => async (
       abortSignal: abortController.signal,
       forceToolName: search ? 'search_history' : undefined,
       call: { purpose: 'chat', sub, chatId, projectId: chat?.projectId },
+      deadlineAt,
     })) {
       switch (chunk.type) {
         case 'thinking_delta':
@@ -529,6 +542,14 @@ export const buildHandler = (postFn: PostFn) => async (
           break
         case 'heartbeat':
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'heartbeat' }) })
+          break
+        case 'sub_agent_progress':
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({
+            type: 'sub_agent_progress',
+            toolUseId: chunk.toolUseId,
+            name: chunk.name,
+            text: chunk.text,
+          }) })
           break
         case 'turn': {
           // Backend-only: persist one record per Converse turn (format C, tree-aware)
@@ -804,10 +825,11 @@ export const buildHandler = (postFn: PostFn) => async (
 
 export const handler = async (
   event: WSSendEvent,
+  context: Context,
 ): Promise<APIGatewayProxyResultV2> => {
   const endpoint = `https://${event.requestContext.domainName}/${event.requestContext.stage}`
   const apigwClient = new ApiGatewayManagementApiClient({ endpoint })
   const postFn: PostFn = ({ ConnectionId, Data }) =>
     apigwClient.send(new PostToConnectionCommand({ ConnectionId, Data })).then(() => {})
-  return buildHandler(postFn)(event)
+  return buildHandler(postFn)(event, context)
 }

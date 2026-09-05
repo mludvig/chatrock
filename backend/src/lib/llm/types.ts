@@ -33,6 +33,11 @@ export type StreamChunk =
   // event; carries the same op/category/text detail the tool-pill card already shows, so the
   // toast doesn't have to be a content-free "Memory updated".
   | { type: 'memoryChanged'; scope: 'user' | 'project'; operation: string; category?: string; text?: string }
+  // Narration from an in-flight run_research_task sub-agent, tagged with the PARENT tool
+  // call's toolUseId so the client knows which pill it belongs to. Purely live UI — never
+  // persisted, dropping one costs nothing since the finding itself lands as that tool's own
+  // tool_result. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+  | { type: 'sub_agent_progress'; toolUseId: string; name: string; text: string }
 
 export interface TokenUsage {
   inputTokens: number
@@ -59,11 +64,7 @@ export type LlmPurpose =
   | 'extract_user_facts'
   | 'file_summary'
   | 'search_history'
-  | 'research_plan'
-  | 'research_plan_feedback'
-  | 'research_worker'
-  | 'research_assess'
-  | 'research_report'
+  | 'research_task'
 
 export interface LlmCallContext {
   purpose: LlmPurpose

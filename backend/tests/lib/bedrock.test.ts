@@ -782,10 +782,11 @@ test('ctx: loop threads ctx into executeTool call — 3rd arg is {sub}', async (
     // drain
   }
 
-  // executeTool must have been called with ctx as 3rd argument
+  // executeTool must have been called with ctx as 3rd argument, plus the modelId/onProgress
+  // the tool pool always attaches (see loop.ts's runOneTool).
   expect(mockExecuteTool).toHaveBeenCalledTimes(1)
   const [, , ctxArg] = mockExecuteTool.mock.calls[0]
-  expect(ctxArg).toEqual(toolCtx)
+  expect(ctxArg).toEqual({ ...toolCtx, modelId: 'test-model', onProgress: expect.any(Function) })
 })
 
 test('memoryChanged: manage_memory tool success → memoryChanged chunk yielded', async () => {

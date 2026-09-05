@@ -1,4 +1,5 @@
 import type { UserPreferences } from './preferences'
+import DEEP_RESEARCH_PROMPT from '../../prompts/deep-research.txt'
 
 export interface AssembleInput {
   basePrompt: string          // the chat's systemPrompt (client-supplied)
@@ -19,6 +20,9 @@ export interface AssembleInput {
   forcedFiles?: Array<{ name: string; content: string }>
   // Whether the read_project_file/read_project_chat tools are available
   projectReadToolsEnabled?: boolean
+  // ModelSettings.researchDepth — the deep-research section (below) is added only when this
+  // is 'deep'. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+  researchDepth?: 'brief' | 'extended' | 'deep'
 }
 
 export function assembleSystemPrompt(input: AssembleInput): string {
@@ -110,6 +114,11 @@ export function assembleSystemPrompt(input: AssembleInput): string {
   if (input.forcedFiles && input.forcedFiles.length > 0) {
     const fileBlocks = input.forcedFiles.map(f => `--- ${f.name} ---\n${f.content}`).join('\n\n')
     parts.push(`Always-included project files (full content):\n\n${fileBlocks}`)
+  }
+
+  // 8. Deep research instructions — only for a turn running at researchDepth 'deep'.
+  if (input.researchDepth === 'deep') {
+    parts.push(DEEP_RESEARCH_PROMPT)
   }
 
   return parts.join('\n\n')

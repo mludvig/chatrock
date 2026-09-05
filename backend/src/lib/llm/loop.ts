@@ -14,10 +14,12 @@ export type { StreamChunk, TokenUsage, LlmCallContext, LlmPurpose } from './type
 export { coalesceMessages, healDanglingToolUse } from './sanitize'
 export { bedrockClient } from './providers/bedrockConverse'
 
-// Tool-round budget per research depth. Absent settings.researchDepth -> 'brief'; 'deep'
-// is accepted by the ModelSettings type but not yet routed to a distinct mode (Phase 3),
-// so it currently runs at the 'extended' budget. See docs/adr/0020-research-depth-and-budget-pacing.md.
-export const ROUND_BUDGETS: Record<'brief' | 'extended', number> = { brief: 3, extended: 8 }
+// Tool-round budget per research depth. Absent settings.researchDepth -> 'brief'. 'deep' is
+// the budget a turn runs at when it spawns run_research_task sub-agents (see
+// docs/adr/0039-deep-research-as-a-sub-agent-tool.md) — wider than 'extended' because each
+// round can fan out several parallel researchers rather than doing the work itself.
+// See docs/adr/0020-research-depth-and-budget-pacing.md.
+export const ROUND_BUDGETS: Record<'brief' | 'extended' | 'deep', number> = { brief: 3, extended: 8, deep: 12 }
 export const HEARTBEAT_INTERVAL_MS = 4000
 // Max concurrent tool executions within a single round — see docs/adr/0016-parallel-tool-execution.md.
 const TOOL_CONCURRENCY = 5
@@ -32,6 +34,12 @@ export interface ConverseStreamOptions {
   // `tools` (ctx.searchScope makes buildToolList include SEARCH_HISTORY_TOOL even
   // when searchEnabled:false) or the provider rejects the request.
   forceToolName?: string
+  // Absolute epoch ms past which the round loop stops starting new rounds and falls
+  // straight into the final synthesis call — same fall-through as round-budget exhaustion,
+  // just triggered by wall-clock instead of round count. Set by ws/sendMessage.ts from the
+  // Lambda's own remaining time, minus a reserve for the synthesis call and persistence.
+  // See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+  deadlineAt?: number
   // Required: what this call is for. The wrapper logs it — no call site logs its own
   // token stats. See docs/adr/0029-llm-observability-in-the-wrapper.md.
   call: LlmCallContext
@@ -83,11 +91,11 @@ async function* streamRounds(
   modelId: string,
   systemPrompt: string,
   messages: NeutralMessage[],
-  { settings = {}, ctx, abortSignal, forceToolName }: ConverseStreamOptions,
+  { settings = {}, ctx, abortSignal, forceToolName, deadlineAt }: ConverseStreamOptions,
 ): AsyncGenerator<StreamChunk> {
   const provider = getProvider(modelId)
   const tools = buildToolList(settings, ctx)
-  const maxRounds = ROUND_BUDGETS[settings.researchDepth === 'extended' || settings.researchDepth === 'deep' ? 'extended' : 'brief']
+  const maxRounds = ROUND_BUDGETS[settings.researchDepth ?? 'brief']
 
   // Sanitize the incoming replayed history ONCE per invocation — coalesce/heal plus
   // foreign-opaque filtering are the provider's business (see ChatProvider.sanitizeHistory).
@@ -103,6 +111,9 @@ async function* streamRounds(
 
   for (let round = 0; round < maxRounds; round++) {
     if (abortSignal?.aborted) return
+    // Wall-clock ran out before the round budget did — stop starting new rounds and fall
+    // through to the same final synthesis call round-budget exhaustion reaches below.
+    if (deadlineAt && Date.now() >= deadlineAt) break
     const builtMessages = [...sanitized, ...newMessages]
     // Forced toolChoice applies to round 0 only — by round 1 the tool has already run and
     // the model is narrating/using its result, which must remain free choice.
@@ -182,7 +193,12 @@ async function* streamRounds(
 
     async function runOneTool(tu: (typeof toolUses)[number]): Promise<ToolOutcome> {
       const input = (() => { try { return JSON.parse(tu.inputJson) } catch { return {} } })()
-      const toolResult = await executeTool(tu.name, input, ctx ?? { sub: '' })
+      // Bound to this tool call's own id/name so a run_research_task sub-agent's narration
+      // lands on the right pill without it having to know its own toolUseId. Queued rather
+      // than yielded directly — runOneTool runs concurrently with the pool loop below, which
+      // is the only place actually allowed to yield.
+      const onProgress = (text: string) => { progressQueue.push({ type: 'sub_agent_progress', toolUseId: tu.callId, name: tu.name, text }) }
+      const toolResult = await executeTool(tu.name, input, { ...(ctx ?? { sub: '' }), onProgress, modelId })
       const entries = toolResult.entries
       const textEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'text' }> => e.kind === 'text')
       const imageEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'image' }> => e.kind === 'image')
@@ -257,6 +273,9 @@ async function* streamRounds(
     // hammering rate-limited backends (Jina) or opening too many AgentCore browser sessions
     // at once. See docs/adr/0016-parallel-tool-execution.md.
     let nextToolIndex = 0
+    // Narration queued by in-flight run_research_task sub-agents (via ctx.onProgress above),
+    // drained into real StreamChunks on every pass of the pool loop below.
+    const progressQueue: Extract<StreamChunk, { type: 'sub_agent_progress' }>[] = []
     const runningTools = new Map<Promise<ToolOutcome>, number>()
     function launchNextTool() {
       if (nextToolIndex >= toolUses.length) return
@@ -273,6 +292,9 @@ async function* streamRounds(
       const heartbeat = new Promise<{ done: false }>(resolve => { timerId.current = setTimeout(() => resolve({ done: false }), HEARTBEAT_INTERVAL_MS) })
       const outcome = await Promise.race([settled, heartbeat])
       clearTimeout(timerId.current)
+      // Alongside, not instead of, the heartbeat below — a genuinely quiet researcher (no
+      // narration since the last pass) must still keep the heartbeat firing.
+      while (progressQueue.length > 0) yield progressQueue.shift()!
       if (!outcome.done) {
         yield { type: 'heartbeat' }
         continue
@@ -310,10 +332,18 @@ async function* streamRounds(
 
   if (abortSignal?.aborted) return
 
-  // Exhausted tool-use rounds: make one final call. We keep tools present
-  // (history contains tool_call/tool_result blocks and the provider may require it)
-  // but the loop is already done after this single call regardless of stopReason,
-  // so no infinite-tool-use risk.
+  // Exhausted tool-use rounds (or ran out of wall-clock): make one final call. We keep
+  // tools present (history contains tool_call/tool_result blocks and the provider may
+  // require it) but the loop is already done after this single call regardless of
+  // stopReason, so no infinite-tool-use risk.
+  //
+  // Live-only steer, never persisted — same trick as the pacing text above (loop.ts:300-303)
+  // — since without it this call gets no instruction beyond "no more tools" and can answer
+  // thinly instead of writing up what it already found.
+  newMessages.push({
+    role: 'user',
+    content: [{ kind: 'text', text: 'You are out of research budget. Write your best answer now from the findings above, with citations, and state plainly what remains unresolved.' }],
+  })
   const builtMessages = [...sanitized, ...newMessages]
   const finalGen = provider.streamTurn({
     modelId,

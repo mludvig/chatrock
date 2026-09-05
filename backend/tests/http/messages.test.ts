@@ -634,4 +634,29 @@ describe('streaming flag', () => {
     const res = result(await handler(makeEvent('c1')))
     expect(JSON.parse(res.body!).streaming).toBe(false)
   })
+
+  test('streamingDeadlineAt is returned only while a deep turn is actually streaming', async () => {
+    const deadlineAt = Date.now() + 5 * 60 * 1000
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1',
+      streamingSince: new Date(Date.now() - 30_000).toISOString(),
+      streamingDeadlineAt: deadlineAt,
+    })
+    mockDynamo.listMessages.mockResolvedValue(oneTurn())
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(JSON.parse(res.body!).streamingDeadlineAt).toBe(deadlineAt)
+  })
+
+  test('streamingDeadlineAt is omitted once the marker is stale, even if the field lingers', async () => {
+    mockDynamo.getChat.mockResolvedValue({
+      PK: 'USER#user-1', SK: 'CHAT#c1', activeLeafId: 'u1',
+      streamingSince: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+      streamingDeadlineAt: Date.now() + 5 * 60 * 1000,
+    })
+    mockDynamo.listMessages.mockResolvedValue(oneTurn())
+
+    const res = result(await handler(makeEvent('c1')))
+    expect(JSON.parse(res.body!).streamingDeadlineAt).toBeUndefined()
+  })
 })

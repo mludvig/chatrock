@@ -706,3 +706,34 @@ test('order: effectiveInstructions → projectInstructions → date → answerLe
   expect(lengthIdx).toBeLessThan(userMemIdx)
   expect(userMemIdx).toBeLessThan(projMemIdx)
 })
+
+// ── deep research section ────────────────────────────────────────────────────
+
+test('researchDepth "deep" → deep-research section present', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: 'Base.',
+    prefs: {},
+    memories: [],
+    researchDepth: 'deep',
+  })
+  expect(result).toContain('run_research_task')
+})
+
+test('researchDepth "extended" → deep-research section absent', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: 'Base.',
+    prefs: {},
+    memories: [],
+    researchDepth: 'extended',
+  })
+  expect(result).not.toContain('run_research_task')
+})
+
+test('researchDepth absent → deep-research section absent', () => {
+  const result = assembleSystemPrompt({
+    basePrompt: 'Base.',
+    prefs: {},
+    memories: [],
+  })
+  expect(result).not.toContain('run_research_task')
+})
