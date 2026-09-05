@@ -36,8 +36,8 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
           onChange={e => set({ researchDepth: e.target.value as ModelSettings['researchDepth'] })}
         >
           {RESEARCH_DEPTHS.map(d => (
-            <option key={d} value={d} disabled={d === 'deep'}>
-              {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep Research (coming soon)'}
+            <option key={d} value={d}>
+              {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep'}
             </option>
           ))}
         </select>

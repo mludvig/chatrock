@@ -9,10 +9,10 @@ import type { Step } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import type { SearchResult, SearchHistoryResult } from '../lib/toolResults'
 
-// The renderers for one step of a turn — a thinking block or a tool call — shared by
-// MessageBubble (a chat turn's steps) and ResearchPanel (a Deep Research run's live
-// progress), so research progress looks identical to any other tool use rather than
-// growing a second, divergent set of pills.
+// The renderers for one step of a turn — a thinking block or a tool call — used by
+// MessageBubble to render a turn's steps, including run_research_task calls: Deep Research
+// is an ordinary turn with a sub-agent tool, so its progress renders as the same pills as
+// any other tool use. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
 
 // ── URL sanitizer — blocks javascript: and data: URIs ────────────────────────
 
@@ -76,7 +76,7 @@ function SearchHistoryResultCard({ r }: { r: SearchHistoryResult }) {
 
 // ── Tool call display ─────────────────────────────────────────────────────────
 
-export function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; streaming?: boolean }) {
+export function ToolCallPill({ step, progressText }: { step: Extract<Step, { kind: 'tool' }>; streaming?: boolean; progressText?: string }) {
   // generate_image's whole point IS the image — unlike an incidental browser screenshot,
   // it shouldn't be hidden behind a click.
   const [expanded, setExpanded] = useState(() => step.name === 'generate_image')
@@ -104,6 +104,8 @@ export function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; 
     ? `Browse: ${firstBrowserUrl(step.input)}`
     : step.name === 'generate_image'
     ? `Image: ${safeInput(step.input, 'prompt')}`
+    : step.name === 'run_research_task'
+    ? `Research: ${safeInput(step.input, 'question')}`
     : step.name === 'read_project_file'
     ? (() => {
         const fid = safeInput(step.input, 'fileId')
@@ -130,6 +132,9 @@ export function ToolCallPill({ step }: { step: Extract<Step, { kind: 'tool' }>; 
           <FontAwesomeIcon icon={expanded ? faChevronDown : faChevronRight} className="tool-chevron" />
         )}
       </button>
+      {pending && progressText && (
+        <div className="tool-pill-progress">{progressText}</div>
+      )}
       {expanded && step.result !== undefined && (
         <div className="tool-result-body">
           {hasScreenshots && (

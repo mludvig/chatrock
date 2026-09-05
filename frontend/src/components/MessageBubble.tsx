@@ -197,6 +197,9 @@ interface Props {
   onForkToHere?: (msgId: string, role: 'user' | 'assistant', text: string) => void
   onDeleteBranch?: (msgId: string) => void
   showTokenStats?: boolean
+  // Latest narration line per run_research_task toolUseId, from ChatView's 'sub_agent_progress'
+  // frames — see docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+  subAgentProgress?: Record<string, string>
 }
 
 /**
@@ -208,7 +211,7 @@ interface Props {
  * This preserves the think → search → think → answer interleaved structure.
  */
 const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBubble(
-  { message, onRerun, onContinue, onEscalate, onNavigate, onEditRequest, onForkToHere, onDeleteBranch, showTokenStats }, ref,
+  { message, onRerun, onContinue, onEscalate, onNavigate, onEditRequest, onForkToHere, onDeleteBranch, showTokenStats, subAgentProgress }, ref,
 ) {
   const isAssistant = message.role === 'assistant'
   const isStreaming = 'streaming' in message && message.streaming
@@ -262,6 +265,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
                 key={cleanStep.toolUseId}
                 step={cleanStep}
                 streaming={isStreaming}
+                progressText={subAgentProgress?.[cleanStep.toolUseId]}
               />
             )
           }
