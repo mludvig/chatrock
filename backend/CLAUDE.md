@@ -22,9 +22,7 @@ backend/src/
   lib/enrichment.ts       — post-turn extraction: enrichUserFacts() (Sonnet), enrichProjectFacts() (Sonnet), summarizeChat() (Sonnet), generateChatTitle() (Haiku); all independent calls, each logs on failure
   lib/attachments.ts      — S3 presigned PUT, CloudFront signed display URLs (SSM key), hydrateBlocks, copyChatObjects/rewriteBlockUri for fork; deleteProjectObjects
   lib/projectFiles.ts     — summarizeFile(): sends file to Bedrock (text/PDF/image) to produce microLabel + summary; stores extracted text sidecar for PDFs
-  lib/researchDossier.ts  — the research dossier: buildDossierMarkdown() + writeResearchDossier()/writeDossiersForChatMove(), the project-file copy written only for a chat that already belongs to a project (docs/adr/0031)
-  lib/researchApproval.ts — resolvePlanApproval(): releases the AwaitApproval task token (SendTaskSuccess + row transition + stale-token retry), shared by the researchApprove WS action and a composer reply (docs/adr/0032)
-  lib/planFeedback.ts     — classifyPlanFeedback(): one TINY_MODEL call deciding whether a composer reply to a research plan is approve / approve_with_steering / revise (docs/adr/0032)
+  lib/subAgent.ts         — runResearchTask(): the run_research_task tool executor — runs a bounded converseStream() loop of its own (web tools only, no chat history/memory) and returns a capped plain-text answer (docs/adr/0039)
   lib/projectContext.ts   — executeProjectReadFileTool / executeProjectReadChatTool: ownership validation, progressive detail (summary vs full), capToolResultText applied
   lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
   lib/preferences.ts      — UserPreferences type + resolvePreferences() layering
@@ -41,7 +39,7 @@ backend/src/
 
 Each Lambda is bundled independently by esbuild into `terraform/dist/<name>.zip`.
 
-**Prompt files**: the system prompts for `enrichUserFacts`/`generateChatTitle`/`summarizeChat`/`enrichProjectFacts` (`lib/enrichment.ts`), `extractUserFacts` (`lib/memory.ts`, legacy/unused-in-prod path kept for its tests), `summarizeFile` (`lib/projectFiles.ts`), `searchHistory` (`lib/search.ts`), and `research/plan.ts`'s handler live as plain `.txt` files under `backend/prompts/`, not as inline template-literal constants — makes them easy to find and edit without touching TS logic. `esbuild.config.mjs` sets `loader: { '.txt': 'text' }` so `import X from '../../prompts/foo.txt'` inlines the file's contents as a string at build time (a normal rebuild/deploy picks up edits — no runtime file read). `src/types/text-modules.d.ts` declares the `*.txt` module type for `tsc`; `tests/rawTextTransform.cjs` + the `transform` entry in `package.json`'s `jest` config give Jest the same import behavior. Tool-use *descriptions* (`lib/tools.ts`) and `promptAssembly.ts`'s per-fragment directive strings are NOT extracted — they're short, tightly interleaved with conditional/interpolation logic, and easy to find in their one file already.
+**Prompt files**: the system prompts for `enrichUserFacts`/`generateChatTitle`/`summarizeChat`/`enrichProjectFacts` (`lib/enrichment.ts`), `extractUserFacts` (`lib/memory.ts`, legacy/unused-in-prod path kept for its tests), `summarizeFile` (`lib/projectFiles.ts`), `searchHistory` (`lib/search.ts`), the `researchDepth === 'deep'` system-prompt fragment (`promptAssembly.ts`, `prompts/deep-research.txt`), and the researcher sub-agent's own system prompt (`lib/subAgent.ts`, `prompts/research-task.txt`) live as plain `.txt` files under `backend/prompts/`, not as inline template-literal constants — makes them easy to find and edit without touching TS logic. `esbuild.config.mjs` sets `loader: { '.txt': 'text' }` so `import X from '../../prompts/foo.txt'` inlines the file's contents as a string at build time (a normal rebuild/deploy picks up edits — no runtime file read). `src/types/text-modules.d.ts` declares the `*.txt` module type for `tsc`; `tests/rawTextTransform.cjs` + the `transform` entry in `package.json`'s `jest` config give Jest the same import behavior. Tool-use *descriptions* (`lib/tools.ts`) and `promptAssembly.ts`'s per-fragment directive strings are NOT extracted — they're short, tightly interleaved with conditional/interpolation logic, and easy to find in their one file already.
 
 ## Model capabilities
 
@@ -191,8 +189,7 @@ Other mechanics: `GET /api/chats` returns sensitive chats like any other (visibi
 | `POST /api/chats/{chatId}/retitle` | AI-generated title |
 | `POST /api/chats/{chatId}/fork` | clone active-path into new chat |
 | `DELETE /api/chats/{chatId}/messages/{msgId}` | delete message subtree |
-| `GET /api/chats/{chatId}/messages` | full tree walk + attachment URL signing |
-| `GET /api/chats/{chatId}/research` | re-sync the active/most-recent Deep Research run; `?dossier=1` also renders the dossier markdown |
+| `GET /api/chats/{chatId}/messages` | full tree walk + attachment URL signing + `streaming`/`streamingDeadlineAt` |
 | `POST /api/attachments` | presign S3 PUT → `{s3Key, uploadUrl}` |
 | `GET /api/models` | list models |
 | `GET /api/memory` | list user memories |
@@ -235,9 +232,10 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout:
 `docs/adr/0029-llm-observability-in-the-wrapper.md`). Both `converseStream` and `converseOnce`
 require a `call: LlmCallContext` — `purpose` (a closed union: `chat`, `chat_title`,
 `chat_summary`, `enrich_user_facts`, `enrich_project_facts`, `extract_user_facts`,
-`file_summary`, `search_history`, `research_plan`, `research_worker`, `research_assess`,
-`research_report`) plus whichever of `sub`/`chatId`/`projectId`/`runId` correlate that call —
-so a new call site can't be added unlabelled. A failed call emits the same event with
+`file_summary`, `search_history`, `research_task`) plus whichever of
+`sub`/`chatId`/`projectId`/`runId` correlate that call — so a new call site can't be added
+unlabelled. `research_task` is the researcher sub-agent's own `converseStream` call
+(`lib/subAgent.ts`) — a deep turn's orchestrator round itself still logs under `chat`. A failed call emits the same event with
 `ok:false` + `error` on stderr, so one Insights filter on `event = "llm_call"` covers both.
 
 ## Projects

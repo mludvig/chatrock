@@ -78,15 +78,15 @@ Browser → CloudFront (single distribution, custom domain)
 ```
 
 - **Auth**: Cognito Hosted UI (OIDC/PKCE). HTTP API uses a Cognito JWT authorizer. WebSocket `$connect` uses a Lambda authorizer that validates the access token from `?token=` query param (browsers can't set WebSocket headers).
-- **Streaming**: client sends `{ action: 'sendMessage', chatId, content?, model, systemPrompt, modelSettings, parentId? }` over WebSocket. `ws/sendMessage.ts` persists the user message (if `content` present), calls Bedrock `ConverseStream` in an agentic loop (up to 8 rounds for tool use), pushes event frames back via `ApiGatewayManagementApi.postToConnection`. See WS payload contract below.
-- **Cancel**: client sends `{ action: 'cancelMessage' }` over WebSocket. `ws/cancelMessage.ts` sets a DynamoDB cancel flag on the `CONN#` row; the stream loop polls it every 750ms via `isStreamCancelled`, aborts the Bedrock stream via `AbortController`, flushes any partial text as a turn, then emits `cancelled`.
+- **Streaming**: client sends `{ action: 'sendMessage', chatId, content?, model, systemPrompt, modelSettings, parentId? }` over WebSocket. `ws/sendMessage.ts` persists the user message (if `content` present), calls Bedrock `ConverseStream` in an agentic loop (3/8/12 rounds by research depth — `docs/adr/0020-research-depth-and-budget-pacing.md`), pushes event frames back via `ApiGatewayManagementApi.postToConnection`. See WS payload contract below.
+- **Cancel**: client sends `{ action: 'cancelMessage', chatId }` over WebSocket. `ws/cancelMessage.ts` sets a DynamoDB cancel flag on the chat row, keyed `(sub, chatId)` so cancelling one chat can never abort a different chat's turn on the same connection (`docs/adr/0040-concurrent-per-chat-streaming.md`); the stream loop polls it every 750ms via `isStreamCancelled`, aborts the Bedrock stream via `AbortController`, flushes any partial text as a turn, then emits `cancelled`.
 
 ### DynamoDB single-table
 
 Why one table instead of one per entity: `docs/adr/0003-single-dynamodb-table.md`. Table `chatrock-prod` with PK/SK:
-- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?, topics?, hasResearch?, streamingSince?, streamingResponseId?
+- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?, topics?, streamingSince?, streamingResponseId?, cancelRequested?
 - Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearchEnabled?
-- WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL, cancelRequested?
+- WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL
 - User prefs: `PK=USER#<sub>` / `SK=PREF#USER` — `prefs` attribute (`UserPreferences` JSON blob), updatedAt
 - Memory: `PK=USER#<sub>` / `SK=MEM#USER#<memId>` — text, category (`identity|preference|style|other`), createdAt, updatedAt
 - Project: `PK=USER#<sub>` / `SK=PROJECT#<projectId>` — name, description?, instructions?, memoryEnabled?, createdAt, updatedAt
@@ -118,8 +118,11 @@ Key helpers in `backend/src/lib/tree.ts`:
 - Normal send: `{ chatId, content, model, systemPrompt, modelSettings, search? }` — persists user turn at current leaf, streams answer. `search: { scope: 'project'|'global' }` forces `search_history` tool on this turn.
 - Re-run: `{ chatId, parentId, model, systemPrompt, modelSettings }` — no `content`; streams new sibling answer under `parentId`
 - Edit: `{ chatId, parentId, content, model, systemPrompt, modelSettings }` — persists new user sibling under `parentId`, streams answer
+- Cancel: `{ chatId }` — see Cancel above.
 
-`GET /messages` also returns `streaming`: a turn is being generated for this chat right now, possibly for a connection this client no longer holds. The client polls on it to catch up after a dropped socket — see `docs/adr/0037-catching-up-on-a-dropped-stream.md`.
+`safePost` (`ws/sendMessage.ts`) stamps `chatId` onto every outgoing frame in one place, so a client with more than one chat in flight on the same connection (`docs/adr/0040-concurrent-per-chat-streaming.md`) can route each frame to the right chat's state. A `researchDepth === 'deep'` turn's `ack` frame also carries `deadlineAt` — the wall-clock time the turn must wrap up by (`docs/adr/0039-deep-research-as-a-sub-agent-tool.md`).
+
+`GET /messages` also returns `streaming` and, for a deep turn, `streamingDeadlineAt`: a turn is being generated for this chat right now, possibly for a connection this client no longer holds. The client polls on it to catch up after a dropped socket — see `docs/adr/0037-catching-up-on-a-dropped-stream.md`.
 
 **Display bubble shape** (from `GET /messages`): each bubble includes `msgId`, `parentId`, `siblingIndex` (1-based), `siblingCount`, `siblings` (ordered msgId array).
 
@@ -134,6 +137,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `tool_call_start` | `toolUseId`, `name` — fires immediately at block start for fast UI feedback |
 | `tool_call` | `toolUseId`, `name`, `input` — fires when full input JSON is accumulated |
 | `tool_result` | `toolUseId`, `name`, `isError`, `content`, `screenshotUrls?` — `screenshotUrls` is a first-class array of signed CloudFront URLs for browser-tool screenshots, never embedded as JSON inside `content` |
+| `sub_agent_progress` | `toolUseId` (the parent `run_research_task` call), `name`, `text` — live-only narration of a research sub-agent's own tool calls; dropping one costs nothing, the finding lands as that call's `tool_result` |
 | `delta` | `text` |
 | `done` | `stopReason` |
 | `cancelled` | — (stream was aborted by `cancelMessage`) |

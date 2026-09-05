@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Supersedes `0024-research-dossier-as-a-project-file.md`.
+Superseded by `0039-deep-research-as-a-sub-agent-tool.md`. Supersedes `0024-research-dossier-as-a-project-file.md`.
 
 ## Context
 
