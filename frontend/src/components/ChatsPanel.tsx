@@ -98,7 +98,12 @@ export default function ChatsPanel() {
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
                     {sendingByChat[chat.chatId] && (
-                      <FontAwesomeIcon icon={faCircleNotch} spin title="Generating a response…" style={{ color: '#6b7280', flexShrink: 0 }} />
+                      // FontAwesomeIcon's `title` prop doesn't render as a real DOM title/SVG
+                      // <title> in this fontawesome-svg-core version, so the tooltip needs a
+                      // wrapping element with the attribute instead.
+                      <span title="Generating a response…" style={{ display: 'flex', flexShrink: 0 }}>
+                        <FontAwesomeIcon icon={faCircleNotch} spin style={{ color: '#6b7280' }} />
+                      </span>
                     )}
                     <span className="chat-title">{chat.title}</span>
                     <div className="chat-actions">
