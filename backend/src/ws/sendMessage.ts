@@ -3,7 +3,7 @@ import type { APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import type { Block, NeutralMessage } from '../lib/llm/blocks'
-import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, setChatStreaming, clearChatStreaming, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats, getActiveRun, appendRunSteeringNote } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, setChatStreaming, clearChatStreaming, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
@@ -14,9 +14,6 @@ import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
 import { reconcileMemoryList } from '../lib/memory'
 import { enrichUserFacts, enrichProjectFacts, generateChatTitle, summarizeChat } from '../lib/enrichment'
 import { fetchS3Text } from '../lib/projectFiles'
-import { classifyPlanFeedback } from '../lib/planFeedback'
-import { resolvePlanApproval } from '../lib/researchApproval'
-import type { PlanResult } from '../research/types'
 
 interface WSSendEvent {
   requestContext: {
@@ -113,62 +110,6 @@ export const buildHandler = (postFn: PostFn) => async (
       await updateChatActiveLeaf(sub, chatId, msgId)
     } catch (e) {
       console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
-    }
-  }
-
-  // A genuine new message (content present — continue/rerun never carry content, so this
-  // already excludes them) arriving while a Deep Research run is live for this chat does
-  // not start a new turn. Either way it's echoed as a plain user turn so it's visible in
-  // the transcript, chained under the current leaf regardless of any parentId the client
-  // sent — a message to a running supervisor doesn't branch the tree — and then it either
-  // answers the plan-approval gate or becomes a steering note, depending on the run's state.
-  if (content) {
-    const activeRun = await getActiveRun(chatId)
-    if (activeRun) {
-      const runId = activeRun.runId as string
-      const ts = new Date().toISOString()
-      const userMsgId = uuidv4()
-      await putMessage({
-        ...buildTurnKey(chatId, ts, 0, userMsgId),
-        msgId: userMsgId,
-        parentId: (chat.activeLeafId as string | undefined) ?? null,
-        role: 'user',
-        blocks: buildUserBlocks(content, attachments, undefined),
-        model,
-        createdAt: ts,
-        turnIndex: 0,
-        responseId: uuidv4(),
-      })
-      await advanceLeaf(userMsgId)
-
-      // The run is blocked on the approval gate, so this message is the user's answer to
-      // it — the composer is the only input box the plan offers. A tiny model decides what
-      // the answer means; a steering note here would leave the task token unresolved and
-      // the run stalled until its 24h timeout.
-      // See docs/adr/0032-plan-feedback-classified-by-a-tiny-model.md.
-      if (activeRun.status === 'awaiting_approval') {
-        const verdict = await classifyPlanFeedback(content, activeRun.plan as PlanResult | undefined, { sub, chatId, runId })
-        const outcome = await resolvePlanApproval({
-          chatId, runId, connId, run: activeRun,
-          decision: verdict === 'revise' ? 'revise' : 'approve',
-          // Bare consent carries nothing worth seeding the first wave with.
-          feedback: verdict === 'approve' ? undefined : content,
-        })
-        if (outcome === 'started' || outcome === 'revising') {
-          console.log(JSON.stringify({ event: 'research_plan_decision', runId, chatId, verdict, outcome }))
-          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'research_plan_decision', runId, chatId, msgId: userMsgId, decision: outcome === 'revising' ? 'revise' : 'approve' }) })
-          return { statusCode: 200, body: '' }
-        }
-        // The run left the gate while we were classifying — fall through and treat the
-        // message as steering, which is what it now is.
-      }
-
-      // Mid-flight steering (backend/src/research/CLAUDE.md): appended to the run's
-      // steeringNotes[], which Researcher/Assess read at the start of each round.
-      await appendRunSteeringNote(chatId, runId, content)
-      console.log(JSON.stringify({ event: 'research_steering_noted', runId, chatId }))
-      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'research_steering_noted', runId, msgId: userMsgId }) })
-      return { statusCode: 200, body: '' }
     }
   }
 
