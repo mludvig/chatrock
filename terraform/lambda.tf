@@ -229,7 +229,7 @@ resource "aws_lambda_function" "ws_send_message" {
   # More memory ⇒ proportionally more CPU ⇒ much faster; longer timeout for genuine
   # multi-round tasks. Both are independent of the WS API Gateway integration timeout.
   memory_size = 1024
-  timeout     = 600
+  timeout     = 900
   environment { variables = local.lambda_env_base }
   tags = { Env = var.env }
 }

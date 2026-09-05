@@ -1,7 +1,6 @@
 import type { ToolSpec, ToolResult, ToolResultEntry } from './llm/toolSpec'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
-import { executeReadResearchFindingsTool } from './researchFindings'
 import { executeSearchHistoryTool } from './search'
 import { callGatewayTool } from './agentcore/gateway'
 import type { BrowserStep } from './agentcore/browser'
@@ -27,10 +26,23 @@ export interface ToolContext {
   // in lib/search.ts for why this overrides any model-supplied scope on that turn.
   searchScope?: 'project' | 'global'
   sensitive?: boolean
-  // Set from the chat row's `hasResearch` flag — gates read_research_findings so only a
-  // chat that has actually completed a Deep Research run is offered it.
-  // See docs/adr/0031-deep-research-is-not-a-project.md.
-  hasResearch?: boolean
+  // The model this turn is running under. Set automatically by loop.ts (it already knows
+  // its own modelId) on the ctx passed to every tool execution — not something a caller of
+  // converseStream ever sets. run_research_task is the only reader today: its sub-agent has
+  // no chat of its own to read a model off, so it reuses the orchestrator's.
+  modelId?: string
+  // Set (to 1) on the ToolContext a run_research_task sub-agent's own converseStream call
+  // runs under — buildToolList omits RUN_RESEARCH_TASK_TOOL whenever this is set, so a
+  // researcher can never spawn researchers. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+  subAgentDepth?: number
+  // Absolute epoch ms past which the round loop stops and falls into final synthesis —
+  // threaded down to a sub-agent's own converseStream call so one slow researcher can't eat
+  // the orchestrator's whole remaining Lambda time.
+  deadlineAt?: number
+  // Narration hook a run_research_task sub-agent calls with its own progress text; loop.ts
+  // wraps this per tool call so the emitted sub_agent_progress frame carries the right
+  // parent toolUseId. Absent outside a live WS turn (e.g. tests).
+  onProgress?: (text: string) => void
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -302,19 +314,21 @@ export const SEARCH_HISTORY_TOOL: ToolSpec = {
   },
 }
 
-export const READ_RESEARCH_FINDINGS_TOOL: ToolSpec = {
-  name: 'read_research_findings',
-  description: "Read the findings from a completed Deep Research run in this chat. Use detail:'summary' for the final report and the gaps not pursued, or detail:'full' for every finding's summary and source URLs as well.",
+// ── Research sub-agent tool spec ──────────────────────────────────────────────
+//
+// A deep-research turn's only extra tool over an ordinary chat turn: delegates one
+// self-contained sub-question to a researcher sub-agent (lib/subAgent.ts) with its own
+// bounded web_search/web_fetch converseStream loop. See
+// docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+export const RUN_RESEARCH_TASK_TOOL: ToolSpec = {
+  name: 'run_research_task',
+  description: "Delegate one focused, self-contained research sub-question to a researcher sub-agent with web_search/web_fetch access. The sub-agent sees ONLY the question text you give it here — no chat history, no memory, no other context — so phrase it completely. Issue several calls in the same round to research independent sub-questions in parallel. Returns a thorough written answer with inline citations.",
   inputSchema: {
     type: 'object',
     properties: {
-      detail: {
-        type: 'string',
-        enum: ['summary', 'full'],
-        description: "'summary' = final report + gaps not pursued. 'full' = also every finding's summary and sources.",
-      },
+      question: { type: 'string', description: 'One focused, self-contained research sub-question. The sub-agent sees only this text.' },
     },
-    required: ['detail'],
+    required: ['question'],
   },
 }
 
@@ -339,9 +353,9 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
       if (!ctx.projectId) return errorResult('No project context')
       return await executeProjectReadChatTool(input as Record<string, string>, ctx)
     }
-    if (name === 'read_research_findings') {
-      if (!ctx.chatId) return errorResult('No chat context')
-      return await executeReadResearchFindingsTool(input as Record<string, string>, ctx)
+    if (name === 'run_research_task') {
+      const runResearchTask = await getRunResearchTask()
+      return await runResearchTask(input as Record<string, unknown>, ctx)
     }
     if (name === 'search_history') {
       return await executeSearchHistoryTool(input, { sub: ctx.sub, projectId: ctx.projectId, chatId: ctx.chatId, searchScope: ctx.searchScope })
@@ -395,6 +409,15 @@ interface RawBrowserStep {
 async function getRunBrowserSteps() {
   const { runBrowserSteps } = await import('./agentcore/browser')
   return runBrowserSteps
+}
+
+// Same lazy-import reasoning as getRunBrowserSteps above, for the opposite direction: a
+// static top-level import of subAgent.ts would pull loop.ts into every Lambda that imports
+// tools.ts (most of them, via bedrock.ts), creating a tools.ts -> subAgent -> loop.ts ->
+// tools.ts cycle. Deferring to call time breaks the cycle at module-load time.
+async function getRunResearchTask() {
+  const { runResearchTask } = await import('./subAgent')
+  return runResearchTask
 }
 
 // Shared by browse_web / take_screenshot / get_rendered_page: turns the mechanical

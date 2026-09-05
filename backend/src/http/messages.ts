@@ -11,9 +11,9 @@ import { groupTurnsToBubbles, signBubbleAttachments, type RawBubble, type TurnRo
 const DEFAULT_PAGE_LIMIT = 40
 
 // How long a `streamingSince` marker is believed. ws/sendMessage.ts clears it on every exit
-// it can reach, but a Lambda killed at its 600 s ceiling clears nothing — past this window
+// it can reach, but a Lambda killed at its 900 s ceiling clears nothing — past this window
 // the marker is treated as debris rather than a live turn, so the client stops polling.
-const STREAM_STALE_MS = 11 * 60 * 1000
+const STREAM_STALE_MS = 16 * 60 * 1000
 
 const ok = (body: unknown): APIGatewayProxyResultV2 => ({
   statusCode: 200,
@@ -44,6 +44,9 @@ interface MessagesResponse {
   // client's. The signal a returning/reloaded client polls on — see
   // docs/adr/0037-catching-up-on-a-dropped-stream.md.
   streaming: boolean
+  // Epoch ms — only present while a deep turn is streaming (see dynamo.ts's setChatStreaming).
+  // Its presence, not just `streaming`, gates the countdown banner on a reload/second device.
+  streamingDeadlineAt?: number
 }
 
 const isStreaming = (since: string | undefined): boolean => {
@@ -109,12 +112,14 @@ export const handler = async (
     return { ...b, siblings, siblingIndex, siblingCount: siblings.length }
   })
 
+  const streaming = isStreaming(chat.streamingSince as string | undefined)
   const response: MessagesResponse = {
     bubbles: enrichedBubbles,
     conversationUsage: rawResponse.conversationUsage,
     hasMore,
     oldestMsgId,
-    streaming: isStreaming(chat.streamingSince as string | undefined),
+    streaming,
+    ...(streaming && chat.streamingDeadlineAt !== undefined ? { streamingDeadlineAt: chat.streamingDeadlineAt as number } : {}),
   }
   return ok(response)
 }
