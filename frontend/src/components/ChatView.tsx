@@ -701,6 +701,11 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       bumpIdleTimer(chatId)
       setMessages(streamingBaseByChatRef.current[chatId] ?? [])
       setLoadingMessages(false)
+      // The countdown banner's deadline only ever arrives via the turn's one-off `ack`
+      // frame, which was missed if that fired while this chat wasn't mounted — re-fetch it.
+      // reloadMessages bails out before touching `messages` since sendingByChat[chatId] is
+      // still true and this call isn't `force`d.
+      reloadMessages(chatId)
       return
     }
 
