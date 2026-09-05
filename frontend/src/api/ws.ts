@@ -1,5 +1,5 @@
 import { ENV } from '../env'
-import type { ModelSettings, Step, TokenUsage } from './http'
+import type { ModelSettings, TokenUsage } from './http'
 
 // Same shape whether the write came from an explicit manage_memory/manage_project_memory
 // tool call (one item) or passive post-turn enrichment (zero or more) — see
@@ -11,12 +11,13 @@ export interface MemoryUpdateItem {
   text?: string
 }
 
-// Mirrors backend/src/research/types.ts's ResearchPhase — the phases that run a single
-// blocking model call and so have no steps to report, plus recon's own announcement.
-export type ResearchPhase = 'recon' | 'planning' | 'assessing' | 'reporting' | 'dossier'
-
-export type WSEvent =
-  | { type: 'ack' }
+// Every frame is stamped with the chatId it belongs to (backend/src/ws/sendMessage.ts's
+// safePost) so a client streaming more than one chat at once can route each frame to the
+// right per-chat slot instead of assuming "the chat currently in view". See
+// docs/adr/0040-concurrent-per-chat-streaming.md.
+export type WSEvent = (
+  // deadlineAt (epoch ms) is present only for a deep turn — see backend/src/ws/sendMessage.ts.
+  | { type: 'ack'; deadlineAt?: number }
   | { type: 'delta';          text: string }
   | { type: 'thinking_delta'; text: string }
   | { type: 'thinking_done' }
@@ -31,29 +32,11 @@ export type WSEvent =
   | { type: 'error';          message: string; responseId?: string; leafId?: string }
   | { type: 'warning';        message: string }
   | { type: 'heartbeat' }
-  // Deep Research progress frames — see backend/src/research/CLAUDE.md's "Progress
-  // frames and reconnect". Best-effort; GET /api/chats/{chatId}/research re-syncs.
-  // msgId is the assistant turn the plan was persisted as — awaitApproval.ts writes it before
-  // sending this frame, so the client can just reload the transcript to show the plan.
-  | { type: 'research_plan';       runId: string; chatId: string; msgId: string; plan: { subQuestions: { id: string; question: string }[]; clarifyingQuestions: string[] } }
-  | { type: 'research_wave_start'; runId: string; chatId: string; subQuestions: { id: string; question: string }[] }
-  | { type: 'research_finding';    runId: string; chatId: string; subQuestionId: string; summary: string; sourceUrls: string[] }
-  | { type: 'research_assess';     runId: string; chatId: string; findingCount: number; done: boolean }
-  // Live progress from the phases that run a real converseStream loop (recon, each
-  // researcher) plus a coarse phase signal for the blocking converseOnce phases —
-  // see backend/src/research/progress.ts.
-  | { type: 'research_phase';      runId: string; chatId: string; phase: ResearchPhase; detail?: string }
-  | { type: 'research_step';       runId: string; chatId: string; subQuestionId?: string; step: Step }
-  | { type: 'research_done';       runId: string; chatId: string; msgId: string }
-  // Terminal failure — a state crashed or timed out and the run is over. Unlike every other
-  // frame here this one is not merely a UI convenience: without it the panel spins on a run
-  // that no longer exists. Its durable counterpart is the row's own status/failureReason.
-  | { type: 'research_failed';     runId: string; chatId: string; message: string }
-  // Mid-flight steering ack — see ws/sendMessage.ts's active-run interception.
-  | { type: 'research_steering_noted'; runId: string; msgId: string }
-  // A composer message that answered the plan-approval gate instead of becoming a
-  // steering note — the backend classified it and already acted on it.
-  | { type: 'research_plan_decision'; runId: string; chatId: string; msgId: string; decision: 'approve' | 'revise' }
+  // Narration from a run_research_task sub-agent, tagged with the parent tool call's
+  // toolUseId. Purely UI feedback — dropped frames cost nothing, since the finding itself
+  // is persisted as the tool result. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+  | { type: 'sub_agent_progress'; toolUseId: string; name: string; text: string }
+) & { chatId: string }
 
 type EventHandler = (evt: WSEvent) => void
 // 'unauthorized' is the give-up state: repeated $connect failures, which in practice means
@@ -190,7 +173,7 @@ export function disconnect() {
   onConnectionStateCb?.('closed')
 }
 
-// Shared attachment wire shape for both sendMessage and startResearch — mirrors
+// Shared attachment wire shape for sendMessage — mirrors
 // backend/src/lib/attachments.ts's AttachmentMeta.
 export interface WSAttachment {
   s3Key: string
@@ -218,30 +201,9 @@ export function sendMessage(payload: {
   socket.send(JSON.stringify({ action: 'sendMessage', ...payload }))
 }
 
-export function cancelMessage() {
+export function cancelMessage(chatId: string) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return
-  socket.send(JSON.stringify({ action: 'cancelMessage' }))
-}
-
-// Starts a Deep Research run — see backend/src/research/CLAUDE.md's "Invocation".
-// Returns {runId} via the WS route's Lambda response, not a pushed frame; the caller
-// awaits it like an HTTP call (see ChatView.tsx's handleSend deep-research branch).
-export function startResearch(payload: { chatId: string; question: string; attachments?: WSAttachment[] }) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    throw new Error('WebSocket not connected')
-  }
-  socket.send(JSON.stringify({ action: 'startResearch', ...payload }))
-}
-
-// Resolves the AwaitApproval task token — see "Plan approval gate" in
-// backend/src/research/CLAUDE.md. No "reject" decision; only approve/revise. `decision`,
-// not `action`, since the WS envelope's own `action: 'researchApprove'` is what API
-// Gateway's route selection matches on.
-export function researchApprove(payload: { chatId: string; runId: string; decision: 'approve' | 'revise'; feedback?: string }) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    throw new Error('WebSocket not connected')
-  }
-  socket.send(JSON.stringify({ action: 'researchApprove', ...payload }))
+  socket.send(JSON.stringify({ action: 'cancelMessage', chatId }))
 }
 
 export function isConnected() {

@@ -9,9 +9,9 @@ jest.mock('../../src/lib/dynamo', () => ({
 
 const mockDynamo = dynamo as jest.Mocked<typeof dynamo>
 
-const makeEvent = (connId = 'conn-1') => ({
+const makeEvent = (connId = 'conn-1', chatId = 'chat-1') => ({
   requestContext: { connectionId: connId },
-  body: '{}',
+  body: JSON.stringify({ chatId }),
 })
 
 beforeEach(() => jest.clearAllMocks())
@@ -23,7 +23,7 @@ test('sets cancel flag and returns 200 when connection exists', async () => {
   const res = await handler(makeEvent())
 
   expect((res as { statusCode: number }).statusCode).toBe(200)
-  expect(mockDynamo.setStreamCancel).toHaveBeenCalledWith('conn-1')
+  expect(mockDynamo.setStreamCancel).toHaveBeenCalledWith('user-1', 'chat-1')
 })
 
 test('returns 410 when connection not found', async () => {

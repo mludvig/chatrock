@@ -7,12 +7,11 @@ import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
-import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, startResearch, researchApprove, isConnected, reconnectNow } from '../api/ws'
-import type { WSEvent, ConnectionState, WSAttachment } from '../api/ws'
-import { useChatStore, initialResearchProgress } from '../store/chatStore'
+import { sendMessage, cancelMessage, ensureConnected, disconnect, setWSHandlers, setConnectionStateHandler, setTurnInFlight, isConnected, reconnectNow } from '../api/ws'
+import type { WSEvent, ConnectionState } from '../api/ws'
+import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
-import ResearchPanel from './ResearchPanel'
 import { describeChatPrivacy } from '../lib/privacyDescription'
 
 interface Props {
@@ -59,17 +58,17 @@ function savePersistedDraft(chatId: string, content: string) {
   }
 }
 
-function clearPersistedDraftIfMatches(chatId: string) {
-  if (readPersistedDraft()?.chatId === chatId) localStorage.removeItem(DRAFT_STORAGE_KEY)
+// "9m 32s" / "45s" — never negative, since a deadline that's just passed still means
+// "any moment now" rather than a confusing negative countdown.
+function formatCountdown(msRemaining: number): string {
+  const totalSeconds = Math.max(0, Math.round(msRemaining / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`
 }
 
-// Maps a past turn's persisted attachment steps back to the wire shape startResearch/
-// sendMessage expect — used by handleEscalate, which re-sends a past question rather than
-// building a fresh PendingAttachment tray (that richer mapping is handleEditRequest's job).
-function attachmentPayloadFromSteps(steps: Step[] | undefined): WSAttachment[] {
-  return (steps ?? [])
-    .filter((s): s is Extract<Step, { kind: 'attachment' }> => s.kind === 'attachment')
-    .map(s => ({ s3Key: s.s3Key, contentType: s.contentType, filename: s.filename, mode: s.mode }))
+function clearPersistedDraftIfMatches(chatId: string) {
+  if (readPersistedDraft()?.chatId === chatId) localStorage.removeItem(DRAFT_STORAGE_KEY)
 }
 
 // Parses each tool step's raw result JSON into cards (web_search / search_history) — shared
@@ -98,17 +97,16 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const isNew = !chatId || chatId === 'new'
 
   const {
-    chats, patchChat, clearModelMigrationNotice, messages, streamingMsg,
+    chats, patchChat, clearModelMigrationNotice, messages, streamingByChat,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
     addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream,
-    renameChat, removeChat, sending, setSending, pushToast,
+    renameChat, removeChat, sendingByChat, setSending, pushToast,
     userPreferences, triggerMemoryRefresh,
     draftModelSettings, draftSystemPrompt,
     setCurrentChatId, setDraftModelSettings, setDraftSystemPrompt,
     updateChatSettings, updateChatSystemPrompt,
     projects, mergeProjectFiles,
     newChatTick,
-    activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding, addResearchStep,
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
@@ -136,6 +134,14 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // frames went to a connection that dropped. Polled, not pushed; see
   // docs/adr/0037-catching-up-on-a-dropped-stream.md.
   const [serverStreaming, setServerStreaming] = useState(false)
+  // Epoch ms, present only for a deep turn — from the 'ack' frame (this client's own send)
+  // or GET /messages' streamingDeadlineAt (catch-up/reload). Drives the countdown banner;
+  // never recomputed client-side. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+  const [streamDeadlineAt, setStreamDeadlineAt] = useState<number | null>(null)
+  const [nowTick, setNowTick] = useState(() => Date.now())
+  // Latest narration line per run_research_task toolUseId — purely ephemeral UI feedback,
+  // dropped on stream end; the finding itself is what's persisted (see StepBlocks.tsx).
+  const [subAgentProgress, setSubAgentProgress] = useState<Record<string, string>>({})
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -177,12 +183,14 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const bubbleRefsRef = useRef<(HTMLDivElement | null)[]>([])
   const pendingScrollTopRef = useRef(false)
   const justLoadedRef = useRef(false)
-  const streamCancelledRef = useRef(false)
-  const idleTimerRef = useRef<number | null>(null)
+  // Keyed by chatId so Stop/idle-detection/the ack-watchdog stay correct when more than
+  // one chat streams at once (B3) — see docs/adr/0040-concurrent-per-chat-streaming.md.
+  const streamCancelledByChatRef = useRef<Record<string, boolean>>({})
+  const idleTimersRef = useRef<Record<string, number | null>>({})
   // Delivery watchdog: armed after each send; cleared by the server's `ack` (or any
-  // frame). If it fires, the send was dropped by a stale WebSocket — recover instead
-  // of hanging on "Processing…" forever.
-  const ackTimerRef = useRef<number | null>(null)
+  // frame) for that chat. If it fires, the send was dropped by a stale WebSocket —
+  // recover instead of hanging on "Processing…" forever.
+  const ackTimersRef = useRef<Record<string, number | null>>({})
   // msgId of the optimistic user bubble for the in-flight send (removed on ack-timeout).
   const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
@@ -197,20 +205,20 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // apart from "the user switched to a different chat" and skip resetting
   // composerResearchDepth in the former case — see its own comment.
   const justCreatedChatIdRef = useRef<string | null>(null)
-  // The chatId the in-flight stream actually belongs to — distinct from the chatId
-  // currently being *viewed*, which can diverge the moment the user navigates to a
-  // different chat mid-stream. Everything stream-related (applying deltas, finalizing,
-  // the messages-load effect's optimistic-bubble guard) checks this against the viewed
-  // chatId rather than assuming they're always the same chat.
-  // See docs/adr/0022-per-chat-stream-identity.md.
-  const streamingChatIdRef = useRef<string | null>(null)
   // The message list (history + optimistic user turn, no streaming bubble) as of the
-  // moment streamingChatIdRef's turn started — set alongside it at every startStream()
-  // call site. Needed because `messages` itself gets overwritten by whatever chat is
-  // later navigated to; when navigating BACK to the streaming chat, this is what restores
-  // its correct base instead of leaving the other chat's messages on screen with the
-  // streaming bubble wrongly appended underneath. See docs/adr/0022.
-  const streamingBaseMessagesRef = useRef<Message[]>([])
+  // moment each chat's stream started — set alongside startStream() at every call site.
+  // Needed because `messages` itself gets overwritten by whatever chat is later navigated
+  // to; when navigating BACK to a still-streaming chat, this is what restores its correct
+  // base instead of leaving another chat's messages on screen with the streaming bubble
+  // wrongly appended underneath. See docs/adr/0040-concurrent-per-chat-streaming.md.
+  const streamingBaseByChatRef = useRef<Record<string, Message[]>>({})
+  // The chatId this render's composer/stream state should key off. For an existing chat
+  // it's just the route param; for a /c/new draft, the route param is 'new'/undefined
+  // until the post-send navigate() lands, so this falls back to the id a send has already
+  // claimed (see newChatUploadId/handleSend) — otherwise there's no key yet.
+  const viewedOrPendingChatId: string | null = !isNew ? (chatId ?? null) : pendingNewChatIdRef.current
+  const sending = !!(viewedOrPendingChatId && sendingByChat[viewedOrPendingChatId])
+  const streamingMsg = viewedOrPendingChatId ? streamingByChat[viewedOrPendingChatId] : undefined
   // Debounce refs for the Chat details dialog's system-prompt/model-settings edits
   // (moved here from the old PreferencesPanel "This chat" tab — same 800ms pattern).
   const chatInstructionsDebounceRef = useRef<number | null>(null)
@@ -241,13 +249,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // so a one-off escalation never becomes the chat's permanent default.
   const effectiveResearchDepth = composerResearchDepth ?? draftModelSettings.researchDepth ?? 'brief'
   const modelSettingsForSend: ModelSettings = { ...draftModelSettings, researchDepth: effectiveResearchDepth }
-
-  // Live Deep Research run for the chat currently being viewed, if any — see ResearchPanel.
-  const activeResearchRun = chatId ? activeResearch[chatId] : undefined
-  // A finished run's panel stays mounted as the record of how the report was produced, but
-  // the run itself is over: it must not keep the composer marked in-flight or swallow the
-  // next deep-research send.
-  const liveResearchRun = activeResearchRun?.status === 'done' ? undefined : activeResearchRun
 
   const ALLOWED_TYPES: Record<string, 'image' | 'document'> = {
     'image/png': 'image', 'image/jpeg': 'image', 'image/gif': 'image', 'image/webp': 'image',
@@ -397,8 +398,11 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // was backgrounded and there's no live stream left to protect.
   const reloadMessages = useCallback((id: string, opts?: { force?: boolean }) => {
     api.listMessages(id).then(r => {
-      if (id === chatIdRef.current) setServerStreaming(r.streaming)
-      if (useChatStore.getState().sending && !opts?.force) return
+      if (id === chatIdRef.current) {
+        setServerStreaming(r.streaming)
+        setStreamDeadlineAt(r.streaming ? (r.streamingDeadlineAt ?? null) : null)
+      }
+      if (useChatStore.getState().sendingByChat[id] && !opts?.force) return
       const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
@@ -408,9 +412,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         messages: enriched, conversationUsage: r.conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
       })
       if (opts?.force) {
-        clearStream()
-        setSending(false)
-        streamingChatIdRef.current = null
+        clearStream(id)
+        setSending(id, false)
       }
     }).catch(() => {})
   }, [setMessages, clearStream, setSending])
@@ -543,51 +546,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, isNew])
 
-  // Re-sync Deep Research run state from the `RUN#` row — WS progress frames are best-effort
-  // (see backend/src/research/CLAUDE.md's "Progress frames and reconnect"), this is the source
-  // of truth. A run outlives the socket: it finishes in Step Functions, so a phone that
-  // backgrounds the tab misses `research_done` outright and would otherwise sit on a spinning
-  // progress panel forever. Hence this runs on refocus too, not just on chat load.
-  const reconcileResearch = useCallback((id: string) => {
-    api.getResearchRun(id).then(({ run }) => {
-      // No run row yet is not the same as no run: `startResearch` seeds the panel optimistically
-      // and the row appears a moment later, so this must stay a no-op rather than a clear.
-      if (!run) return
-      if (run.status === 'done' || run.status === 'failed') {
-        // The report landed as a normal turn while we were away, so the transcript — not the
-        // progress panel — is where it belongs now. A panel we already watched this run
-        // fill in is kept, marked done: its steps only exist in this tab's memory, and
-        // dropping them on a refocus would delete the record of the run in front of the
-        // user for no reason.
-        const shown = useChatStore.getState().activeResearch[id]
-        if (shown && shown.runId === run.runId) patchActiveResearch(id, { status: 'done', phase: null, done: true })
-        else setActiveResearch(id, null)
-        if (id === chatIdRef.current) reloadMessages(id)
-        else useChatStore.getState().invalidateMessagesCache(id)
-        // Same unlock research_done does — a run that finished while the tab was away still
-        // has to surface its findings. See docs/adr/0031-deep-research-is-not-a-project.md.
-        if (run.status === 'done') patchChat(id, { hasResearch: true })
-        return
-      }
-      setActiveResearch(id, {
-        runId: run.runId, status: run.status, question: run.question, plan: run.plan,
-        // Seeded from the approved plan, not left empty: research_wave_start fires once per
-        // wave, so a client that reloads mid-wave would otherwise sit on "Researching 0
-        // sub-questions" until the *next* wave — on a single-wave run, forever. Later waves
-        // still append their own sub-questions on top of these.
-        waveSubQuestions: run.status === 'running' ? (run.plan?.subQuestions ?? []) : [],
-        findings: run.findings, findingCount: run.findings.length, done: false,
-        failureReason: run.failureReason,
-        ...initialResearchProgress(),
-      })
-    }).catch(() => {})
-  }, [setActiveResearch, patchActiveResearch, reloadMessages, patchChat])
-
-  useEffect(() => {
-    if (isNew || !chatId) return
-    reconcileResearch(chatId)
-  }, [chatId, isNew, reconcileResearch])
-
   // Backfill: if chats were not loaded when the seed effect ran (cold navigation),
   // fill draftModelSettings once the chat record arrives in the store.
   useEffect(() => {
@@ -606,159 +564,79 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chats, chatId, isNew])
 
-  // Register WS event handler
+  // Register WS event handler. Every frame carries the chatId it belongs to (see WSEvent's
+  // doc comment) so a chat streaming in the background is kept fully up to date in the
+  // store even while a different chat is being viewed — only the bits that touch the
+  // visible UI (deadline banner, sub-agent pills, error banner, message splicing/reload)
+  // are gated to evt.chatId === chatIdRef.current. See docs/adr/0040.
   useEffect(() => {
     setWSHandlers((evt: WSEvent) => {
-      // Any frame proves the WebSocket is live → disarm the delivery watchdog.
-      clearAckTimer()
+      // Any frame proves the WebSocket is live → disarm that chat's delivery watchdog.
+      clearAckTimer(evt.chatId)
       // Same signal confirms the send that flushed this draft actually landed.
       if (pendingDraftKeyRef.current) {
         clearPersistedDraftIfMatches(pendingDraftKeyRef.current)
         pendingDraftKeyRef.current = null
       }
-      if (evt.type === 'ack') return  // delivery confirmation only; nothing to render
+      if (evt.type === 'ack') {
+        if (evt.chatId === chatIdRef.current) setStreamDeadlineAt(evt.deadlineAt ?? null)
+        return
+      }
       // Allow titleUpdated (title gen runs independently of stream cancel) and
       // error (always show server errors) and cancelled (needed for timely reload
       // after the server persists the partial cancelled turn) to pass through.
-      // Deep Research frames are unrelated to the normal chat stream — a run can be
-      // progressing in the background while a cancelled chat-stream guard is active.
-      if (evt.type.startsWith('research_')) {
-        // A message sent while a run is active goes through the normal send path
-        // (setSending(true) + startStream()) since the frontend can't know ahead of time
-        // that a run is active — the backend answers with a single research_* frame
-        // instead of a delta/done sequence, so this is what releases the send lock for it.
-        const releaseResearchSend = (text: string) => {
-          clearIdleTimer()
-          clearStream()
-          setSending(false)
-          const streamedId = streamingChatIdRef.current
-          streamingChatIdRef.current = null
-          if (streamedId) {
-            if (streamedId === chatIdRef.current) {
-              reloadMessages(streamedId)
-            } else {
-              useChatStore.getState().invalidateMessagesCache(streamedId)
-            }
-          }
-          pushToast({ kind: 'info', text })
-        }
-        if (evt.type === 'research_plan') {
-          // Recon's steps are kept: they are what the plan was drafted from, so they stay
-          // visible above it as the record of how the run scoped the question.
-          setActiveResearch(evt.chatId, {
-            runId: evt.runId, status: 'awaiting_approval', question: activeResearch[evt.chatId]?.question ?? '',
-            plan: evt.plan, waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
-            ...initialResearchProgress(),
-            reconSteps: activeResearch[evt.chatId]?.reconSteps ?? [],
-          })
-          // The plan is a persisted assistant turn (backend/src/research/awaitApproval.ts),
-          // and this frame is only sent once it is durable — so pull it into the transcript
-          // rather than rendering a panel-local copy that would vanish on approval.
-          if (evt.chatId === chatIdRef.current) reloadMessages(evt.chatId)
-          else useChatStore.getState().invalidateMessagesCache(evt.chatId)
-        } else if (evt.type === 'research_phase') {
-          patchActiveResearch(evt.chatId, { phase: evt.phase })
-        } else if (evt.type === 'research_step') {
-          addResearchStep(evt.chatId, evt.step, evt.subQuestionId)
-        } else if (evt.type === 'research_wave_start') {
-          // Findings accumulate across waves — assess.ts merges each wave into the running
-          // total, so clearing them here would make a multi-wave run look like it kept
-          // losing the work it had already reported. The sub-questions accumulate for the
-          // same reason: an earlier wave's researcher card, with its steps and its finding,
-          // is the record that the work happened.
-          // phase is cleared so the status line drops back to "researching N sub-questions"
-          // rather than keeping the previous round's "reviewing the findings" up.
-          const known = activeResearch[evt.chatId]?.waveSubQuestions ?? []
-          const added = evt.subQuestions.filter(sq => !known.some(k => k.id === sq.id))
-          patchActiveResearch(evt.chatId, { status: 'running', waveSubQuestions: [...known, ...added], phase: null })
-        } else if (evt.type === 'research_finding') {
-          addResearchFinding(evt.chatId, { subQuestionId: evt.subQuestionId, summary: evt.summary, sourceUrls: evt.sourceUrls })
-        } else if (evt.type === 'research_assess') {
-          patchActiveResearch(evt.chatId, { findingCount: evt.findingCount, done: evt.done })
-        } else if (evt.type === 'research_done') {
-          // The panel stays, as the log of how the report was arrived at — unmounting it
-          // the moment the answer lands throws away everything the user watched happen.
-          patchActiveResearch(evt.chatId, { status: 'done', phase: null, done: true })
-          // Unlocks the Research section in ChatDetailsDialog (and read_research_findings on
-          // the backend) without a chat refetch — a run never moves the chat anywhere now.
-          // See docs/adr/0031-deep-research-is-not-a-project.md.
-          patchChat(evt.chatId, { hasResearch: true })
-          if (evt.chatId === chatIdRef.current) {
-            reloadMessages(evt.chatId)
-          } else {
-            useChatStore.getState().invalidateMessagesCache(evt.chatId)
-          }
-        } else if (evt.type === 'research_failed') {
-          // Terminal: the panel stops spinning and says why. The chat is usable again the
-          // moment the row goes terminal server-side (getActiveRun stops swallowing sends as
-          // steering notes), so nothing here needs to unlock anything.
-          patchActiveResearch(evt.chatId, { status: 'failed', phase: null, done: true, failureReason: evt.message })
-          pushToast({ kind: 'error', text: evt.message })
-        } else if (evt.type === 'research_steering_noted') {
-          releaseResearchSend('Steering note added — the researcher will pick it up shortly')
-        } else if (evt.type === 'research_plan_decision') {
-          // The composer answered the approval gate. The backend has already acted on it;
-          // mirror the resulting status here so the panel stops offering the old plan
-          // (waveSubQuestions arrive separately, on the research_wave_start that precedes
-          // this frame on the approve path).
-          patchActiveResearch(evt.chatId, evt.decision === 'revise'
-            ? { status: 'planning', phase: 'planning' }
-            : { status: 'running', phase: null })
-          releaseResearchSend(evt.decision === 'revise'
-            ? 'Revising the plan with your feedback…'
-            : 'Plan approved — research started')
-        }
-        return
-      }
-      if (streamCancelledRef.current &&
+      if (streamCancelledByChatRef.current[evt.chatId] &&
           evt.type !== 'titleUpdated' &&
           evt.type !== 'error' &&
           evt.type !== 'warning' &&
           evt.type !== 'cancelled') return
       if (evt.type === 'delta') {
-        bumpIdleTimer()
-        appendDelta(evt.text)
+        bumpIdleTimer(evt.chatId)
+        appendDelta(evt.chatId, evt.text)
       } else if (evt.type === 'thinking_delta') {
-        bumpIdleTimer()
-        appendThinkingDelta(evt.text)
+        bumpIdleTimer(evt.chatId)
+        appendThinkingDelta(evt.chatId, evt.text)
       } else if (evt.type === 'thinking_done') {
-        markThinkingDone()
+        markThinkingDone(evt.chatId)
       } else if (evt.type === 'tool_call_start') {
-        bumpIdleTimer()
-        addToolCall({ toolUseId: evt.toolUseId, name: evt.name, input: '' })
+        bumpIdleTimer(evt.chatId)
+        addToolCall(evt.chatId, { toolUseId: evt.toolUseId, name: evt.name, input: '' })
       } else if (evt.type === 'tool_call') {
-        bumpIdleTimer()
-        updateToolCallInput(evt.toolUseId, evt.input)
+        bumpIdleTimer(evt.chatId)
+        updateToolCallInput(evt.chatId, evt.toolUseId, evt.input)
       } else if (evt.type === 'tool_result') {
-        bumpIdleTimer()
-        resolveToolCall(evt.toolUseId, evt.content ?? '', evt.isError, evt.screenshotUrls)
+        bumpIdleTimer(evt.chatId)
+        resolveToolCall(evt.chatId, evt.toolUseId, evt.content ?? '', evt.isError, evt.screenshotUrls)
+      } else if (evt.type === 'sub_agent_progress') {
+        bumpIdleTimer(evt.chatId)
+        if (evt.chatId === chatIdRef.current) setSubAgentProgress(prev => ({ ...prev, [evt.toolUseId]: evt.text }))
       } else if (evt.type === 'usage') {
-        setStreamUsage(evt.usage)
-        setLastTurnUsage(evt.usage)
-        // Update conversation total
-        setConversationUsage(prev => prev ? {
-          inputTokens: prev.inputTokens + evt.usage.inputTokens,
-          outputTokens: prev.outputTokens + evt.usage.outputTokens,
-          cacheReadInputTokens: (prev.cacheReadInputTokens ?? 0) + (evt.usage.cacheReadInputTokens ?? 0),
-          cacheWriteInputTokens: (prev.cacheWriteInputTokens ?? 0) + (evt.usage.cacheWriteInputTokens ?? 0),
-        } : { ...evt.usage })
+        setStreamUsage(evt.chatId, evt.usage)
+        if (evt.chatId === chatIdRef.current) {
+          setLastTurnUsage(evt.usage)
+          // Update conversation total
+          setConversationUsage(prev => prev ? {
+            inputTokens: prev.inputTokens + evt.usage.inputTokens,
+            outputTokens: prev.outputTokens + evt.usage.outputTokens,
+            cacheReadInputTokens: (prev.cacheReadInputTokens ?? 0) + (evt.usage.cacheReadInputTokens ?? 0),
+            cacheWriteInputTokens: (prev.cacheWriteInputTokens ?? 0) + (evt.usage.cacheWriteInputTokens ?? 0),
+          } : { ...evt.usage })
+        }
       } else if (evt.type === 'done' || evt.type === 'cancelled') {
-        clearIdleTimer()
-        finalizeStream()
-        setSending(false)
+        clearIdleTimer(evt.chatId)
+        const finalized = finalizeStream(evt.chatId)
+        setSending(evt.chatId, false)
         // Hydrate real msgId/parentId on the just-streamed answer so every bubble is
         // immediately re-runnable without a page reload. Reload the chat the stream
         // actually belonged to, not whatever chat happens to be viewed right now — if
         // they differ, just invalidate its cache so the next visit fetches fresh.
-        // See docs/adr/0022-per-chat-stream-identity.md.
-        const streamedId = streamingChatIdRef.current
-        streamingChatIdRef.current = null
-        if (streamedId) {
-          if (streamedId === chatIdRef.current) {
-            reloadMessages(streamedId)
-          } else {
-            useChatStore.getState().invalidateMessagesCache(streamedId)
-          }
+        if (evt.chatId === chatIdRef.current) {
+          setStreamDeadlineAt(null)
+          setSubAgentProgress({})
+          if (finalized) setMessages([...useChatStore.getState().messages, finalized])
+          reloadMessages(evt.chatId)
+        } else {
+          useChatStore.getState().invalidateMessagesCache(evt.chatId)
         }
       } else if (evt.type === 'titleUpdated') {
         renameChat(evt.chatId, evt.title)
@@ -772,27 +650,27 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       } else if (evt.type === 'warning') {
         pushToast({ kind: 'error', text: evt.message })
       } else if (evt.type === 'error') {
-        clearIdleTimer()
+        clearIdleTimer(evt.chatId)
         // Preserve the partial streaming bubble (not clearStream) so the user
         // sees what was generated before the error and can Continue from it.
-        finalizeStreamErrored()
-        setSending(false)
-        setErrorMsg(evt.message)
+        const finalized = finalizeStreamErrored(evt.chatId)
+        setSending(evt.chatId, false)
         // Reload to hydrate the real msgId/parentId/errored flag from DDB (backend now
         // persists the partial turn and advances activeLeafId on error) — targeting the
         // chat the stream belonged to, same as the done/cancelled branch above.
-        const streamedId = streamingChatIdRef.current
-        streamingChatIdRef.current = null
-        if (streamedId) {
-          if (streamedId === chatIdRef.current) {
-            reloadMessages(streamedId)
-          } else {
-            useChatStore.getState().invalidateMessagesCache(streamedId)
-          }
+        if (evt.chatId === chatIdRef.current) {
+          setStreamDeadlineAt(null)
+          setSubAgentProgress({})
+          setErrorMsg(evt.message)
+          if (finalized) setMessages([...useChatStore.getState().messages, finalized])
+          reloadMessages(evt.chatId)
+        } else {
+          pushToast({ kind: 'error', text: evt.message })
+          useChatStore.getState().invalidateMessagesCache(evt.chatId)
         }
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, activeResearch, setActiveResearch, patchActiveResearch, addResearchFinding, addResearchStep, pushToast])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, pushToast, setMessages])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -814,14 +692,14 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     // finished answer yet. This also covers navigating BACK to it after viewing another
     // chat in between, when `messages` would otherwise still hold that other chat's
     // content with the live streaming bubble wrongly appended underneath. See
-    // docs/adr/0022-per-chat-stream-identity.md.
-    if (useChatStore.getState().sending && streamingChatIdRef.current === chatId) {
-      // idleTimerRef is local to this mount and died with whatever component instance
+    // docs/adr/0040-concurrent-per-chat-streaming.md.
+    if (useChatStore.getState().sendingByChat[chatId]) {
+      // idleTimersRef is local to this mount and died with whatever component instance
       // was showing this chat before we navigated away — restart it now so a still-idle
       // wait (e.g. mid tool-call) shows "Processing…" again instead of looking stalled
       // until the next WS event happens to fire.
-      bumpIdleTimer()
-      setMessages(streamingBaseMessagesRef.current)
+      bumpIdleTimer(chatId)
+      setMessages(streamingBaseByChatRef.current[chatId] ?? [])
       setLoadingMessages(false)
       return
     }
@@ -849,7 +727,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     setLoadingMessages(true)
     let cancelled = false
     api.listMessages(chatId).then(r => {
-      if (cancelled || (useChatStore.getState().sending && streamingChatIdRef.current === chatId)) return
+      if (cancelled || useChatStore.getState().sendingByChat[chatId]) return
       const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
@@ -891,13 +769,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  // Reset bubble refs when chat changes
+  // Reset bubble refs when chat changes. Idle/ack timers are no longer cleared here — they're
+  // per-chat now, so a chat left mid-stream keeps its own timers running in the background
+  // rather than needing this view-change effect to babysit them.
   useEffect(() => {
     setShowScrollDown(false)
     bubbleRefsRef.current = []
     pendingNewChatIdRef.current = null
-    clearIdleTimer()
-    clearAckTimer()
   }, [chatId])
 
   // Focus the input whenever a new-chat is requested (covers both navigation
@@ -922,11 +800,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // navigation to a different chat.
   useEffect(() => { setDetailsOpen(false) }, [chatId])
 
-  // Mirror `sending` into ws.ts so its onclose handler knows whether a dropped socket is
-  // worth chasing with backoff (a turn in flight) or can reconnect lazily on next send. An
-  // active research run counts: `sending` is already false by then, but progress frames are
-  // still arriving and a dropped socket would silently stall the panel.
-  useEffect(() => { setTurnInFlight(sending || !!liveResearchRun) }, [sending, liveResearchRun])
+  // Mirror "is any chat sending" into ws.ts so its onclose handler knows whether a dropped
+  // socket is worth chasing with backoff — not just the viewed chat's `sending`, since a
+  // background chat's turn (B3) needs the same reconnect chase as one in view.
+  useEffect(() => {
+    const anySending = Object.values(sendingByChat).some(Boolean)
+    setTurnInFlight(anySending)
+  }, [sendingByChat])
 
   // Surface reconnect attempts so the user isn't left staring at a stalled turn with no
   // explanation — see docs/adr/0021-websocket-reconnect-and-refocus-catchup.md.
@@ -953,23 +833,15 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       const id = chatIdRef.current
       // Only force a reconcile when this tab is actually looking at the chat the
       // in-flight stream belongs to — refocusing on an unrelated chat shouldn't touch it.
-      if (!wasConnected && useChatStore.getState().sending && id && id !== 'new' && streamingChatIdRef.current === id) {
-        clearAckTimer()
-        clearIdleTimer()
+      if (!wasConnected && id && id !== 'new' && useChatStore.getState().sendingByChat[id]) {
+        clearAckTimer(id)
+        clearIdleTimer(id)
         reloadMessages(id, { force: true })
-      }
-      // A Deep Research run is not a `sending` turn — it runs in Step Functions with the socket
-      // idle, so the branch above never covers it and the missed `research_done` has to be
-      // recovered from the run row instead. Unconditional on `wasConnected`: an iOS tab can come
-      // back with the socket seemingly alive yet have slept through the frame.
-      const shownRun = id && id !== 'new' ? useChatStore.getState().activeResearch[id] : undefined
-      if (shownRun && shownRun.status !== 'done') {
-        reconcileResearch(id!)
       }
       // Otherwise just re-ask: a plain (unforced) refetch is what tells us whether a turn is
       // still streaming for this chat on a connection we no longer hold, which starts the poll
       // below. Unforced, so it can't clobber a live stream of our own.
-      if (id && id !== 'new' && !useChatStore.getState().sending) {
+      if (id && id !== 'new' && !useChatStore.getState().sendingByChat[id]) {
         reloadMessages(id)
       }
     }
@@ -980,12 +852,19 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       window.removeEventListener('focus', handleRefocus)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadMessages, reconcileResearch])
+  }, [reloadMessages])
 
   // A turn that outlived our socket can only be observed by asking. Poll while the backend
   // says one is running and we have no live stream of our own — each pass paints the rounds
   // persisted so far, so a long tool-using turn visibly advances.
-  useEffect(() => { setServerStreaming(false) }, [chatId])
+  useEffect(() => { setServerStreaming(false); setStreamDeadlineAt(null); setSubAgentProgress({}) }, [chatId])
+
+  // Ticks the countdown banner once a second while a deadline is active; idle otherwise.
+  useEffect(() => {
+    if (streamDeadlineAt === null) return
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [streamDeadlineAt])
 
   useEffect(() => {
     if (isNew || !chatId || !serverStreaming || sending) return
@@ -993,14 +872,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     return () => clearInterval(timer)
   }, [chatId, isNew, serverStreaming, sending, reloadMessages])
 
-  // Manual catch-up: refetch the transcript and re-sync any research run, for when the user
-  // just wants to know whether anything arrived while they were away.
+  // Manual catch-up: refetch the transcript, for when the user just wants to know whether
+  // anything arrived while they were away.
   const handleRefresh = useCallback(() => {
     if (!chatId || isNew) return
-    reloadMessages(chatId, { force: !useChatStore.getState().sending })
-    if (useChatStore.getState().activeResearch[chatId]) reconcileResearch(chatId)
+    reloadMessages(chatId, { force: !useChatStore.getState().sendingByChat[chatId] })
     if (wsConnectionState !== 'open') void reconnectNow().catch(() => {})
-  }, [chatId, isNew, reloadMessages, reconcileResearch, wsConnectionState])
+  }, [chatId, isNew, reloadMessages, wsConnectionState])
 
   function handleMessagesScroll() {
     const el = messagesRef.current
@@ -1116,9 +994,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   }, [])
 
   const handleRerun = useCallback(async (parentId: string) => {
-    if (!activeChat || useChatStore.getState().sending || creatingChat) return
-    streamCancelledRef.current = false
-    setSending(true)
+    if (!activeChat || useChatStore.getState().sendingByChat[chatId!] || creatingChat) return
+    streamCancelledByChatRef.current[chatId!] = false
+    setSending(chatId!, true)
     setErrorMsg(null)
     setLastTurnUsage(null)
 
@@ -1127,9 +1005,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     const cut = messages.findIndex(m => m.msgId === parentId)
     const base = cut >= 0 ? messages.slice(0, cut + 1) : messages
     if (cut >= 0) setMessages(base)
-    streamingChatIdRef.current = chatId!
-    streamingBaseMessagesRef.current = base
-    startStream()
+    streamingBaseByChatRef.current[chatId!] = base
+    startStream(chatId!)
     pendingScrollTopRef.current = true
 
     optimisticMsgIdRef.current = null  // re-run has no optimistic user bubble
@@ -1142,22 +1019,21 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         modelSettings: modelSettingsForSend,
         parentId,
       })
-      armAckWatchdog()
+      armAckWatchdog(chatId!)
     } catch (err) {
-      setSending(false)
+      setSending(chatId!, false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, messages, chatId, modelSettingsForSend, startStream])
+  }, [activeChat, creatingChat, messages, chatId, modelSettingsForSend, startStream, setSending])
 
   const handleContinue = useCallback(async (msgId: string, researchDepthOverride?: ResearchDepth) => {
-    if (!activeChat || useChatStore.getState().sending || creatingChat) return
-    streamCancelledRef.current = false
-    setSending(true)
+    if (!activeChat || useChatStore.getState().sendingByChat[chatId!] || creatingChat) return
+    streamCancelledByChatRef.current[chatId!] = false
+    setSending(chatId!, true)
     setErrorMsg(null)
     setLastTurnUsage(null)
-    streamingChatIdRef.current = chatId!
-    streamingBaseMessagesRef.current = messages
-    startStream()
+    streamingBaseByChatRef.current[chatId!] = messages
+    startStream(chatId!)
     pendingScrollTopRef.current = true
 
     optimisticMsgIdRef.current = null  // continue has no optimistic user bubble
@@ -1173,66 +1049,42 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         parentId: msgId,
         continue: true,
       })
-      armAckWatchdog()
+      armAckWatchdog(chatId!)
     } catch (err) {
-      setSending(false)
+      setSending(chatId!, false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, chatId, modelSettingsForSend, startStream])
+  }, [activeChat, creatingChat, chatId, modelSettingsForSend, startStream, setSending])
 
-  // "Go deeper" on a shallow answer. Extended reuses the continue path (builds on the
-  // research already done); Deep Research can't continue a turn — it starts a run, seeded
-  // with the nearest ancestor user message's text.
+  // "Go deeper" on a shallow answer — uniformly brief → extended → deep, all via the same
+  // continue path: deep is just a bigger round budget now, not a different code path.
   const handleEscalate = useCallback(async (msgId: string, nextDepth: ResearchDepth) => {
-    if (nextDepth === 'extended') {
-      await handleContinue(msgId, 'extended')
-      return
-    }
-    if (!activeChat || useChatStore.getState().sending || creatingChat) return
-    const assistantMsg = messages.find(m => 'msgId' in m && m.msgId === msgId) as Message | undefined
-    const ancestorUser = assistantMsg ? messages.find(m => 'msgId' in m && m.msgId === assistantMsg.parentId) as Message | undefined : undefined
-    const questionText = ancestorUser?.content
-    if (!questionText) return
-    const attachmentsPayload = attachmentPayloadFromSteps(ancestorUser?.steps)
-    setSending(true)
-    setErrorMsg(null)
-    try {
-      await ensureConnected()
-      startResearch({ chatId: chatId!, question: questionText, attachments: attachmentsPayload })
-      setActiveResearch(chatId!, {
-        runId: '', status: 'recon', question: questionText, plan: null,
-        waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
-        ...initialResearchProgress(),
-      })
-      armAckWatchdog()
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err))
-    } finally {
-      setSending(false)
-    }
-  }, [activeChat, creatingChat, chatId, messages, handleContinue])
+    await handleContinue(msgId, nextDepth)
+  }, [handleContinue])
 
   const stepHasContent = (st: Step) =>
     (st.kind === 'text' && st.text.trim() !== '') ||
     (st.kind === 'thinking' && st.text.trim() !== '') ||
     st.kind === 'tool'
 
-  function clearIdleTimer() {
-    if (idleTimerRef.current !== null) {
-      clearTimeout(idleTimerRef.current)
-      idleTimerRef.current = null
+  function clearIdleTimer(chatKey: string) {
+    const t = idleTimersRef.current[chatKey]
+    if (t !== null && t !== undefined) {
+      clearTimeout(t)
+      idleTimersRef.current[chatKey] = null
     }
   }
-  function bumpIdleTimer() {
-    clearIdleTimer()
-    setStreamIdle(false)
-    idleTimerRef.current = window.setTimeout(() => setStreamIdle(true), 2000)
+  function bumpIdleTimer(chatKey: string) {
+    clearIdleTimer(chatKey)
+    setStreamIdle(chatKey, false)
+    idleTimersRef.current[chatKey] = window.setTimeout(() => setStreamIdle(chatKey, true), 2000)
   }
 
-  function clearAckTimer() {
-    if (ackTimerRef.current !== null) {
-      clearTimeout(ackTimerRef.current)
-      ackTimerRef.current = null
+  function clearAckTimer(chatKey: string) {
+    const t = ackTimersRef.current[chatKey]
+    if (t !== null && t !== undefined) {
+      clearTimeout(t)
+      ackTimersRef.current[chatKey] = null
     }
   }
 
@@ -1240,48 +1092,47 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // ~12s of total silence means the frame never landed (stale socket). Cold starts
   // and slow first tokens are well within this window; the timer is cleared by the
   // first frame of any kind.
-  function armAckWatchdog() {
-    clearAckTimer()
-    ackTimerRef.current = window.setTimeout(handleAckTimeout, 12000)
+  function armAckWatchdog(chatKey: string) {
+    clearAckTimer(chatKey)
+    ackTimersRef.current[chatKey] = window.setTimeout(() => handleAckTimeout(chatKey), 12000)
   }
 
-  function handleAckTimeout() {
-    ackTimerRef.current = null
-    // The send never landed, so the draft it flushed must stay in storage for the
-    // restored content below to be resent — just stop tracking it as "in flight".
-    pendingDraftKeyRef.current = null
-    clearIdleTimer()
-    clearStream()
-    setSending(false)
-    setLastTurnUsage(null)
-    // The optimistic user bubble was never persisted server-side — drop it so the
-    // UI doesn't show a message that isn't really there.
-    const optId = optimisticMsgIdRef.current
-    if (optId) {
-      const remaining = useChatStore.getState().messages.filter(m => !('msgId' in m) || m.msgId !== optId)
-      setMessages(remaining)
-    }
-    optimisticMsgIdRef.current = null
-    // A startResearch send never got an ack either — the optimistic 'recon' state
-    // (runId: '') would otherwise leave the panel showing "Researching…" forever,
-    // since reconcileResearch treats a missing RUN# row as inconclusive, not absent.
-    const currentId = chatIdRef.current
-    if (currentId && useChatStore.getState().activeResearch[currentId]?.runId === '') {
-      setActiveResearch(currentId, null)
-    }
-    // Restore the typed content + attachments so a resend is one keypress away.
-    const draft = pendingSendRef.current
-    if (draft && draft.content) {
-      setInput(draft.content)
-      setAttachments(draft.attachments)
-    }
-    // New chat, first send never landed: the REST-created chat has no messages of its
-    // own (the failed send was the only thing that would have written one) — same
-    // orphan cleanup handleStop does for a Stop-before-any-answer on a fresh chat.
-    if (draft?.wasNew && currentId && currentId !== 'new') {
-      api.deleteChat(currentId).catch(() => {})
-      removeChat(currentId)
-      navigate('/c/new', { replace: true })
+  // The composer/draft-recovery UX below is scoped to a single tab's most recent send
+  // (pendingSendRef/optimisticMsgIdRef aren't per-chat — see docs/adr/0040), so it only
+  // runs when the timed-out send targeted the chat currently in view; a background chat's
+  // dropped ack still clears its own stream/sending state either way.
+  function handleAckTimeout(chatKey: string) {
+    ackTimersRef.current[chatKey] = null
+    clearIdleTimer(chatKey)
+    clearStream(chatKey)
+    setSending(chatKey, false)
+    if (chatKey === chatIdRef.current) {
+      // The send never landed, so the draft it flushed must stay in storage for the
+      // restored content below to be resent — just stop tracking it as "in flight".
+      pendingDraftKeyRef.current = null
+      setLastTurnUsage(null)
+      // The optimistic user bubble was never persisted server-side — drop it so the
+      // UI doesn't show a message that isn't really there.
+      const optId = optimisticMsgIdRef.current
+      if (optId) {
+        const remaining = useChatStore.getState().messages.filter(m => !('msgId' in m) || m.msgId !== optId)
+        setMessages(remaining)
+      }
+      optimisticMsgIdRef.current = null
+      // Restore the typed content + attachments so a resend is one keypress away.
+      const draft = pendingSendRef.current
+      if (draft && draft.content) {
+        setInput(draft.content)
+        setAttachments(draft.attachments)
+      }
+      // New chat, first send never landed: the REST-created chat has no messages of its
+      // own (the failed send was the only thing that would have written one) — same
+      // orphan cleanup handleStop does for a Stop-before-any-answer on a fresh chat.
+      if (draft?.wasNew) {
+        api.deleteChat(chatKey).catch(() => {})
+        removeChat(chatKey)
+        navigate('/c/new', { replace: true })
+      }
     }
     pushToast({ kind: 'error', text: 'Message not delivered — the connection dropped. Reconnecting; please send again.' })
     // Drop the stale socket and reopen so the resend uses a fresh connection.
@@ -1290,33 +1141,38 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   }
 
   function handleStop() {
-    streamCancelledRef.current = true
-    clearIdleTimer()
-    clearAckTimer()
-    const sm = useChatStore.getState().streamingMsg
+    const chatKey = (chatIdRef.current && chatIdRef.current !== 'new') ? chatIdRef.current : pendingNewChatIdRef.current
+    if (!chatKey) return
+    streamCancelledByChatRef.current[chatKey] = true
+    clearIdleTimer(chatKey)
+    clearAckTimer(chatKey)
+    const sm = useChatStore.getState().streamingByChat[chatKey]
     const producedContent = !!sm && sm.steps.some(stepHasContent)
-    const currentId = chatIdRef.current
     const draft = pendingSendRef.current
 
     // New chat, Stop before any answer: restore the question so it can be resubmitted.
-    if (!producedContent && draft?.wasNew && currentId && currentId !== 'new') {
-      cancelMessage()
-      clearStream()
-      setSending(false)
+    if (!producedContent && draft?.wasNew) {
+      cancelMessage(chatKey)
+      clearStream(chatKey)
+      setSending(chatKey, false)
       setInput(draft.content)
       setAttachments(draft.attachments)
       pendingSendRef.current = null
-      api.deleteChat(currentId).catch(() => {})
-      removeChat(currentId)
+      api.deleteChat(chatKey).catch(() => {})
+      removeChat(chatKey)
       navigate('/c/new', { replace: true })
       return
     }
 
-    // Default: keep whatever partial content streamed.
-    finalizeStream()
-    setSending(false)
-    if (currentId && currentId !== 'new') reloadMessages(currentId)
-    cancelMessage()
+    // Default: keep whatever partial content streamed. Stop is only reachable from the
+    // viewed chat's own button, so it's safe to splice the finalized bubble straight into
+    // the local `messages` state here (unlike the WS done/cancelled handler, which must
+    // check evt.chatId since it can fire for a background chat too).
+    const finalized = finalizeStream(chatKey)
+    setSending(chatKey, false)
+    if (finalized) setMessages([...messages, finalized])
+    reloadMessages(chatKey)
+    cancelMessage(chatKey)
   }
 
   // overrideContent/search/projectIdOverride are set only by the pendingSearch mount effect
@@ -1332,21 +1188,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     }
     const editMsgId = editingMsgId
     const editPid = editParentId
-    // Deep Research starts a Step Functions run instead of a normal streamed turn — see
-    // backend/src/research/CLAUDE.md. Not offered on the edit-message path (undesigned:
-    // editing mid-run has no defined semantics), so editMsgId falls through to a normal send.
-    // Also not offered while a run is already active for this chat — the depth picker stays
-    // on "Deep Research" for the run's duration (sticky), so a follow-up sent mid-run must
-    // fall through to the normal sendMessage path, where the backend recognizes the active
-    // run and appends the message as a steering note instead of starting a second run.
-    const isDeepResearch = effectiveResearchDepth === 'deep' && !editMsgId && !liveResearchRun
-    // startResearch.ts rejects a blank question with a 400 that only surfaces as the ack
-    // watchdog's 12s timeout — an attachment-only Deep send has no other way to fail visibly,
-    // so block it here instead.
-    if (isDeepResearch && !content) {
-      pushToast({ kind: 'error', text: 'Deep Research needs a typed question' })
-      return
-    }
     // Flush synchronously so the debounced save (composer onChange) can't lose anything
     // sitting in its ~400ms window right as the send goes out.
     if (draftSaveTimerRef.current !== null) {
@@ -1363,7 +1204,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     if (inputRef.current) inputRef.current.style.height = 'auto'
     setErrorMsg(null)
     setLastTurnUsage(null)
-    streamCancelledRef.current = false
 
     const attachmentsPayload = readyAttachments.map(a => ({
       s3Key: a.s3Key!,
@@ -1400,59 +1240,22 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       const model = newModel || defaultModel
       const systemPrompt = draftSystemPrompt
       const newChatId = pendingNewChatIdRef.current ?? newId()
+      // Claim it immediately (not just after createChat succeeds) so viewedOrPendingChatId
+      // resolves to this stream's key for every render during the pre-navigate() window —
+      // otherwise the route param is still 'new'/undefined and there'd be no key at all.
+      // Cleared by the [chatId] effect once navigate() actually lands, not here — see
+      // docs/adr/0040.
+      pendingNewChatIdRef.current = newChatId
 
-      if (isDeepResearch) {
-        setMessages([optimisticUser])
-        try {
-          const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, effectiveProjectId, { sensitive: draftSensitive, ephemeral: draftEphemeral })
-          pendingNewChatIdRef.current = null
-          const now = new Date().toISOString()
-          useChatStore.getState().addChat({
-            chatId: res.chatId,
-            title: 'New Chat',
-            model,
-            systemPrompt,
-            ...(Object.keys(draftModelSettings).length > 0 ? { modelSettings: draftModelSettings } : {}),
-            ...(effectiveProjectId ? { projectId: effectiveProjectId } : {}),
-            createdAt: now,
-            updatedAt: now,
-          })
-          await ensureConnected()
-          startResearch({ chatId: res.chatId, question: content, attachments: attachmentsPayload })
-          setActiveResearch(res.chatId, {
-            runId: '', status: 'recon', question: content, plan: null,
-            waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
-            ...initialResearchProgress(),
-          })
-          armAckWatchdog()
-          // Seed the cache before navigating: the load effect blanks and refetches an
-          // uncached chat, which would drop the question bubble in the window before
-          // ws/startResearch.ts's user turn is queryable. A cache hit skips both, and
-          // research_done's reload replaces this with the real transcript.
-          useChatStore.getState().setMessagesCache(res.chatId, {
-            messages: [optimisticUser], conversationUsage: null, hasMoreOlder: false, oldestMsgId: null,
-          })
-          justCreatedChatIdRef.current = res.chatId
-          navigate(`/c/${res.chatId}`, { replace: true })
-        } catch (err) {
-          setMessages([])
-          setErrorMsg(err instanceof Error ? err.message : String(err))
-        } finally {
-          setCreatingChat(false)
-        }
-        return
-      }
-
-      streamingChatIdRef.current = newChatId
-      streamingBaseMessagesRef.current = [optimisticUser]
-      setSending(true)
+      streamCancelledByChatRef.current[newChatId] = false
+      streamingBaseByChatRef.current[newChatId] = [optimisticUser]
+      setSending(newChatId, true)
       setMessages([optimisticUser])
-      startStream()
+      startStream(newChatId)
       pendingScrollTopRef.current = true
 
       try {
         const res = await api.createChat(model, systemPrompt, newChatId, draftModelSettings, effectiveProjectId, { sensitive: draftSensitive, ephemeral: draftEphemeral })
-        pendingNewChatIdRef.current = null
         const now = new Date().toISOString()
         if (draftSensitive || draftEphemeral) {
           // Fetch the authoritative DTO (with expiresAt) rather than hand-building one, so the
@@ -1475,11 +1278,11 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           chatId: res.chatId, content, model, systemPrompt, modelSettings: modelSettingsForSend, attachments: attachmentsPayload,
           ...(search ? { search } : {}),
         })
-        armAckWatchdog()
+        armAckWatchdog(newChatId)
         justCreatedChatIdRef.current = res.chatId
         navigate(`/c/${res.chatId}`, { replace: true })
       } catch (err) {
-        setSending(false)
+        setSending(newChatId, false)
         setCreatingChat(false)
         setMessages([])
         setErrorMsg(err instanceof Error ? err.message : String(err))
@@ -1491,7 +1294,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
 
     // Existing chat
     if (!activeChat) return
-    setSending(true)
+    streamCancelledByChatRef.current[chatId!] = false
+    setSending(chatId!, true)
 
     if (editMsgId) {
       // Edit branch: truncate display to before the edited message, then stream a sibling
@@ -1499,9 +1303,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       const base = idx >= 0 ? messages.slice(0, idx) : messages
       const nextMessages = [...base, optimisticUser]
       setMessages(nextMessages)
-      streamingChatIdRef.current = chatId!
-      streamingBaseMessagesRef.current = nextMessages
-      startStream()
+      streamingBaseByChatRef.current[chatId!] = nextMessages
+      startStream(chatId!)
       pendingScrollTopRef.current = true
       try {
         await ensureConnected()
@@ -1514,35 +1317,10 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           parentId: editPid,
           attachments: attachmentsPayload,
         })
-        armAckWatchdog()
+        armAckWatchdog(chatId!)
       } catch (err) {
-        setSending(false)
+        setSending(chatId!, false)
         setErrorMsg(err instanceof Error ? err.message : String(err))
-      }
-      return
-    }
-
-    if (isDeepResearch) {
-      const researchMessages = [...messages, optimisticUser]
-      setMessages(researchMessages)
-      try {
-        await ensureConnected()
-        startResearch({ chatId: chatId!, question: content, attachments: attachmentsPayload })
-        setActiveResearch(chatId!, {
-          runId: '', status: 'recon', question: content, plan: null,
-          waveSubQuestions: [], findings: [], findingCount: 0, done: false, failureReason: null,
-          ...initialResearchProgress(),
-        })
-        armAckWatchdog()
-        // Same reason as the new-chat branch above: keep the question bubble across a
-        // switch to another chat and back, before the persisted turn is queryable.
-        useChatStore.getState().setMessagesCache(chatId!, {
-          messages: researchMessages, conversationUsage, hasMoreOlder, oldestMsgId,
-        })
-      } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : String(err))
-      } finally {
-        setSending(false)
       }
       return
     }
@@ -1550,9 +1328,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     // Normal send path
     const normalSendMessages = [...messages, optimisticUser]
     setMessages(normalSendMessages)
-    streamingChatIdRef.current = chatId!
-    streamingBaseMessagesRef.current = normalSendMessages
-    startStream()
+    streamingBaseByChatRef.current[chatId!] = normalSendMessages
+    startStream(chatId!)
     pendingScrollTopRef.current = true
 
     try {
@@ -1565,9 +1342,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         modelSettings: modelSettingsForSend,
         attachments: attachmentsPayload,
       })
-      armAckWatchdog()
+      armAckWatchdog(chatId!)
     } catch (err) {
-      setSending(false)
+      setSending(chatId!, false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
   }
@@ -1691,9 +1468,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     }
   }
 
-  // streamingMsg is a single global slot — only splice it into this chat's view when
-  // this is actually the chat the in-flight stream belongs to (see streamingChatIdRef).
-  const allMessages = [...messages, ...(streamingMsg && streamingChatIdRef.current === chatId ? [streamingMsg] : [])]
+  const allMessages = [...messages, ...(streamingMsg ? [streamingMsg] : [])]
 
   const sensitive = isNew ? draftSensitive : !!activeChat?.sensitive
   const ephemeral = isNew ? draftEphemeral : !!activeChat?.ephemeral
@@ -1785,6 +1560,16 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         </div>
       )}
 
+      {/* Deep-research turns run for minutes, not seconds — this says when to expect the
+          answer rather than leaving the wait silent. Deadline never recomputed client-side. */}
+      {streamDeadlineAt !== null && (sending || serverStreaming) && (
+        <div className="error-banner warning">
+          <span>
+            <FontAwesomeIcon icon={faSpinner} spin /> Researching — answer by {formatCountdown(streamDeadlineAt - nowTick)} or sooner
+          </span>
+        </div>
+      )}
+
       {!isNew && activeChat?.modelMigratedFrom && (
         <div className="error-banner warning">
           <span>
@@ -1824,6 +1609,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
               key={'msgId' in m ? m.msgId : `stream-${i}`}
               ref={el => { bubbleRefsRef.current[i] = el }}
               message={m}
+              subAgentProgress={subAgentProgress}
               onRerun={!isNew ? handleRerun : undefined}
               onContinue={!isNew ? handleContinue : undefined}
               onEscalate={!isNew ? handleEscalate : undefined}
@@ -1834,23 +1620,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
               showTokenStats={effectiveShowTokenStats}
             />
           ))}
-          {activeResearchRun && (
-            <div className="message assistant">
-              <ResearchPanel
-                run={activeResearchRun}
-                // Approving moves the run out of awaiting_approval right away, matching
-                // what the backend writes to the run row — the panel must stop offering a
-                // plan the user has already acted on rather than waiting out the minute of
-                // backend work for the frame that says so. Patch after the send, so a
-                // closed socket leaves the plan in place to retry. Feedback typed into the
-                // composer takes the other route, and lands here as research_plan_decision.
-                onApprove={() => {
-                  researchApprove({ chatId: chatId!, runId: activeResearchRun.runId, decision: 'approve' })
-                  patchActiveResearch(chatId!, { status: 'running', waveSubQuestions: activeResearchRun.plan?.subQuestions ?? [], phase: null })
-                }}
-              />
-            </div>
-          )}
           <div ref={bottomRef} />
         </div>
 
@@ -2081,26 +1850,15 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             </button>
           )}
           {sending ? (
-            // A stream in flight is global (one at a time app-wide), but it may belong to
-            // a chat other than the one currently viewed — don't let Stop here cancel some
-            // other chat's answer. See docs/adr/0022-per-chat-stream-identity.md.
-            streamingChatIdRef.current === chatId ? (
-              <button
-                className="btn-send btn-stop"
-                onClick={handleStop}
-                title="Stop generating"
-              >
-                <FontAwesomeIcon icon={faStop} />
-              </button>
-            ) : (
-              <button
-                className="btn-send btn-stop"
-                disabled
-                title="Another chat is still generating a response"
-              >
-                <FontAwesomeIcon icon={faStop} />
-              </button>
-            )
+            // sending is derived from sendingByChat[viewedOrPendingChatId], so it's already
+            // scoped to the chat currently in view — see docs/adr/0040-concurrent-per-chat-streaming.md.
+            <button
+              className="btn-send btn-stop"
+              onClick={handleStop}
+              title="Stop generating"
+            >
+              <FontAwesomeIcon icon={faStop} />
+            </button>
           ) : (
             <button
               className="btn-send"

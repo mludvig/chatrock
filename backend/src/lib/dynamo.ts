@@ -290,27 +290,29 @@ export async function deleteConnection(connId: string) {
   }))
 }
 
-export async function setStreamCancel(connId: string): Promise<void> {
+// Cancel lives on the chat row, not the connection row, so cancelling one chat can never
+// abort a different chat's turn on the same connection. See docs/adr/0040.
+export async function setStreamCancel(sub: string, chatId: string): Promise<void> {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
-    Key: buildConnKey(connId),
+    Key: buildChatKey(sub, chatId),
     UpdateExpression: 'SET cancelRequested = :v',
     ExpressionAttributeValues: { ':v': true },
   }))
 }
 
-export async function isStreamCancelled(connId: string): Promise<boolean> {
+export async function isStreamCancelled(sub: string, chatId: string): Promise<boolean> {
   const res = await ddb.send(new GetCommand({
     TableName: TABLE,
-    Key: buildConnKey(connId),
+    Key: buildChatKey(sub, chatId),
   }))
   return res.Item?.cancelRequested === true
 }
 
-export async function clearStreamCancel(connId: string): Promise<void> {
+export async function clearStreamCancel(sub: string, chatId: string): Promise<void> {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
-    Key: buildConnKey(connId),
+    Key: buildChatKey(sub, chatId),
     UpdateExpression: 'REMOVE cancelRequested',
   }))
 }

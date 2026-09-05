@@ -76,8 +76,11 @@ export const buildHandler = (postFn: PostFn) => async (
   let connectionGone = false
   const safePost = async (params: { ConnectionId: string; Data: string }) => {
     if (connectionGone) return
+    // Every frame carries chatId so a client tracking multiple in-flight chats (B3) can
+    // route it — set here, once, rather than at each of the ~20 call sites below.
+    const dataWithChatId = JSON.stringify({ ...JSON.parse(params.Data), chatId })
     try {
-      await postFn(params)
+      await postFn({ ConnectionId: params.ConnectionId, Data: dataWithChatId })
     } catch (e: unknown) {
       const httpStatus = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode
       if (httpStatus === 410) {
@@ -428,8 +431,8 @@ export const buildHandler = (postFn: PostFn) => async (
     console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
   }
 
-  // Clear any stale cancel flag from a previous stream on this connection
-  await clearStreamCancel(connId)
+  // Clear any stale cancel flag from a previous stream on this chat
+  await clearStreamCancel(sub, chatId)
 
   const abortController = new AbortController()
   let cancelled = false
@@ -440,7 +443,7 @@ export const buildHandler = (postFn: PostFn) => async (
   const startPollTimer = () => {
     pollTimer = setTimeout(async () => {
       if (abortController.signal.aborted) return
-      if (await isStreamCancelled(connId)) {
+      if (await isStreamCancelled(sub, chatId)) {
         abortController.abort()
       } else {
         startPollTimer()
@@ -633,7 +636,7 @@ export const buildHandler = (postFn: PostFn) => async (
     }
   } catch (err) {
     // Check if abort was requested (either via signal or cancel flag)
-    const wasAborted = abortController.signal.aborted || await isStreamCancelled(connId)
+    const wasAborted = abortController.signal.aborted || await isStreamCancelled(sub, chatId)
     if (wasAborted) {
       cancelled = true
       await flushPartial()
@@ -679,7 +682,7 @@ export const buildHandler = (postFn: PostFn) => async (
     } catch (e) {
       console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
     }
-    await clearStreamCancel(connId)
+    await clearStreamCancel(sub, chatId)
     console.log(JSON.stringify({ event: 'stream_cancelled', chatId, connId }))
     await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'cancelled' }) })
     return { statusCode: 200, body: '' }
