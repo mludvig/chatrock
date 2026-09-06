@@ -115,6 +115,16 @@ export const MODELS: Model[] = [
       region: 'us-east-1', maxOutputTokens: 16000,
     },
   },
+  {
+    id: 'openai.gpt-6-astra',
+    name: 'GPT-6 Astra',
+    capabilities: {
+      provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
+      thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
+      attachments: true, documents: true, promptCaching: 'explicit',
+      region: 'us-east-1', maxOutputTokens: 16000,
+    },
+  },
 ]
 
 export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-5'
