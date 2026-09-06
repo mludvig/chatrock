@@ -69,14 +69,16 @@ data "aws_iam_policy_document" "lambda_policy" {
   # distinct service (`bedrock-mantle`, not `bedrock`) with its own action namespace and
   # resource type — NOT the foundation-model/inference-profile ARNs above. Action + resource
   # ARN confirmed empirically from a real AccessDeniedException (not guessed — the SDK gives
-  # no documented IAM reference for this as of Aug 2026): "arn:aws:bedrock-mantle:us-east-1:
+  # no documented IAM reference for this as of Aug 2026): "arn:aws:bedrock-mantle:<region>:
   # <account>:project/default" is a fixed per-account "default" project, not per-model.
-  # us-east-1-hardcoded since Mantle models are pinned there (see config/models.ts) regardless
-  # of var.aws_region. See docs/adr/0010-bedrock-mantle-distinct-iam-signing-service.md.
+  # Region wildcarded since Mantle models are pinned to specific regions independent of the
+  # backend's own region (see config/models.ts's per-model `region`), and IAM has no notion
+  # of "every region a model happens to be pinned to" short of listing them all by hand.
+  # See docs/adr/0010-bedrock-mantle-distinct-iam-signing-service.md.
   statement {
     sid       = "InvokeBedrockMantle"
     actions   = ["bedrock-mantle:CreateInference"]
-    resources = ["arn:aws:bedrock-mantle:us-east-1:${data.aws_caller_identity.current.account_id}:project/default"]
+    resources = ["arn:aws:bedrock-mantle:*:${data.aws_caller_identity.current.account_id}:project/default"]
   }
 
   statement {
