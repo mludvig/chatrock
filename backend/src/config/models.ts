@@ -65,20 +65,19 @@ export const MODELS: Model[] = [
     name: 'Claude Haiku 4.5',
     capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
-  // xAI Grok 4.6 via Bedrock Converse. Verified live against ap-southeast-2 Aug 2026:
-  // rejects temperature/topP (ValidationException), rejects document blocks outright,
-  // and image blocks 500/503 despite the model card listing IMAGE input — not usable yet.
-  // Always emits a reasoningContent/redactedContent block regardless of any thinking
-  // param tried (Anthropic-style thinking.type=adaptive, a plain reasoning_effort) with
-  // no observable effect on output — no confirmed effort dial, so thinking is 'none'.
-  {
-    id: 'global.xai.grok-4.6',
-    name: 'Grok 4.6',
-    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: false, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
-  },
   // Bedrock Mantle (OpenAI Responses API) — no cross-region inference profile, no
   // ap-southeast-2 availability as of Aug 2026: pinned to us-east-1 (see backend/CLAUDE.md's
   // "LLM providers" section). Always reasons (no 'off' level) — thinkingLevels omits it.
+  {
+    id: 'openai.gpt-6-astra',
+    name: 'GPT-6 Astra',
+    capabilities: {
+      provider: 'bedrock-mantle',
+      thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
+      attachments: true, documents: true, promptCaching: 'explicit',
+      region: 'us-east-1', maxOutputTokens: 16000,
+    },
+  },
   {
     id: 'openai.gpt-5.6-sol',
     name: 'GPT-5.6 Sol',
@@ -109,15 +108,16 @@ export const MODELS: Model[] = [
       region: 'us-east-1', maxOutputTokens: 16000,
     },
   },
+  // xAI Grok 4.6 via Bedrock Converse. Verified live against ap-southeast-2 Aug 2026:
+  // rejects temperature/topP (ValidationException), rejects document blocks outright,
+  // and image blocks 500/503 despite the model card listing IMAGE input — not usable yet.
+  // Always emits a reasoningContent/redactedContent block regardless of any thinking
+  // param tried (Anthropic-style thinking.type=adaptive, a plain reasoning_effort) with
+  // no observable effect on output — no confirmed effort dial, so thinking is 'none'.
   {
-    id: 'openai.gpt-6-astra',
-    name: 'GPT-6 Astra',
-    capabilities: {
-      provider: 'bedrock-mantle',
-      thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
-      attachments: true, documents: true, promptCaching: 'explicit',
-      region: 'us-east-1', maxOutputTokens: 16000,
-    },
+    id: 'global.xai.grok-4.6',
+    name: 'Grok 4.6',
+    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: false, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
   },
 ]
 
