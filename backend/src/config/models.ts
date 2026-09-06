@@ -68,6 +68,9 @@ export const MODELS: Model[] = [
   // Bedrock Mantle (OpenAI Responses API) — no cross-region inference profile, no
   // ap-southeast-2 availability as of Aug 2026: pinned to us-east-1 (see backend/CLAUDE.md's
   // "LLM providers" section). Always reasons (no 'off' level) — thinkingLevels omits it.
+  // GPT-6 Astra is the one exception: confirmed 404 on the Mantle data plane in
+  // us-east-1/us-east-2 despite being listed there by ListFoundationModels — only
+  // us-west-2 actually serves it (verified via backend/scripts/mantle-spike.mjs).
   {
     id: 'openai.gpt-6-astra',
     name: 'GPT-6 Astra',
@@ -75,7 +78,7 @@ export const MODELS: Model[] = [
       provider: 'bedrock-mantle',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
-      region: 'us-east-1', maxOutputTokens: 16000,
+      region: 'us-west-2', maxOutputTokens: 16000,
     },
   },
   {
