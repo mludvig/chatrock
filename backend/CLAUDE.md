@@ -7,7 +7,7 @@ See root `CLAUDE.md` for commands, architecture overview, DynamoDB schema, and k
 ```
 backend/prompts/           — system-prompt text files for enrichment/search/summarization/title calls (imported as strings via esbuild's `.txt` loader — see below)
 backend/src/
-  config/models.ts        — model registry with capabilities (provider/temperature/topP/topK/thinking/thinkingLevels/attachments/documents/promptCaching/region/maxOutputTokens)
+  config/models.ts        — model registry with capabilities (provider/thinking/thinkingLevels/attachments/documents/promptCaching/region/maxOutputTokens)
   lib/bedrock.ts          — thin re-export façade over lib/llm/ (kept for `tests/lib/bedrock.test.ts`'s `jest.mock('../../src/lib/bedrock')` and other call sites) — see "LLM providers" below for where the real implementation lives
   lib/llm/                — provider-neutral chat abstraction — see "LLM providers" below
   lib/blocks.ts           — DELETED; capToolResultText/TOOL_RESULT_CAP/TOOL_RESULTS_ROUND_CAP moved into lib/llm/blocks.ts alongside the neutral Block shape
@@ -43,9 +43,9 @@ Each Lambda is bundled independently by esbuild into `terraform/dist/<name>.zip`
 
 ## Model capabilities
 
-`backend/src/config/models.ts` is the single source of truth. Each `Model` entry declares `capabilities: { provider, temperature, topP, topK, thinking, thinkingLevels?, attachments, documents, promptCaching, region?, maxOutputTokens? }`. `provider` is a `ProviderId` (`'bedrock-converse'|'bedrock-mantle'`, see "LLM providers" below) — it's what `lib/llm/registry.ts`'s `getProvider(modelId)` dispatches on. `thinking` is `'adaptive'` (Anthropic on Converse — `thinking.type=adaptive` + `output_config.effort`), `'effort'` (OpenAI on Mantle — a plain `reasoning.effort` dial), or `'none'` (Haiku 4.5). `thinkingLevels` restricts which of `ThinkingEffort`'s five levels (`off|low|medium|high|max`) a model accepts — omit for all five; GPT-5.6 omits `'off'` since it always reasons. `promptCaching` (`'auto'|'explicit'|'none'`) and `region` (per-model pin; undefined → the provider's own default) are descriptive capability metadata, not yet load-bearing for every provider. Adding a new model is one entry in the `MODELS` array; adding a new *provider* is one new file under `lib/llm/providers/` + one line in `registry.ts`.
+`backend/src/config/models.ts` is the single source of truth. Each `Model` entry declares `capabilities: { provider, thinking, thinkingLevels?, attachments, documents, promptCaching, region?, maxOutputTokens? }`. `provider` is a `ProviderId` (`'bedrock-converse'|'bedrock-mantle'`, see "LLM providers" below) — it's what `lib/llm/registry.ts`'s `getProvider(modelId)` dispatches on. `thinking` is `'adaptive'` (Anthropic on Converse — `thinking.type=adaptive` + `output_config.effort`), `'effort'` (OpenAI on Mantle — a plain `reasoning.effort` dial), or `'none'` (Haiku 4.5). `thinkingLevels` restricts which of `ThinkingEffort`'s five levels (`off|low|medium|high|max`) a model accepts — omit for all five; GPT-5.6 omits `'off'` since it always reasons. `promptCaching` (`'auto'|'explicit'|'none'`) and `region` (per-model pin; undefined → the provider's own default) are descriptive capability metadata, not yet load-bearing for every provider. Adding a new model is one entry in the `MODELS` array; adding a new *provider* is one new file under `lib/llm/providers/` + one line in `registry.ts`.
 
-Each adapter's `streamTurn` reads `getCapabilities(modelId)` to build its own inference params — e.g. Converse suppresses temperature/topP when thinking is active (API requirement) and uses `caps.maxOutputTokens` for `inferenceConfig.maxTokens`.
+Each adapter's `streamTurn` reads `getCapabilities(modelId)` to build its own inference params — e.g. Converse uses `caps.maxOutputTokens` for `inferenceConfig.maxTokens`.
 
 **Stale model self-healing**: when a model id is retired/renamed from `MODELS` (e.g. the Sonnet 4.6 → 5 rename), no alias table is kept — a chat's stored `model` just goes stale. `http/chats.ts`'s `resolveChatModel()` self-heals it lazily the next time the chat is read (`GET /api/chats`, `GET /api/chats/{chatId}`, and fork's read of the source chat): swaps in `DEFAULT_CHAT_MODEL`, persists it via `updateChatModel`, and returns `modelMigratedFrom: <oldId>` in that one response so the frontend can show a one-time notice (`ChatView.tsx`, cleared via `clearModelMigrationNotice`). Only affects the *next* message — each `Message` row's own `model` field is a historical record of what actually generated that turn and is never rewritten, so past turns still show what was really used.
 
@@ -146,7 +146,7 @@ Two writers, two stores (user and project):
 
 ## User preferences
 
-`lib/preferences.ts` defines `UserPreferences`: `persona`, `defaultModel`, `thinkingEffort`, `webSearchEnabled`, `webSearchProvider` (`'jina'|'agentcore'`), `browserCoreEnabled`, `browserExtendedEnabled`, `temperature`, `topP`, `topK`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat). Stored as a JSON blob in the `PREF#USER` row's `prefs` attribute.
+`lib/preferences.ts` defines `UserPreferences`: `persona`, `defaultModel`, `thinkingEffort`, `webSearchEnabled`, `webSearchProvider` (`'jina'|'agentcore'`), `browserCoreEnabled`, `browserExtendedEnabled`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat). Stored as a JSON blob in the `PREF#USER` row's `prefs` attribute.
 
 ## Attachments
 

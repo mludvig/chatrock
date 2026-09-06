@@ -25,15 +25,9 @@ function buildInferenceParams(modelId: string, settings: ModelSettings) {
   const caps = getCapabilities(modelId)
   const thinkingActive = caps.thinking !== 'none' && settings.thinkingEffort && settings.thinkingEffort !== 'off'
 
-  // Temperature and topP must be omitted when thinking is active (API requirement)
   const inferenceConfig: Record<string, unknown> = { maxTokens: caps.maxOutputTokens ?? 16000 }
-  if (!thinkingActive) {
-    if (caps.temperature && settings.temperature !== undefined) inferenceConfig.temperature = settings.temperature
-    if (caps.topP && settings.topP !== undefined) inferenceConfig.topP = settings.topP
-  }
 
   const additionalFields: DocumentType = {}
-  if (caps.topK && settings.topK !== undefined) (additionalFields as Record<string, DocumentType>).top_k = settings.topK
   if (thinkingActive && caps.thinking === 'adaptive') {
     // display defaults to 'omitted' on the 5-series models (Opus 5/Sonnet 5/etc) —
     // request 'summarized' explicitly or thinking blocks come back text-empty (signature only).

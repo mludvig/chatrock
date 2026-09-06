@@ -114,9 +114,6 @@ export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
 
 export interface ModelCapabilities {
   provider: 'bedrock-converse' | 'bedrock-mantle'
-  temperature: boolean
-  topP: boolean
-  topK: boolean
   thinking: 'adaptive' | 'effort' | 'none'
   thinkingLevels?: ThinkingEffort[]
   attachments: boolean
@@ -127,9 +124,6 @@ export interface ModelCapabilities {
 }
 
 export interface ModelSettings {
-  temperature?: number
-  topP?: number
-  topK?: number
   thinkingEffort?: ThinkingEffort
   webSearchEnabled?: boolean
   webSearchProvider?: 'jina' | 'agentcore'
@@ -188,9 +182,6 @@ export interface UserPreferences {
   webSearchProvider?: 'jina' | 'agentcore'
   browserCoreEnabled?: boolean
   browserExtendedEnabled?: boolean
-  temperature?: number
-  topP?: number
-  topK?: number
   showTokenStats?: boolean
   researchDepth?: ResearchDepth
 }
@@ -223,9 +214,6 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
   // Core always defaults on regardless of the old flag's value.
   const legacyBrowserToolEnabled = (prev as { browserToolEnabled?: boolean }).browserToolEnabled
   return {
-    ...(caps.temperature && prev.temperature !== undefined ? { temperature: prev.temperature } : {}),
-    ...(caps.topP && prev.topP !== undefined ? { topP: prev.topP } : {}),
-    ...(caps.topK && prev.topK !== undefined ? { topK: prev.topK } : {}),
     ...(caps.thinking !== 'none'
       ? {
           thinkingEffort: (prev.thinkingEffort && (!caps.thinkingLevels || caps.thinkingLevels.includes(prev.thinkingEffort)))

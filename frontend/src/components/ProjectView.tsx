@@ -394,7 +394,7 @@ export default function ProjectView({ defaultModel }: Props) {
   const displayName = project?.name ?? 'Project'
   const projectModelDef = models.find(m => m.id === project?.defaultModel)
   const projectCaps = projectModelDef?.capabilities
-    ?? { provider: 'bedrock-converse' as const, temperature: true, topP: true, topK: false, thinking: 'none' as const, attachments: true, documents: true, promptCaching: 'none' as const }
+    ?? { provider: 'bedrock-converse' as const, thinking: 'none' as const, attachments: true, documents: true, promptCaching: 'none' as const }
 
   return (
     <div className="project-view">
