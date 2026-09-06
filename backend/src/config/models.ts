@@ -52,8 +52,8 @@ export interface Model {
 // Verified via: aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED
 export const MODELS: Model[] = [
   {
-    id: 'global.anthropic.claude-fable-5',
-    name: 'Claude Fable 5',
+    id: 'global.anthropic.claude-fable-5-1',
+    name: 'Claude Fable 5.1',
     capabilities: { provider: 'bedrock-converse', temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
