@@ -18,12 +18,12 @@ test('chat overrides user: chat value wins', () => {
 })
 
 test('project overrides user but chat overrides project', () => {
-  const user: UserPreferences = { answerLength: 'default', temperature: 0.5, webSearchEnabled: false }
-  const project: UserPreferences = { answerLength: 'short', temperature: 0.7 }
+  const user: UserPreferences = { answerLength: 'default', thinkingEffort: 'low', webSearchEnabled: false }
+  const project: UserPreferences = { answerLength: 'short', thinkingEffort: 'high' }
   const chat: UserPreferences = { answerLength: 'extensive' }
   const result = resolvePreferences({ user, project, chat })
   expect(result.answerLength).toBe('extensive') // chat wins
-  expect(result.temperature).toBe(0.7)           // project overrides user
+  expect(result.thinkingEffort).toBe('high')     // project overrides user
   expect(result.webSearchEnabled).toBe(false)            // user preserved
 })
 
@@ -68,11 +68,11 @@ test('researchDepth layers chat > project > user', () => {
 })
 
 test('resolution order is user < project < chat for each key independently', () => {
-  const user: UserPreferences = { persona: 'user-persona', answerLength: 'default', topP: 0.9 }
+  const user: UserPreferences = { persona: 'user-persona', answerLength: 'default', webSearchEnabled: true }
   const project: UserPreferences = { persona: 'project-persona', answerLength: 'short' }
   const chat: UserPreferences = { persona: 'chat-persona' }
   const result = resolvePreferences({ user, project, chat })
   expect(result.persona).toBe('chat-persona')      // chat wins
   expect(result.answerLength).toBe('short')         // project wins over user
-  expect(result.topP).toBe(0.9)                    // user value, nothing overrides
+  expect(result.webSearchEnabled).toBe(true)       // user value, nothing overrides
 })

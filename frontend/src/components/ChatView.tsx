@@ -237,7 +237,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
-    ?? { provider: 'bedrock-converse', temperature: true, topP: true, topK: false, thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
+    ?? { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
 
   // Per-chat override wins when set; otherwise fall back to the global default. Usage is
   // always recorded either way — this only gates whether it's rendered.
@@ -514,12 +514,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           ...(userPreferences.webSearchEnabled !== undefined ? { webSearchEnabled: userPreferences.webSearchEnabled } : {}),
           ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
             ? { thinkingEffort: userPreferences.thinkingEffort }
-            : {}),
-          ...(currentModelDef.capabilities.temperature && userPreferences.temperature !== undefined
-            ? { temperature: userPreferences.temperature }
-            : {}),
-          ...(currentModelDef.capabilities.topP && userPreferences.topP !== undefined
-            ? { topP: userPreferences.topP }
             : {}),
         })
       }

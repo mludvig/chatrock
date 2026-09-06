@@ -6,9 +6,6 @@ export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
 
 export interface ModelCapabilities {
   provider: ProviderId
-  temperature: boolean
-  topP: boolean
-  topK: boolean
   // 'adaptive' = Bedrock Converse's thinking.type=adaptive + output_config.effort (Anthropic);
   // 'effort' = a plain reasoning.effort dial (e.g. Bedrock Mantle/OpenAI); 'none' = unsupported.
   thinking: 'adaptive' | 'effort' | 'none'
@@ -23,9 +20,6 @@ export interface ModelCapabilities {
 
 // Per-send inference settings from the client. Only include supported fields.
 export interface ModelSettings {
-  temperature?: number                              // 0.0–1.0
-  topP?: number                                     // 0.0–1.0
-  topK?: number                                     // 1–500 (integer)
   thinkingEffort?: ThinkingEffort
   webSearchEnabled?: boolean                        // false disables web tools
   webSearchProvider?: 'jina' | 'agentcore'           // which backend powers the web_search tool
@@ -54,22 +48,22 @@ export const MODELS: Model[] = [
   {
     id: 'global.anthropic.claude-fable-5-1',
     name: 'Claude Fable 5.1',
-    capabilities: { provider: 'bedrock-converse', temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-opus-5',
     name: 'Claude Opus 5',
-    capabilities: { provider: 'bedrock-converse', temperature: false, topP: false, topK: false, thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-sonnet-5',
     name: 'Claude Sonnet 5',
-    capabilities: { provider: 'bedrock-converse', temperature: true, topP: true, topK: false, thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     name: 'Claude Haiku 4.5',
-    capabilities: { provider: 'bedrock-converse', temperature: true, topP: true, topK: true, thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   // xAI Grok 4.6 via Bedrock Converse. Verified live against ap-southeast-2 Aug 2026:
   // rejects temperature/topP (ValidationException), rejects document blocks outright,
@@ -80,7 +74,7 @@ export const MODELS: Model[] = [
   {
     id: 'global.xai.grok-4.6',
     name: 'Grok 4.6',
-    capabilities: { provider: 'bedrock-converse', temperature: false, topP: false, topK: false, thinking: 'none', attachments: false, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: false, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
   },
   // Bedrock Mantle (OpenAI Responses API) — no cross-region inference profile, no
   // ap-southeast-2 availability as of Aug 2026: pinned to us-east-1 (see backend/CLAUDE.md's
@@ -89,7 +83,7 @@ export const MODELS: Model[] = [
     id: 'openai.gpt-5.6-sol',
     name: 'GPT-5.6 Sol',
     capabilities: {
-      provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
+      provider: 'bedrock-mantle',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
       region: 'us-east-1', maxOutputTokens: 16000,
@@ -99,7 +93,7 @@ export const MODELS: Model[] = [
     id: 'openai.gpt-5.6-terra',
     name: 'GPT-5.6 Terra',
     capabilities: {
-      provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
+      provider: 'bedrock-mantle',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
       region: 'us-east-1', maxOutputTokens: 16000,
@@ -109,7 +103,7 @@ export const MODELS: Model[] = [
     id: 'openai.gpt-5.6-luna',
     name: 'GPT-5.6 Luna',
     capabilities: {
-      provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
+      provider: 'bedrock-mantle',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
       region: 'us-east-1', maxOutputTokens: 16000,
@@ -119,7 +113,7 @@ export const MODELS: Model[] = [
     id: 'openai.gpt-6-astra',
     name: 'GPT-6 Astra',
     capabilities: {
-      provider: 'bedrock-mantle', temperature: false, topP: false, topK: false,
+      provider: 'bedrock-mantle',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
       region: 'us-east-1', maxOutputTokens: 16000,
@@ -143,7 +137,7 @@ export const MEMORY_EXTRACTION_MODEL = DEFAULT_CHAT_MODEL
 
 export function getCapabilities(modelId: string): ModelCapabilities {
   return MODELS.find(m => m.id === modelId)?.capabilities
-    ?? { provider: 'bedrock-converse', temperature: true, topP: true, topK: false, thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
+    ?? { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
 }
 
 export function isValidModelId(modelId: string): boolean {

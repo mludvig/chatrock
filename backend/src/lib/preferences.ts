@@ -11,9 +11,6 @@ export interface UserPreferences {
   memoryEnabled?: boolean             // false = skip user memory injection + extraction
   searchEnabled?: boolean             // false = omit the search_history tool from organic tool choice
   imageGenerationEnabled?: boolean    // true = enable the generate_image tool (opt-in — costs money per call)
-  temperature?: number
-  topP?: number
-  topK?: number
   showTokenStats?: boolean            // UI flag (not prompt-affecting)
   researchDepth?: 'brief' | 'extended' | 'deep'  // agentic tool-round budget default
 }
