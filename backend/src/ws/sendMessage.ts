@@ -302,6 +302,25 @@ export const buildHandler = (postFn: PostFn) => async (
   let lastTurnMsgId: string
   let bedrockMessages: NeutralMessage[]
 
+  // Fire-and-forget: title the chat from just the user's message as soon as it's
+  // persisted, so it doesn't sit as "New Chat" until the answer lands. The post-answer
+  // title block below still runs (chat.title is still 'New Chat' when it reads it) and
+  // overwrites with a better title informed by both sides of the exchange.
+  const fireEarlyTitle = () => {
+    if (chat.title !== 'New Chat') return
+    void (async () => {
+      try {
+        const title = await generateChatTitle(`User: ${content ?? ''}`, chatId)
+        if (title) {
+          await updateChatTitle(sub, chatId, title)
+          await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'titleUpdated', chatId, title }) })
+        }
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'early_title_gen_error', chatId, error: String(err) }))
+      }
+    })()
+  }
+
   if (isContinue) {
     // ── Continue path: resume generation from an errored/incomplete leaf ────────
     // The client passes the bubble's msgId (first turn of the response).
@@ -373,6 +392,7 @@ export const buildHandler = (postFn: PostFn) => async (
     }
     await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
     await advanceLeaf(userMsgId)
+    fireEarlyTitle()
     const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
     bedrockMessages = await Promise.all(
       buildActivePath(allRows, userMsgId).map(async m => ({
@@ -403,6 +423,7 @@ export const buildHandler = (postFn: PostFn) => async (
     }
     await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
     await advanceLeaf(userMsgId)
+    fireEarlyTitle()
 
     // Build Bedrock message history via the active-path tree walk.
     // Combine prior rows with the just-created user turn, then walk the active path

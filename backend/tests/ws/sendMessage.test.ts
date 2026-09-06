@@ -1928,6 +1928,48 @@ test('D1b: title generated and applied after the turn', async () => {
   expect(mockDynamo.updateChatTitle).toHaveBeenCalledWith('user-1', 'c1', 'Generated Title')
 })
 
+test('D1d: title also generated from just the user turn, fired right after it is persisted', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'New Chat' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.updateChatTitle.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+  mockEnrichment.generateChatTitle.mockResolvedValue('Generated Title')
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  // Once from the user turn alone (fired right after it's persisted), once after the full turn.
+  expect(mockEnrichment.generateChatTitle).toHaveBeenCalledWith('User: Q', 'c1')
+  expect(mockPost).toHaveBeenCalledWith(expect.objectContaining({
+    Data: JSON.stringify({ type: 'titleUpdated', chatId: 'c1', title: 'Generated Title' }),
+  }))
+})
+
+test('D1e: early title is skipped when the chat already has a real title', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing Chat' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  expect(mockEnrichment.generateChatTitle).not.toHaveBeenCalled()
+})
+
 test('D1c: user facts persisted via reconcile after the turn', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   // Use 'Existing Chat' title so needTitle=false
