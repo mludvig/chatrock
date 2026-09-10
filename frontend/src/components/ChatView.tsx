@@ -406,8 +406,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       // our local sendingByChat flag is still stuck true (e.g. a done/cancelled/error WS
       // frame was missed while this chat wasn't the active one), treat the flag as stale
       // rather than trusting it forever — otherwise this chat is stuck showing a frozen
-      // snapshot until an unrelated WS reconnect happens to clear it.
-      const staleSending = useChatStore.getState().sendingByChat[id] && !r.streaming
+      // snapshot until an unrelated WS reconnect happens to clear it. Gated on the ack
+      // watchdog having already fired/cleared (ackTimersRef.current[id] == null) so this
+      // can't race a turn that was JUST started — right after send, the backend hasn't had
+      // a chance to persist the streaming marker yet, and r.streaming would wrongly read as
+      // false for a turn that's actually about to begin (armAckWatchdog's own 12s no-frame
+      // timeout already covers "the send never landed" for that window).
+      const staleSending = useChatStore.getState().sendingByChat[id] && !r.streaming && ackTimersRef.current[id] == null
       if (useChatStore.getState().sendingByChat[id] && !opts?.force && !staleSending) return
       const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
