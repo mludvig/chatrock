@@ -82,7 +82,10 @@ export async function connect(): Promise<void> {
   explicitDisconnect = false
   if (socket && socket.readyState === WebSocket.OPEN) return
   if (!tokenProvider) throw new Error('WebSocket token provider not set')
-  onConnectionStateCb?.('connecting')
+  // Deliberately NOT setting 'connecting' here: this path also covers routine lazy connects
+  // (first load, refocus after being away, before-send when an idle socket was dropped) where
+  // nothing was actually "lost". Only scheduleReconnect() — chasing a drop mid-turn — and
+  // reconnectNow() — the user-facing button — surface the "reconnecting" banner.
   // Read the token here, per connect — not once at startup.
   const accessToken = await tokenProvider()
   return new Promise((resolve, reject) => {
@@ -159,6 +162,7 @@ export function reconnectNow(): Promise<void> {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+  onConnectionStateCb?.('connecting')
   return connect()
 }
 
