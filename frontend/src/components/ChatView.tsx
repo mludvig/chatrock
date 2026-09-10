@@ -402,7 +402,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         setServerStreaming(r.streaming)
         setStreamDeadlineAt(r.streaming ? (r.streamingDeadlineAt ?? null) : null)
       }
-      if (useChatStore.getState().sendingByChat[id] && !opts?.force) return
+      // Self-heal: if the backend confirms this chat isn't actually streaming anymore but
+      // our local sendingByChat flag is still stuck true (e.g. a done/cancelled/error WS
+      // frame was missed while this chat wasn't the active one), treat the flag as stale
+      // rather than trusting it forever — otherwise this chat is stuck showing a frozen
+      // snapshot until an unrelated WS reconnect happens to clear it.
+      const staleSending = useChatStore.getState().sendingByChat[id] && !r.streaming
+      if (useChatStore.getState().sendingByChat[id] && !opts?.force && !staleSending) return
       const enriched = enrichMessages(r.bubbles)
       setMessages(enriched)
       setConversationUsage(r.conversationUsage)
@@ -411,7 +417,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       useChatStore.getState().setMessagesCache(id, {
         messages: enriched, conversationUsage: r.conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
       })
-      if (opts?.force) {
+      if (opts?.force || staleSending) {
         clearStream(id)
         setSending(id, false)
       }
