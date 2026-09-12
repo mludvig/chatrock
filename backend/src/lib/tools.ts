@@ -43,6 +43,10 @@ export interface ToolContext {
   // wraps this per tool call so the emitted sub_agent_progress frame carries the right
   // parent toolUseId. Absent outside a live WS turn (e.g. tests).
   onProgress?: (text: string) => void
+  // Whether get_rendered_page is in this invocation's tool list. Set by loop.ts from the list
+  // it just built — a failed or empty web_search/web_fetch only advises the browser fallback
+  // when the model can actually call it.
+  browserAvailable?: boolean
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -363,13 +367,26 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     if (name === 'web_search') {
       const provider = ctx.webSearchProvider === 'agentcore' ? 'agentcore' : 'jina'
       const query = input.query as string
-      const result = provider === 'agentcore' ? await agentcoreSearch(query) : await jinaSearch(query)
-      console.log(JSON.stringify({ event: 'web_search', provider, result: 'success' }))
-      return textResult(result)
+      try {
+        const result = provider === 'agentcore' ? await agentcoreSearch(query) : await jinaSearch(query)
+        console.log(JSON.stringify({ event: 'web_search', provider, result: 'success' }))
+        return textResult(withEmptySearchHint(result, query, ctx.browserAvailable))
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'web_search', provider, result: 'error', error: String(err) }))
+        const hint = searchFallbackHint(query, ctx.browserAvailable)
+        return errorResult(hint ? `${String(err)}\n\n${hint}` : String(err))
+      }
     }
     if (name === 'web_fetch') {
-      const result = await jinaFetch(input.url as string)
-      return textResult(result)
+      const url = input.url as string
+      try {
+        return textResult(await jinaFetch(url, ctx.browserAvailable))
+      } catch (err) {
+        console.error(JSON.stringify({ event: 'web_fetch', result: 'error', error: String(err) }))
+        return errorResult(ctx.browserAvailable
+          ? `${String(err)}\n\nThe static fetch is unavailable for this URL — load it in the real browser instead: call get_rendered_page with the same URL.`
+          : String(err))
+      }
     }
     if (name === 'browse_web') {
       return await executeBrowserTool(input, ctx)
@@ -557,15 +574,58 @@ export interface SearchResult {
   description: string
 }
 
-async function jinaSearch(query: string): Promise<string> {
-  const url = `https://s.jina.ai/${encodeURIComponent(query)}`
+// Jina fails transiently (502/504, dropped sockets, the odd throttle) far more often than it
+// fails for a real reason, so every call gets one immediate retry before the model — and the
+// user's turn — ever hears about it. A non-throttle 4xx is a real answer, not a blip: no retry.
+// See docs/adr/0042-jina-retry-and-browser-fallback.md.
+const JINA_RETRY_DELAY_MS = 400
+
+// A search that failed outright, or came back with nothing, still has one route left: drive a
+// search engine in the real browser, which renders the JS-built result list Jina can't see.
+// Empty when the browser tools aren't on this invocation's tool list — no point pointing at a
+// tool the model can't call.
+function searchFallbackHint(query: string, browserAvailable?: boolean): string {
+  if (!browserAvailable) return ''
+  return `Do not give up on this search: call get_rendered_page with url "https://duckduckgo.com/?q=${encodeURIComponent(query)}" to run it in a real browser, then get_rendered_page (or web_fetch) the most promising result URL.`
+}
+
+// Appends that hint to a successful-but-empty search result, where the model is otherwise
+// looking at a bare "No results found." with no indication there's anything else to try.
+function withEmptySearchHint(resultJson: string, query: string, browserAvailable?: boolean): string {
+  try {
+    const hint = searchFallbackHint(query, browserAvailable)
+    if (!hint) return resultJson
+    const parsed = JSON.parse(resultJson) as { results?: unknown[]; text?: string }
+    if (parsed.results?.length) return resultJson
+    return JSON.stringify({ ...parsed, text: `${parsed.text ?? ''}\n\n${hint}` })
+  } catch {
+    return resultJson
+  }
+}
+
+async function jinaGetJson(url: string, what: string): Promise<unknown> {
   const headers: Record<string, string> = { 'Accept': 'application/json' }
   if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`
 
-  const res = await fetch(url, { headers })
-  if (!res.ok) throw new Error(`Jina search failed: ${res.status} ${await res.text()}`)
+  let lastError = ''
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, JINA_RETRY_DELAY_MS))
+    try {
+      const res = await fetch(url, { headers })
+      if (res.ok) return await res.json()
+      lastError = `${res.status} ${(await res.text()).slice(0, 200)}`
+      if (!(res.status === 408 || res.status === 429 || res.status >= 500)) break
+    } catch (e) {
+      lastError = String(e)
+    }
+    if (attempt === 0) console.warn(JSON.stringify({ event: 'jina_retry', what, error: lastError }))
+  }
+  throw new Error(`Jina ${what} failed: ${lastError}`)
+}
 
-  const json = await res.json() as { data?: Array<{ title: string; url: string; description: string }> }
+async function jinaSearch(query: string): Promise<string> {
+  const url = `https://s.jina.ai/${encodeURIComponent(query)}`
+  const json = await jinaGetJson(url, 'search') as { data?: Array<{ title: string; url: string; description: string }> }
   const results = (json.data ?? []).slice(0, 5).map(r => ({
     title: r.title ?? '',
     url: r.url ?? '',
@@ -612,15 +672,8 @@ async function agentcoreSearch(query: string): Promise<string> {
   return JSON.stringify({ results, text })
 }
 
-async function jinaFetch(url: string): Promise<string> {
-  const jinaUrl = `https://r.jina.ai/${url}`
-  const headers: Record<string, string> = { 'Accept': 'application/json' }
-  if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`
-
-  const res = await fetch(jinaUrl, { headers })
-  if (!res.ok) throw new Error(`Jina fetch failed: ${res.status}`)
-
-  const json = await res.json() as {
+async function jinaFetch(url: string, browserAvailable = false): Promise<string> {
+  const json = await jinaGetJson(`https://r.jina.ai/${url}`, 'fetch') as {
     data?: { title?: string; url?: string; description?: string; content?: string }
   }
   const d = json.data ?? {}
@@ -630,7 +683,7 @@ async function jinaFetch(url: string): Promise<string> {
   // Static fetch found little/nothing — likely a JS-rendered page Jina couldn't see past.
   // Nudge the model toward get_rendered_page rather than silently returning a near-empty
   // page (relying solely on the tool description is easy to miss once a call is in flight).
-  if (content.trim().length < 40) {
+  if (content.trim().length < 40 && browserAvailable) {
     text += "\n\n[web_fetch got little or no content — this page may require JavaScript to render. Try get_rendered_page for this URL instead.]"
   }
   const result = {

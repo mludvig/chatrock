@@ -23,6 +23,25 @@ export const ROUND_BUDGETS: Record<'brief' | 'extended' | 'deep', number> = { br
 export const HEARTBEAT_INTERVAL_MS = 4000
 // Max concurrent tool executions within a single round — see docs/adr/0016-parallel-tool-execution.md.
 const TOOL_CONCURRENCY = 5
+// Transient-drop retry for a round that produced nothing — see
+// docs/adr/0041-retrying-a-provider-round-that-produced-no-output.md.
+const ROUND_RETRIES = 2
+const ROUND_RETRY_BACKOFF_MS = [500, 1500]
+
+// A dropped socket mid-SSE (undici's "TypeError: terminated"), a throttle, or a provider
+// 5xx are all worth one more attempt; a 4xx (bad request, auth, model-not-found) never is.
+const TRANSIENT_ERROR_PATTERNS = [
+  'terminated', 'econnreset', 'econnaborted', 'epipe', 'etimedout', 'socket hang up',
+  'throttling', 'modelstreamerror', 'serviceunavailable', 'internalserver', 'internalfailure',
+]
+
+function isTransientStreamError(e: unknown): boolean {
+  const err = e as { status?: number; $metadata?: { httpStatusCode?: number }; code?: string; cause?: unknown }
+  const status = err?.status ?? err?.$metadata?.httpStatusCode
+  if (typeof status === 'number') return status === 408 || status === 429 || status >= 500
+  const text = `${String(e)} ${String(err?.cause ?? '')} ${err?.code ?? ''}`.toLowerCase()
+  return TRANSIENT_ERROR_PATTERNS.some(p => text.includes(p))
+}
 
 export interface ConverseStreamOptions {
   settings?: ModelSettings
@@ -96,6 +115,10 @@ async function* streamRounds(
   const provider = getProvider(modelId)
   const tools = buildToolList(settings, ctx)
   const maxRounds = ROUND_BUDGETS[settings.researchDepth ?? 'brief']
+  // Whether this invocation actually has the browser fallback on offer — a failed/empty Jina
+  // result only points at get_rendered_page when the model can really call it (a research
+  // sub-agent, for one, runs with browserCoreEnabled:false).
+  const browserAvailable = tools.some(t => t.name === 'get_rendered_page')
 
   // Sanitize the incoming replayed history ONCE per invocation — coalesce/heal plus
   // foreign-opaque filtering are the provider's business (see ChatProvider.sanitizeHistory).
@@ -118,7 +141,7 @@ async function* streamRounds(
     // Forced toolChoice applies to round 0 only — by round 1 the tool has already run and
     // the model is narrating/using its result, which must remain free choice.
     const isForcedRound = round === 0 && !!forceToolName
-    const gen = provider.streamTurn({
+    const turnRequest = {
       modelId,
       systemPrompt,
       messages: builtMessages,
@@ -127,21 +150,41 @@ async function* streamRounds(
       cacheBoundaryIndex,
       abortSignal,
       forceToolName: isForcedRound ? forceToolName : undefined,
-    })
+    }
     let result: TurnResult | undefined
 
-    // Drain the generator, forwarding UI chunks to caller
-    while (true) {
-      const { value, done } = await gen.next()
-      if (done) {
-        result = value as TurnResult
+    // Retry a round that died before showing the user anything — the request is identical
+    // and no per-round state (newMessages, turnIndex, cacheBoundaryIndex) has moved yet, so
+    // a fresh streamTurn is a clean do-over. Once a chunk has been forwarded, a retry would
+    // duplicate visible text/thinking, so the error propagates instead.
+    // See docs/adr/0041-retrying-a-provider-round-that-produced-no-output.md.
+    for (let attempt = 0; ; attempt++) {
+      const gen = provider.streamTurn(turnRequest)
+      let forwarded = false
+      try {
+        // Drain the generator, forwarding UI chunks to caller
+        while (true) {
+          const { value, done } = await gen.next()
+          if (done) {
+            result = value as TurnResult
+            break
+          }
+          const chunk = value as StreamChunk
+          // Forward all UI chunks except 'usage' (we re-emit usage below, after the
+          // adapter's TurnResult is available, so ordering relative to 'turn' is guaranteed)
+          if (chunk.type !== 'usage') {
+            forwarded = true
+            yield chunk
+          }
+        }
         break
-      }
-      const chunk = value as StreamChunk
-      // Forward all UI chunks except 'usage' (we re-emit usage below, after the
-      // adapter's TurnResult is available, so ordering relative to 'turn' is guaranteed)
-      if (chunk.type !== 'usage') {
-        yield chunk
+      } catch (e) {
+        if (forwarded || attempt >= ROUND_RETRIES || abortSignal?.aborted || !isTransientStreamError(e)) throw e
+        console.warn(JSON.stringify({
+          event: 'llm_round_retry', model: modelId, provider: provider.id,
+          round, attempt: attempt + 1, error: String(e),
+        }))
+        await new Promise(resolve => setTimeout(resolve, ROUND_RETRY_BACKOFF_MS[attempt]))
       }
     }
 
@@ -198,7 +241,7 @@ async function* streamRounds(
       // than yielded directly — runOneTool runs concurrently with the pool loop below, which
       // is the only place actually allowed to yield.
       const onProgress = (text: string) => { progressQueue.push({ type: 'sub_agent_progress', toolUseId: tu.callId, name: tu.name, text }) }
-      const toolResult = await executeTool(tu.name, input, { ...(ctx ?? { sub: '' }), onProgress, modelId })
+      const toolResult = await executeTool(tu.name, input, { ...(ctx ?? { sub: '' }), onProgress, modelId, browserAvailable })
       const entries = toolResult.entries
       const textEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'text' }> => e.kind === 'text')
       const imageEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'image' }> => e.kind === 'image')

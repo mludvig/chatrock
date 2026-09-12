@@ -75,7 +75,7 @@ lib/llm/
   providers/mantleTranslate.ts   — pure Block[]/NeutralMessage[] <-> Responses API item[] translation, no I/O
 ```
 
-**The `ChatProvider` interface** (`types.ts`) is the whole seam: `id`, `sanitizeHistory(messages)`, `streamTurn(req): AsyncGenerator<StreamChunk, TurnResult>`, `once(req)`. `loop.ts`'s `converseStream()` calls `sanitizeHistory` once per invocation, then `streamTurn` once per agentic round — everything vendor-specific (cachePoint placement, inference params, toolChoice quirks, the tool-history-reoffer requirement) lives inside the adapter, never in `loop.ts`. `TurnRequest.cacheBoundaryIndex` is the index of the last stable-prior message in that round's `messages` array — the adapter places its one cache marker there; it's fixed for the whole invocation since only new-this-round messages grow the array. `TurnResult.replayContent`, when set, is what's carried into *this invocation's next round only* — never persisted — letting an adapter keep oversized live-only material (Mantle's full reasoning `encrypted_content` before `REASONING_OPAQUE_CAP` trims what's stored) out of DynamoDB.
+**The `ChatProvider` interface** (`types.ts`) is the whole seam: `id`, `sanitizeHistory(messages)`, `streamTurn(req): AsyncGenerator<StreamChunk, TurnResult>`, `once(req)`. `loop.ts`'s `converseStream()` calls `sanitizeHistory` once per invocation, then `streamTurn` once per agentic round — everything vendor-specific (cachePoint placement, inference params, toolChoice quirks, the tool-history-reoffer requirement) lives inside the adapter, never in `loop.ts`. `TurnRequest.cacheBoundaryIndex` is the index of the last stable-prior message in that round's `messages` array — the adapter places its one cache marker there; it's fixed for the whole invocation since only new-this-round messages grow the array. A round whose stream dies before forwarding a single chunk is retried in `loop.ts` (2 attempts, 500/1500ms, transient errors only) — once anything has been forwarded the error propagates instead, since a retry would replay visible text: `docs/adr/0041-retrying-a-provider-round-that-produced-no-output.md`. `TurnResult.replayContent`, when set, is what's carried into *this invocation's next round only* — never persisted — letting an adapter keep oversized live-only material (Mantle's full reasoning `encrypted_content` before `REASONING_OPAQUE_CAP` trims what's stored) out of DynamoDB.
 
 **Provider ids are named by API surface, not vendor** (`bedrock-converse`, `bedrock-mantle`) — Converse also serves Meta/Mistral, so a vendor-named id would be misleading the moment a second Converse-served vendor is added. The id is persisted inside `Opaque.provider`, so getting this right avoids a future data migration.
 
@@ -94,7 +94,7 @@ lib/llm/
 ## Web search providers
 
 `lib/tools.ts` implements `web_search` against two interchangeable backends, selected per-call by `ToolContext.webSearchProvider`. Both map into the identical `{ results: [{title,url,description}], text }` JSON contract. `web_fetch` always uses Jina.
-- **Jina** (default): `jinaSearch`/`jinaFetch` call `s.jina.ai/{query}` / `r.jina.ai/{url}` with `JINA_API_KEY` (terraform var `jina_api_key`, optional).
+- **Jina** (default): `jinaSearch`/`jinaFetch` call `s.jina.ai/{query}` / `r.jina.ai/{url}` with `JINA_API_KEY` (terraform var `jina_api_key`, optional). Both go through `jinaGetJson`, which retries once (400ms) on a network throw or 408/429/5xx and never on another 4xx. A failed or empty result carries a hint pointing the model at `get_rendered_page` (for a search: on a DuckDuckGo URL), gated on `ToolContext.browserAvailable` — set by `loop.ts` from the tool list it built, so a browser-less research sub-agent isn't told to call a tool it doesn't have. Why: `docs/adr/0042-jina-retry-and-browser-fallback.md`.
 - **Amazon Bedrock AgentCore Web Search**: `agentcoreSearch` calls `callGatewayTool('WebSearch', { query, maxResults })` in `lib/agentcore/gateway.ts`, a minimal MCP client that SigV4-signs requests to an AgentCore Gateway. Web Search is `us-east-1`-only as of June 2026 (`terraform/agentcore.tf`); env vars `AGENTCORE_GATEWAY_URL` / `AGENTCORE_REGION` carry the endpoint.
 - **Provider's Gateway target** (the Web Search connector itself) is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step, not a Terraform resource — see the comment block in `terraform/agentcore.tf` for the exact command. Needs AWS CLI ≥ 2.35.7.
 
@@ -218,7 +218,10 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout:
 |---------|-------|-----------|
 | `llm_call` | `lib/llm/loop.ts` — every `converseStream`/`converseOnce` invocation | purpose, model, provider, ok, durationMs, sub/chatId/projectId/runId (whichever the caller set), rounds, stopReason, inputTokens, outputTokens, cacheRead/WriteInputTokens, error |
 | `memory_tool` | `memory.ts` per call | op (remember/update/forget), scope (user/project), result |
-| `web_search` | `tools.ts` per call | provider (jina/agentcore), result |
+| `web_search` | `tools.ts` per call | provider (jina/agentcore), result (success/error), error |
+| `web_fetch` | `tools.ts` on failure | result (error), error |
+| `jina_retry` | `tools.ts` when a Jina call is retried | what (search/fetch), error |
+| `llm_round_retry` | `lib/llm/loop.ts` when a no-output round is retried | model, provider, round, attempt, error |
 | `browser_tool` | `tools.ts` per call | tool, result, stepCount?, screenshotCount, chatId |
 | `search_history` | `lib/search.ts` per call | scope, corpusSize, resultCount, chatId |
 | `search_history_truncated` | `lib/search.ts` corpus build | total, kept, scope, chatId |

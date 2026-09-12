@@ -114,7 +114,7 @@ describe('web_fetch executor', () => {
       json: async () => ({}),
     }) as unknown as typeof fetch
 
-    const res = await executeTool('web_fetch', { url: 'https://example.com' }, TEST_CTX)
+    const res = await executeTool('web_fetch', { url: 'https://example.com' }, { ...TEST_CTX, browserAvailable: true })
     const payload = JSON.parse((res.entries[0] as { text: string }).text)
     expect(payload.result.url).toBe('https://example.com')
     expect(payload.result.title).toBe('https://example.com')  // title falls back to url
@@ -715,5 +715,85 @@ describe('get_rendered_page dispatch', () => {
     const result = await executeTool('get_rendered_page', { url: 'https://bad.invalid' }, TEST_CTX)
     expect(result.isError).toBe(true)
     expect((result.entries[0] as { text: string }).text).toMatch(/ERR_NAME_NOT_RESOLVED/)
+  })
+})
+
+// ── Jina retry + browser fallback ────────────────────────────────────────────
+// See docs/adr/0042-jina-retry-and-browser-fallback.md.
+
+describe('Jina transient-failure retry and browser fallback', () => {
+  const realFetch = global.fetch
+  afterEach(() => { global.fetch = realFetch })
+
+  const jinaPage = {
+    ok: true,
+    json: async () => ({ data: { title: 'T', url: 'https://example.com', content: 'the real content here, long enough' } }),
+  }
+
+  it('retries a 5xx once and succeeds', async () => {
+    const fetchMock = jest.fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'upstream blip' })
+      .mockResolvedValueOnce(jinaPage)
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const res = await executeTool('web_fetch', { url: 'https://example.com' }, TEST_CTX)
+
+    expect(res.isError).toBeFalsy()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a network-level throw once and succeeds', async () => {
+    const fetchMock = jest.fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: [{ title: 'T', url: 'https://example.com', description: 'd' }] }),
+      })
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const res = await executeTool('web_search', { query: 'hello' }, TEST_CTX)
+
+    expect(res.isError).toBeFalsy()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not retry a 404 — a real answer, not a blip', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 404, text: async () => 'not found' })
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const res = await executeTool('web_fetch', { url: 'https://example.com/gone' }, TEST_CTX)
+
+    expect(res.isError).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('points a failed web_fetch at get_rendered_page when the browser tools are available', async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, text: async () => 'not found' }) as unknown as typeof fetch
+
+    const res = await executeTool('web_fetch', { url: 'https://example.com/gone' }, { ...TEST_CTX, browserAvailable: true })
+
+    expect((res.entries[0] as { text: string }).text).toContain('get_rendered_page')
+  })
+
+  it('points a failed web_search at a browser-driven search, but only when the browser is available', async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, text: async () => 'nope' }) as unknown as typeof fetch
+
+    const withBrowser = await executeTool('web_search', { query: 'a b' }, { ...TEST_CTX, browserAvailable: true })
+    const withoutBrowser = await executeTool('web_search', { query: 'a b' }, TEST_CTX)
+
+    expect((withBrowser.entries[0] as { text: string }).text).toContain('get_rendered_page')
+    expect((withBrowser.entries[0] as { text: string }).text).toContain('duckduckgo.com/?q=a%20b')
+    expect((withoutBrowser.entries[0] as { text: string }).text).not.toContain('get_rendered_page')
+  })
+
+  it('nudges an empty-but-successful search toward the browser', async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }) as unknown as typeof fetch
+
+    const res = await executeTool('web_search', { query: 'obscure thing' }, { ...TEST_CTX, browserAvailable: true })
+    const payload = JSON.parse((res.entries[0] as { text: string }).text)
+
+    expect(payload.results).toEqual([])
+    expect(payload.text).toContain('No results found.')
+    expect(payload.text).toContain('get_rendered_page')
   })
 })
