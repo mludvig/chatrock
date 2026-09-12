@@ -782,11 +782,11 @@ test('ctx: loop threads ctx into executeTool call — 3rd arg is {sub}', async (
     // drain
   }
 
-  // executeTool must have been called with ctx as 3rd argument, plus the modelId/onProgress
-  // the tool pool always attaches (see loop.ts's runOneTool).
+  // executeTool must have been called with ctx as 3rd argument, plus the modelId/onProgress/
+  // browserAvailable the tool pool always attaches (see loop.ts's runOneTool).
   expect(mockExecuteTool).toHaveBeenCalledTimes(1)
   const [, , ctxArg] = mockExecuteTool.mock.calls[0]
-  expect(ctxArg).toEqual({ ...toolCtx, modelId: 'test-model', onProgress: expect.any(Function) })
+  expect(ctxArg).toEqual({ ...toolCtx, modelId: 'test-model', browserAvailable: true, onProgress: expect.any(Function) })
 })
 
 test('memoryChanged: manage_memory tool success → memoryChanged chunk yielded', async () => {
@@ -1564,5 +1564,64 @@ describe('browse_web image-bearing tool results: live/persist bifurcation', () =
     // Both step's text must be present — previously only the first entry survived.
     expect(toolResultChunks[0].content).toContain('nav trace')
     expect(toolResultChunks[0].content).toContain('yaml snapshot content')
+  })
+})
+
+// ── Transient-drop retry of a round that produced no output ──────────────────
+// See docs/adr/0041-retrying-a-provider-round-that-produced-no-output.md.
+
+describe('round retry on a transient drop', () => {
+  const okStream = () => fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Hello' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+  ])
+
+  async function collectDeltas(): Promise<string> {
+    let text = ''
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL })) {
+      if (chunk.type === 'delta') text += chunk.text
+    }
+    return text
+  }
+
+  it('retries a round that dropped before yielding anything', async () => {
+    getMockSend()
+      .mockRejectedValueOnce(new TypeError('terminated'))
+      .mockResolvedValueOnce(okStream())
+
+    expect(await collectDeltas()).toBe('Hello')
+    expect(getMockSend()).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up after ROUND_RETRIES attempts', async () => {
+    getMockSend().mockRejectedValue(new TypeError('terminated'))
+
+    await expect(collectDeltas()).rejects.toThrow('terminated')
+    expect(getMockSend()).toHaveBeenCalledTimes(3)  // initial + 2 retries
+  })
+
+  it('does not retry once the round has streamed something to the client', async () => {
+    getMockSend().mockResolvedValueOnce({
+      stream: (async function* () {
+        yield { contentBlockStart: { contentBlockIndex: 0, start: {} } }
+        yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'partial' } } }
+        throw new TypeError('terminated')
+      })(),
+    })
+
+    await expect(collectDeltas()).rejects.toThrow('terminated')
+    expect(getMockSend()).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not retry a non-transient error', async () => {
+    const validation = Object.assign(new Error('ValidationException: bad request'), {
+      $metadata: { httpStatusCode: 400 },
+    })
+    getMockSend().mockRejectedValue(validation)
+
+    await expect(collectDeltas()).rejects.toThrow('ValidationException')
+    expect(getMockSend()).toHaveBeenCalledTimes(1)
   })
 })

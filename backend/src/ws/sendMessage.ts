@@ -663,8 +663,14 @@ export const buildHandler = (postFn: PostFn) => async (
       await flushPartial()
     } else {
       errored = true
-      errorMessage = String(err)
-      console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: errorMessage }))
+      const raw = String(err)
+      // "TypeError: terminated" (undici's dropped-socket error) says nothing to a user — and
+      // by the time it reaches here loop.ts has already retried it where a retry was safe.
+      // Keep the raw string in the log, show something actionable in the bubble.
+      errorMessage = /terminated|ECONNRESET|socket hang up/i.test(raw)
+        ? 'The connection to the model dropped mid-answer — press Continue to resume.'
+        : raw
+      console.error(JSON.stringify({ event: 'stream_error', chatId, model, error: raw }))
       await flushPartial()
     }
   }
