@@ -933,7 +933,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   }, [chatId, isNew, sending, reloadMessages])
 
   const handleForkToHere = useCallback(async (fromMsgId: string, role: 'user' | 'assistant', text: string) => {
-    if (!chatId || isNew || !activeChat) return
+    if (!chatId || isNew) return
     try {
       const res = await api.forkChat(chatId, fromMsgId)
       // Backend inherits sensitive/ephemeral from the source, with a FRESH ttl (not the
@@ -941,13 +941,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       // so expiresAt is correct from the start.
       const forked = await api.getChat(res.chatId)
       useChatStore.getState().addChat(forked)
-      pushToast({ kind: 'success', text: activeChat.sensitive ? 'Forked into a new sensitive chat' : 'Forked into a new chat' })
+      pushToast({ kind: 'success', text: forked.sensitive ? 'Forked into a new sensitive chat' : 'Forked into a new chat' })
       if (role === 'user') pendingDraftRef.current = text
       navigate(`/c/${res.chatId}`)
     } catch (err) {
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
     }
-  }, [chatId, isNew, activeChat, navigate])
+  }, [chatId, isNew, navigate])
 
   const handleEditRequest = useCallback((message: Message) => {
     // Revoke any in-flight blob previews from a prior draft
@@ -1621,9 +1621,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
               ref={el => { bubbleRefsRef.current[i] = el }}
               message={m}
               subAgentProgress={subAgentProgress}
-              onRerun={!isNew ? handleRerun : undefined}
-              onContinue={!isNew ? handleContinue : undefined}
-              onEscalate={!isNew ? handleEscalate : undefined}
+              onRerun={activeChat ? handleRerun : undefined}
+              onContinue={activeChat ? handleContinue : undefined}
+              onEscalate={activeChat ? handleEscalate : undefined}
               onNavigate={!isNew ? handleNavigate : undefined}
               onEditRequest={!isNew ? handleEditRequest : undefined}
               onForkToHere={!isNew ? handleForkToHere : undefined}
