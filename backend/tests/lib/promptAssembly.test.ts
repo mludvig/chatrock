@@ -596,7 +596,7 @@ test('projectManifest chat without summary → no dash suffix', () => {
 
 // ── forcedFiles ───────────────────────────────────────────────────────────────
 
-test('forcedFiles present → "Always-included project files" block present with file content', () => {
+test('forcedFiles identifies included content as excerpts and points to the full source', () => {
   const result = assembleSystemPrompt({
     basePrompt: '',
     prefs: {},
@@ -605,7 +605,8 @@ test('forcedFiles present → "Always-included project files" block present with
       { name: 'config.json', content: '{"key": "value"}' },
     ],
   })
-  expect(result).toContain('Always-included project files (full content):')
+  expect(result).toContain('Always-included project files (excerpts; read the full source when needed):')
+  expect(result).not.toContain('(full content)')
   expect(result).toContain('--- config.json ---')
   expect(result).toContain('{"key": "value"}')
 })

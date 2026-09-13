@@ -36,6 +36,38 @@ test('project home carries a question into a draft without sending it', async ({
     await expect(page.locator('.message-input')).toHaveValue('Help me plan the next release')
     await expect(page.getByLabel('Project', { exact: true })).toHaveValue(p.projectId)
     await expect(page.locator('.btn-stop')).toHaveCount(0)
+    await page.getByTitle('New chat', { exact: true }).first().click()
+    await expect(page.getByLabel('Project', { exact: true })).toHaveValue(p.projectId)
+    await expect(page.locator('.message-input')).toHaveValue('')
+  } finally { await request(page, 'DELETE', `/projects/${p.projectId}`) }
+})
+
+test('failed preferences do not hide chats or projects and can be retried', async ({ page }) => {
+  await openApp(page)
+  const p = await newProject(page, 'partial-load')
+  try {
+    await page.route('**/api/preferences', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Temporary test outage"}' }))
+    await page.reload()
+    await expect(page.getByRole('alert')).toContainText('Could not refresh preferences')
+    await expect(page.locator('.project-item').filter({ hasText: p.name })).toBeVisible()
+    await page.unroute('**/api/preferences')
+    await page.getByRole('alert').getByRole('button', { name: 'Retry', exact: true }).click()
+    await expect(page.getByRole('alert')).toHaveCount(0)
+  } finally { await page.unroute('**/api/preferences'); await request(page, 'DELETE', `/projects/${p.projectId}`) }
+})
+
+test('project instructions save when a phone closes settings with Escape', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openApp(page)
+  const p = await newProject(page, 'instruction-save')
+  try {
+    await page.goto(`/p/${p.projectId}?settings=1`)
+    await page.getByPlaceholder('Custom instructions applied to every chat in this project…').fill('Keep project answers concise and use metric units.')
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect.poll(async () => (await request<{ project: { instructions?: string } }>(page, 'GET', `/projects/${p.projectId}`)).project.instructions).toBe('Keep project answers concise and use metric units.')
+    await page.reload()
+    await expect(page.getByPlaceholder('Custom instructions applied to every chat in this project…')).toHaveValue('Keep project answers concise and use metric units.')
   } finally { await request(page, 'DELETE', `/projects/${p.projectId}`) }
 })
 

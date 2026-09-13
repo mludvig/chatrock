@@ -21,6 +21,7 @@ Routes: `/c/new` is an unsaved draft, `/c/:chatId` a conversation, and
 `/p/:projectId` the project home. `?project=` supplies draft membership;
 route state may carry draft text from the project composer or a file action.
 All creation buttons open drafts, and only the first message creates a chat.
+Starting another draft retains the current draft's project scope.
 
 ## Project home
 
@@ -37,6 +38,7 @@ while processing and on focus/visibility resume. Upload errors use the real file
 ID after the upload request; retry finalizes that existing upload. A missing local
 upload can be removed and uploaded again. The server marks processing status older
 than fifteen minutes as an error for display.
+Failed files show Retry processing directly beside their status.
 
 Project facts can be added, edited and deleted. User-added/edited facts carry
 `userEdited`; automatic reconciliation preserves them. Newly generated facts may
@@ -63,6 +65,8 @@ are edited locally and saved on blur/close. Settings toggles save immediately,
 with failures surfaced. `ProjectDetailsDialog` edits description, instructions,
 memory, model default, and overrides. `ToolsPanel` puts infrequent controls in an
 Advanced tools disclosure. `PreferencesPanel` owns global defaults.
+Project text edits survive metadata refresh and save on blur or dialog close,
+including Escape.
 
 Private is the shortcut for sensitive plus auto-delete. Detailed controls still
 separate using memory, updating shared knowledge, and deletion. Hidden chats are
@@ -94,6 +98,9 @@ while HTTP reports a live stream and exposes reconnect after bounded failures.
 Unsent text is retained until delivery acknowledgment. Do not overwrite a live
 stream with an unconditional focus refetch. Models are cached for first paint and
 revalidated outside the initial chats/preferences/projects loading gate.
+Those three initial requests settle independently: a failed preferences request
+does not suppress successfully loaded chats/projects. App exposes a retry banner,
+and Personal memory exposes failed reads instead of displaying a false empty state.
 
 ## Tests and development
 
