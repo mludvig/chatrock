@@ -2347,6 +2347,7 @@ $mobile: 720px;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    flex-wrap: wrap;
     background: $surface2;
     border: 1px solid $border;
     border-radius: 6px;
@@ -2375,6 +2376,27 @@ $mobile: 720px;
     display: flex;
     gap: 4px;
     flex-shrink: 0;
+  }
+
+  .share-qr {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    padding: 8px 0 2px;
+    border-top: 1px solid $border;
+    font-size: 11px;
+    color: $muted;
+
+    img {
+      display: block;
+      width: 192px;
+      max-width: 100%;
+      height: auto;
+      background: #fff;
+      border-radius: 4px;
+    }
   }
 
   .saved-indicator {
