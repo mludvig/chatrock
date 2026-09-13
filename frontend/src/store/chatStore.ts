@@ -68,6 +68,7 @@ interface ChatState {
   sendingByChat: Record<string, boolean>
   lastModel: string
   sidebarWidth: number
+  sidebarSplit: number
   activePanel: ActivePanel
   userPreferences: UserPreferences
   toasts: Toast[]
@@ -112,6 +113,7 @@ interface ChatState {
   setSending: (chatId: string, v: boolean) => void
   setLastModel: (modelId: string) => void
   setSidebarWidth: (w: number) => void
+  setSidebarSplit: (ratio: number) => void
   setActivePanel: (panel: ActivePanel) => void
   setUserPreferences: (p: UserPreferences) => void
   memoryRefreshTick: number
@@ -199,6 +201,7 @@ export const useChatStore = create<ChatState>()(
       sendingByChat: {},
       lastModel: '',
       sidebarWidth: 260,
+      sidebarSplit: 0.6,
       activePanel: 'chats',
       userPreferences: {},
       toasts: [],
@@ -439,6 +442,7 @@ export const useChatStore = create<ChatState>()(
       })),
       setLastModel: (lastModel) => set({ lastModel }),
       setSidebarWidth: (sidebarWidth) => set({ sidebarWidth }),
+      setSidebarSplit: (sidebarSplit) => set({ sidebarSplit }),
       setActivePanel: (activePanel) => set({ activePanel }),
       setUserPreferences: (userPreferences) => set({ userPreferences }),
       triggerMemoryRefresh: () => set((s) => ({ memoryRefreshTick: s.memoryRefreshTick + 1 })),
@@ -497,7 +501,14 @@ export const useChatStore = create<ChatState>()(
       // waiting out a cold-start GET /api/models — the list is a static server-side constant,
       // so a stale cached copy is at worst one deploy behind and is refreshed in the
       // background on every load. See docs/adr/0028-composer-owns-per-send-controls.md.
-      partialize: (s) => ({ lastModel: s.lastModel, sidebarWidth: s.sidebarWidth, activePanel: s.activePanel, userPreferences: s.userPreferences, models: s.models }),
+      partialize: (s) => ({
+        lastModel: s.lastModel,
+        sidebarWidth: s.sidebarWidth,
+        sidebarSplit: s.sidebarSplit,
+        activePanel: s.activePanel,
+        userPreferences: s.userPreferences,
+        models: s.models,
+      }),
     }
   )
 )

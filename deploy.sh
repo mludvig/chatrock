@@ -26,6 +26,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF_DIR="$ROOT_DIR/terraform"
+export AWS_PROFILE="ccx"
+export AWS_REGION="ap-southeast-2"
+export AWS_DEFAULT_REGION="$AWS_REGION"
 
 # ── Resolve subcommand or legacy flags ────────────────────────────────────────
 SUBCOMMAND=""

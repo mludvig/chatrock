@@ -6,10 +6,12 @@ navigation and knowledge experience are in ADRs 0045 and 0046.
 ## Layout and navigation
 
 Desktop uses two columns: a resizable navigation sidebar and the main pane. The
-sidebar contains recent chats above projects, separated by a divider, with Search and New chat in
-its header and Settings at the bottom. Settings contains Preferences and Personal
-memory. `activePanel` remains persisted for compatibility, but `chats` and
-`projects` both show the unified navigation; there is no activity rail.
+sidebar contains recent chats above projects, separated by a draggable divider,
+with Search and New chat in its header and Settings at the bottom. Settings
+contains Preferences, Personal memory, and the infrequently used Sign out action.
+The sidebar width and list split are persisted. `activePanel` remains persisted
+for compatibility, but `chats` and `projects` both show the unified navigation;
+there is no activity rail.
 Each list scrolls independently. Both use `.navigation-row` for selection styling.
 The crossed-eye button beside Recent chats directly reveals private chats, hidden
 by default; project chat lists reuse the same control.
