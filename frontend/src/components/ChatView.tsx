@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faFolder, faEyeSlash, faTriangleExclamation, faGear, faRotate } from '@fortawesome/free-solid-svg-icons'
-import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS } from '../api/http'
-import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth } from '../api/http'
+import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS, THINKING_EFFORTS } from '../api/http'
+import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth, ThinkingEffort } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
 import { useSaveStatus } from '../lib/useSaveStatus'
@@ -121,11 +121,11 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const [draftProjectId, setDraftProjectId] = useState('')
   const [detailsOpen, setDetailsOpen] = useState(false)
 
-  // Composer's per-turn research depth picker. Sticky within a chat session (survives
-  // across sends) but never persisted — `null` means "use the chat's stored default"
-  // (draftModelSettings.researchDepth). Reset to null on chat switch so a different chat
-  // doesn't inherit a one-off escalation. See docs/adr/0020-research-depth-and-budget-pacing.md.
+  // Composer reasoning overrides are sticky within a chat session but never persisted.
+  // `null` means use the saved chat/project/user default; they reset on chat switch so a
+  // one-off escalation cannot leak into another conversation. See docs/adr/0043.
   const [composerResearchDepth, setComposerResearchDepth] = useState<ResearchDepth | null>(null)
+  const [composerThinkingEffort, setComposerThinkingEffort] = useState<ThinkingEffort | null>(null)
 
   // Only used to surface a "Reconnecting…" banner while ws.ts is chasing a dropped socket
   // during an in-flight turn — see docs/adr/0021-websocket-reconnect-and-refocus-catchup.md.
@@ -243,12 +243,18 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // always recorded either way — this only gates whether it's rendered.
   const effectiveShowTokenStats = draftModelSettings.showTokenStats ?? userPreferences.showTokenStats ?? false
 
-  // Effective research depth for the *next* send: composerResearchDepth (this session's
-  // sticky override) wins when set, otherwise the chat's stored default. Merged into
-  // modelSettings at send-time only — never written back via handleChatSettingsChange,
-  // so a one-off escalation never becomes the chat's permanent default.
+  // Effective reasoning settings for the *next* send. Composer overrides win when set and
+  // are merged at send-time only — never written back via handleChatSettingsChange, so a
+  // one-off escalation never becomes the chat's permanent default. See docs/adr/0043.
   const effectiveResearchDepth = composerResearchDepth ?? draftModelSettings.researchDepth ?? 'brief'
-  const modelSettingsForSend: ModelSettings = { ...draftModelSettings, researchDepth: effectiveResearchDepth }
+  const effectiveThinkingEffort = currentCaps.thinking === 'none'
+    ? undefined
+    : composerThinkingEffort ?? draftModelSettings.thinkingEffort ?? defaultSettings(currentCaps).thinkingEffort
+  const modelSettingsForSend: ModelSettings = {
+    ...draftModelSettings,
+    researchDepth: effectiveResearchDepth,
+    ...(effectiveThinkingEffort ? { thinkingEffort: effectiveThinkingEffort } : {}),
+  }
 
   const ALLOWED_TYPES: Record<string, 'image' | 'document'> = {
     'image/png': 'image', 'image/jpeg': 'image', 'image/gif': 'image', 'image/webp': 'image',
@@ -514,7 +520,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     if (chatId && justCreatedChatIdRef.current === chatId) {
       justCreatedChatIdRef.current = null  // our own /c/new -> /c/:chatId navigation, not a chat switch
     } else {
-      setComposerResearchDepth(null)  // reset per-turn depth override — see its declaration above
+      setComposerResearchDepth(null)
+      setComposerThinkingEffort(null)
     }
     if (isNew) {
       setDraftSystemPrompt('')
@@ -1363,6 +1370,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     onModelChange(modelId)
     const newCaps = models.find(m => m.id === modelId)?.capabilities
     if (newCaps) setDraftModelSettings(migrateSettings(draftModelSettings, newCaps))
+    setComposerThinkingEffort(null)
 
     if (isNew) {
       setNewModel(modelId)
@@ -1522,7 +1530,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             <FontAwesomeIcon icon={faEyeSlash} /> Sensitive
           </span>
         )}
-        {/* Per-send controls (model, research depth, project, Private) live in the composer
+        {/* Per-send controls (model, reasoning, project, Private) live in the composer
             toolbar, not here — see docs/adr/0028-composer-owns-per-send-controls.md. The header
             keeps only what identifies the chat plus the two navigational actions. */}
         <div className="header-controls">
@@ -1753,11 +1761,24 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
               <option key={m.id} value={m.id}>{m.name}</option>
             ))}
           </select>
+          {currentCaps.thinking !== 'none' && effectiveThinkingEffort && (
+            <select
+              className="composer-select composer-thinking-picker"
+              value={effectiveThinkingEffort}
+              disabled={sending || creatingChat}
+              title="Thinking effort: how much reasoning the model uses for this turn. Sticks for this chat session. See docs/adr/0043-composer-owns-reasoning-controls.md."
+              onChange={e => setComposerThinkingEffort(e.target.value as ThinkingEffort)}
+            >
+              {(currentCaps.thinkingLevels ?? THINKING_EFFORTS).map(e => (
+                <option key={e} value={e}>{e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}</option>
+              ))}
+            </select>
+          )}
           <select
-            className="composer-select"
+            className="composer-select composer-research-picker"
             value={effectiveResearchDepth}
             disabled={sending || creatingChat}
-            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for the rest of this chat session; the chat's stored default is set in Chat details."
+            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for this chat session. See docs/adr/0043-composer-owns-reasoning-controls.md."
             onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
           >
             {RESEARCH_DEPTHS.map(d => (
@@ -1897,7 +1918,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         onToggleEphemeral={() => isNew ? setDraftEphemeral(v => !v) : handleToggleFlag('ephemeral')}
         showTokenStats={effectiveShowTokenStats}
         onToggleShowTokenStats={() => handleChatSettingsChange({ ...draftModelSettings, showTokenStats: !effectiveShowTokenStats })}
-        caps={currentCaps}
         settings={draftModelSettings}
         onSettingsChange={handleChatSettingsChange}
         systemPrompt={isNew ? draftSystemPrompt : (activeChat?.systemPrompt ?? '')}

@@ -1,4 +1,4 @@
-import type { Model, ModelCapabilities, ModelSettings } from '../api/http'
+import type { Model, ModelSettings } from '../api/http'
 import type { SaveStatus } from '../lib/useSaveStatus'
 import Dialog from './Dialog'
 import ToolsPanel from './ToolsPanel'
@@ -21,7 +21,6 @@ interface Props {
   models: Model[]
   defaultModel: string
   onDefaultModelChange: (modelId: string) => void
-  caps: ModelCapabilities
   settings: ModelSettings
   onSettingsChange: (s: ModelSettings) => void
   memoryEnabled: boolean
@@ -33,7 +32,7 @@ export default function ProjectDetailsDialog({
   descDraft, onDescChange, onDescBlur, descSaveStatus,
   instrDraft, onInstrChange, onInstrBlur, instrSaveStatus,
   models, defaultModel, onDefaultModelChange,
-  caps, settings, onSettingsChange,
+  settings, onSettingsChange,
   memoryEnabled, onToggleMemory,
 }: Props) {
   return (
@@ -83,7 +82,7 @@ export default function ProjectDetailsDialog({
         </div>
 
         <ToolsPanel settings={settings} onChange={onSettingsChange} />
-        <ModelTuningPanel caps={caps} settings={settings} onChange={onSettingsChange} />
+        <ModelTuningPanel settings={settings} onChange={onSettingsChange} />
       </div>
     </Dialog>
   )

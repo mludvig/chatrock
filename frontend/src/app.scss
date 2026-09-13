@@ -1144,7 +1144,7 @@ $header-h: 45px;
   }
 }
 
-// Per-send controls (model, research depth, project, Private) — see
+// Per-send controls (model, thinking effort, research depth, project, Private) — see
 // docs/adr/0028-composer-owns-per-send-controls.md. Scrolls horizontally rather than wrapping
 // so an unusually wide control set can never push the composer's height around.
 .composer-toolbar {
@@ -1160,6 +1160,10 @@ $header-h: 45px;
   > * { flex-shrink: 0; }
 
   .btn-private-toggle { border-radius: 999px; padding: 4px 10px; }
+
+  // See docs/adr/0043-composer-owns-reasoning-controls.md.
+  .composer-research-picker,
+  .composer-thinking-picker { max-width: 88px; }
 }
 
 .composer-select {
@@ -2053,20 +2057,31 @@ $mobile: 720px;
   // share the row by shrinking (each keeps a legible floor) and drop the Private label to its
   // icon, which is enough to fit model + depth + project + Private at 390px.
   .composer-toolbar {
+    gap: 6px;
     padding: 8px 10px 0;
 
     > * { flex-shrink: 1; }
   }
 
   .composer-select {
-    max-width: 120px;
-    min-width: 62px;
+    max-width: 108px;
+    min-width: 56px;
   }
 
-  .project-picker { max-width: 96px; }
+  .composer-research-picker,
+  .composer-thinking-picker { max-width: 76px; }
+
+  .project-picker { max-width: 72px; }
 
   .btn-private-toggle { padding: 4px 8px; }
   .btn-private-label { display: none; }
+
+  @media (max-width: 360px) {
+    .composer-select { max-width: 96px; min-width: 52px; }
+    .composer-research-picker,
+    .composer-thinking-picker { max-width: 66px; }
+    .project-picker { max-width: 64px; }
+  }
 
   // Bubbles: reduce horizontal padding on mobile
   .bubble-row { padding: 0 8px; }
