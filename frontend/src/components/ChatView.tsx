@@ -1156,6 +1156,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     const content = (overrideContent ?? input).trim()
     const readyAttachments = attachments.filter(a => a.status === 'ready')
     if ((!content && readyAttachments.length === 0) || sending || creatingChat) return
+    // A deep link can render the composer before its chat metadata arrives.
+    // Keep the draft intact until we know which model/settings to send with.
+    if (!isNew && !activeChat) return
     if (attachments.some(a => a.status === 'uploading')) {
       pushToast({ kind: 'error', text: 'Please wait for uploads to finish' })
       return
@@ -1851,7 +1854,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             <button
               className="btn-send"
               onClick={() => handleSend()}
-              disabled={creatingChat || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
+              disabled={creatingChat || (!isNew && !activeChat) || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
               title={isMobileViewport() ? 'Send' : 'Send (Enter to submit, Shift+Enter for a new line)'}
             >
               <FontAwesomeIcon icon={faPaperPlane} />
