@@ -6,10 +6,13 @@ navigation and knowledge experience are in ADRs 0045 and 0046.
 ## Layout and navigation
 
 Desktop uses two columns: a resizable navigation sidebar and the main pane. The
-sidebar contains projects and recent chats together, with Search and New chat in
+sidebar contains recent chats above projects, separated by a divider, with Search and New chat in
 its header and Settings at the bottom. Settings contains Preferences and Personal
 memory. `activePanel` remains persisted for compatibility, but `chats` and
 `projects` both show the unified navigation; there is no activity rail.
+Each list scrolls independently. Both use `.navigation-row` for selection styling.
+The crossed-eye button beside Recent chats directly reveals private chats, hidden
+by default; project chat lists reuse the same control.
 
 At widths up to 720px navigation becomes a drawer. Both `ChatView` and
 `ProjectView` have an opener. Route navigation closes the drawer. Every header
@@ -85,7 +88,8 @@ The scope selects Everywhere or a project. File fetch failures and the 100 visib
 result limit are explicit. "Ask AI to search by meaning" uses `pendingSearch` and
 the existing forced `search_history` tool flow in a new conversation.
 
-`ItemMenu` supplies consistent, touch-accessible native details menus. `Dialog`
+`ItemMenu` supplies consistent, touch-accessible native details triggers with menu
+content positioned in a body portal to avoid clipping by the lists. `Dialog`
 provides semantics, Escape, focus trapping and focus restoration. Use real links
 for navigation and buttons for actions. Share links default to snapshots; live
 links remain an explicit option.

@@ -259,52 +259,6 @@ $header-h: 45px;
   flex-shrink: 0;
 }
 
-.chat-filter-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: $muted;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 3px 6px;
-  border-radius: 4px;
-  width: 100%;
-
-  &:hover { background: $surface2; color: $text; }
-  &.active { color: $accent; }
-}
-
-.chat-list-filter-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
-  background: $surface;
-  border: 1px solid $border;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  padding: 8px;
-  min-width: 190px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.chat-list-filter-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: $text;
-  padding: 4px 6px;
-  border-radius: 4px;
-  cursor: pointer;
-
-  &:hover { background: $surface2; }
-}
-
 .chat-list {
   flex: 1;
   overflow-y: auto;
@@ -324,15 +278,7 @@ $header-h: 45px;
   &:hover { background: $surface2; }
 
   &.active {
-    background: rgba($accent, 0.13);
-    color: $accent;
-    border-left: 3px solid $accent;
-    padding-left: 9px; // compensate for the 3px border (12px - 3px)
-    font-weight: 600;
-
     .chat-actions { max-width: 120px; }
-
-    &:hover { background: rgba($accent, 0.18); }
   }
 
   &:hover .chat-actions { max-width: 120px; }
@@ -2647,12 +2593,6 @@ $mobile: 720px;
 
   &:hover { background: $surface2; }
 
-  &.active {
-    background: $accent-light;
-    font-weight: 500;
-    color: $accent;
-  }
-
   &:hover .project-actions { max-width: 90px; }
   &.active .project-actions { max-width: 90px; }
 
@@ -3155,9 +3095,34 @@ $private-light: #ece2fa;
 .sidebar-footer, .settings-nav { display: flex; gap: 8px; padding: 10px; border-top: 1px solid $border; }
 .sidebar-footer button, .settings-nav button, .nav-back { border: 0; background: $surface2; border-radius: 8px; padding: 10px; color: $text; cursor: pointer; }
 .nav-back { margin: 8px; }
-.sidebar .projects-panel, .sidebar .project-list { height: auto; overflow: visible; flex: none; }
-.sidebar .project-list { max-height: 30vh; overflow-y: auto; }
-.sidebar .project-item { padding: 5px 10px; }
+.sidebar-navigation { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0; }
+.sidebar-navigation .chats-panel, .sidebar-navigation .projects-panel {
+  display: flex; flex-direction: column; min-height: 100px; overflow: visible; height: auto;
+}
+.sidebar-navigation .chats-panel { flex: 3 1 0; }
+.sidebar-navigation .projects-panel { flex: 2 1 0; }
+.sidebar-navigation .chat-list, .sidebar-navigation .project-list { flex: 1; min-height: 0; overflow-y: auto; }
+.sidebar-divider { flex-shrink: 0; border-top: 1px solid $border; margin: 8px 12px; }
+.sidebar .navigation-row {
+  padding: 5px 12px 5px 9px;
+  border-left: 3px solid transparent;
+  &.active {
+    background: rgba($accent, 0.13);
+    border-left-color: $accent;
+    color: $accent;
+    font-weight: 600;
+    &:hover { background: rgba($accent, 0.18); }
+  }
+  > a { padding: 6px 0; }
+}
+.private-chat-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0; flex-shrink: 0;
+  color: $muted; background: transparent; border: 0; border-radius: 6px; cursor: pointer;
+  &:hover { background: $surface2; color: $text; }
+  &[aria-pressed="true"] { color: $accent; }
+}
+@media (max-width: 720px) { .private-chat-toggle { width: 40px; height: 40px; } }
 a.project-title, .project-chat-row a { color: inherit; text-decoration: none; min-width: 0; }
 a.project-title { padding: 9px 0; }
 button, a, input, select, textarea, summary { &:focus-visible { outline: 2px solid $accent; outline-offset: 3px; } }
@@ -3208,5 +3173,4 @@ button, a, input, select, textarea, summary { &:focus-visible { outline: 2px sol
 
 .sidebar-global-header { gap: 6px; cursor: default; &:hover { background: $surface; } .btn-new { width: 34px; height: 34px; background: transparent; color: $muted; border: 1px solid transparent; font-size: 16px; &:hover { background: $surface2; color: $text; border-color: $border; } } }
 .sidebar-resizer { left: var(--sidebar-w, 280px); }
-.sidebar .chat-list { overflow: visible; }
 @media (max-width: 720px) { .sidebar-global-header .btn-new { width: 40px; height: 40px; } }

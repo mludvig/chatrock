@@ -13,9 +13,15 @@ working without the user choosing an override. Header search created a chat.
 
 ## Decision
 
-Use one sidebar with projects, recent chats, search, and settings. Personal
+Use one sidebar with recent chats above projects, search, and settings. Personal
 memory is part of settings. Project pages provide Chats and Knowledge sections,
 mobile navigation, a draft composer, and destination-side chat organization.
+The two lists have a visible divider and independent scrolling so a long chat
+history cannot push Projects out of reach. Both use the same navigation-row
+selection class. A direct eye toggle reveals private chats; it starts crossed
+out rather than hiding the only available option behind a Filter menu.
+Item actions render outside the scroll containers and stay within the viewport,
+so menus near the divider or bottom edge remain usable.
 
 Every new-chat action navigates to a draft with optional project and input text.
 An explicit New chat starts a fresh draft in the current project. Project-composer
