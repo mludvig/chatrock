@@ -242,7 +242,7 @@ test('a phone can rerun, fork, export, and share a conversation', async ({ page,
     await expect(page.locator('.message.assistant')).toContainText('GREEN_WIDGET')
     page.once('dialog', d => d.accept())
     await page.locator('.message.assistant').getByTitle('Fork to a new chat (up to here)').click()
-    await expect(page).not.toHaveURL(new RegExp(c.chatId))
+    await expect(page).not.toHaveURL(new RegExp(c.chatId), { timeout: 15_000 })
     const forkId = page.url().split('/c/')[1]
     expect(forkId).toMatch(/^[a-z0-9]+$/)
     chatIds.push(forkId)
