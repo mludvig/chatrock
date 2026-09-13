@@ -103,6 +103,12 @@ export const buildHandler = (postFn: PostFn) => async (
     return { statusCode: 200, body: '' }
   }
 
+  const ownedProject = chat.projectId ? await getProject(sub, chat.projectId as string) : undefined
+  if (chat.projectId && !ownedProject) {
+    await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'This project is no longer available. Move the chat out of the project to continue.' }) })
+    return { statusCode: 200, body: '' }
+  }
+
   // Immediate ack: positive confirmation that the send reached the backend.
   // The client arms a short watchdog after sending; receiving any frame (this
   // ack first) proves the WebSocket is live. No ack ⇒ the frame was dropped by
@@ -135,7 +141,7 @@ export const buildHandler = (postFn: PostFn) => async (
   const [userPrefs, userMemoriesRaw, projectItem, projectMemoriesRaw, projectFilesRaw, allChatsRaw] = await Promise.all([
     getUserPrefs(sub),
     clientMemoryEnabled ? listUserMemories(sub) : Promise.resolve([]),
-    projectId ? getProject(sub, projectId) : Promise.resolve(undefined),
+    Promise.resolve(ownedProject),
     (projectId && clientMemoryEnabled) ? listProjectMemories(projectId) : Promise.resolve([]),
     projectId ? listProjectFiles(projectId) : Promise.resolve([]),
     projectId ? listChats(sub) : Promise.resolve([]),
@@ -277,6 +283,7 @@ export const buildHandler = (postFn: PostFn) => async (
     sub,
     chatId,
     projectMemoryEnabled,
+    memoryEnabled,
     ...(projectId ? { projectId } : {}),
     ...(effectiveModelSettings.webSearchProvider ? { webSearchProvider: effectiveModelSettings.webSearchProvider } : {}),
     ...(search ? { searchScope: search.scope } : {}),
@@ -780,17 +787,18 @@ export const buildHandler = (postFn: PostFn) => async (
           text: i.text as string,
           category: i.category as string,
           createdAt: i.createdAt as string,
+          userEdited: i.userEdited === true,
         }))
         const userResult = memoryEnabled ? await enrichUserFacts(transcript, existingUserMems, chatId) : { memories: [] }
         const userOps = reconcileMemoryList(userResult.memories, existingUserMems)
         for (const op of userOps) {
           if (op.op === 'ADD') {
             const memId = newId()
-            await putUserMemory({ ...buildUserMemKey(sub, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
+            await putUserMemory({ ...buildUserMemKey(sub, memId), memId, sourceChatId: chatId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
             totalChanged++
             passiveMemoryItems.push({ scope: 'user', op: 'remember', category: op.category, text: op.text })
           } else if (op.op === 'UPDATE') {
-            await putUserMemory({ ...buildUserMemKey(sub, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
+            await putUserMemory({ ...buildUserMemKey(sub, op.memId), memId: op.memId, sourceChatId: chatId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
             totalChanged++
             passiveMemoryItems.push({ scope: 'user', op: 'update', category: op.category, text: op.text })
           } else if (op.op === 'DELETE') {
@@ -820,17 +828,18 @@ export const buildHandler = (postFn: PostFn) => async (
             text: i.text as string,
             category: i.category as string,
             createdAt: i.createdAt as string,
+          userEdited: i.userEdited === true,
           }))
           const projectResult = await enrichProjectFacts(transcript, existingProjectMems, chatId)
           const projectOps = reconcileMemoryList(projectResult.memories, existingProjectMems)
           for (const op of projectOps) {
             if (op.op === 'ADD') {
               const memId = newId()
-              await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
+              await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, sourceChatId: chatId, text: op.text, category: op.category, createdAt: memNow, updatedAt: memNow })
               totalChanged++
               passiveMemoryItems.push({ scope: 'project', op: 'remember', category: op.category, text: op.text })
             } else if (op.op === 'UPDATE') {
-              await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
+              await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, sourceChatId: chatId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: memNow })
               totalChanged++
               passiveMemoryItems.push({ scope: 'project', op: 'update', category: op.category, text: op.text })
             } else if (op.op === 'DELETE') {

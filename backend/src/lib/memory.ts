@@ -143,7 +143,7 @@ export function reconcile(
  */
 export function reconcileMemoryList(
   returned: Array<{ memId: string | null; category: string; text: string }>,
-  existing: Array<{ memId: string; text: string; category: string; createdAt: string }>,
+  existing: Array<{ memId: string; text: string; category: string; createdAt: string; userEdited?: boolean }>,
 ): FullMemOp[] {
   const ops: FullMemOp[] = []
   const existingById = new Map(existing.map(e => [e.memId, e]))
@@ -159,7 +159,7 @@ export function reconcileMemoryList(
         ops.push({ op: 'ADD', text: item.text, category: item.category })
       } else {
         returnedIds.add(item.memId)
-        if (existingItem.text !== item.text || existingItem.category !== item.category) {
+        if (!existingItem.userEdited && (existingItem.text !== item.text || existingItem.category !== item.category)) {
           ops.push({ op: 'UPDATE', memId: item.memId, text: item.text, category: item.category, createdAt: existingItem.createdAt })
         } else {
           ops.push({ op: 'NOOP', memId: item.memId })
@@ -170,7 +170,7 @@ export function reconcileMemoryList(
 
   // Existing items not referenced by the returned list → DELETE
   for (const e of existing) {
-    if (!returnedIds.has(e.memId)) {
+    if (!returnedIds.has(e.memId) && !e.userEdited) {
       ops.push({ op: 'DELETE', memId: e.memId })
     }
   }
@@ -307,7 +307,7 @@ const VALID_PROJECT_CATEGORIES = new Set<string>(['decision', 'convention', 'fac
  */
 export async function executeProjectMemoryTool(
   input: Record<string, string>,
-  ctx: { projectId: string },
+  ctx: { projectId: string; chatId?: string },
 ): Promise<ToolResult> {
   try {
     const { operation } = input
@@ -333,6 +333,7 @@ export async function executeProjectMemoryTool(
       const now = new Date().toISOString()
       await putProjectMemory({
         ...buildProjectMemKey(ctx.projectId, memId),
+        ...(ctx.chatId ? { sourceChatId: ctx.chatId } : {}),
         memId,
         text: input.text,
         category: input.category,
@@ -364,6 +365,7 @@ export async function executeProjectMemoryTool(
         : (existing.category as string)
 
       await putProjectMemory({
+        ...existing,
         ...buildProjectMemKey(ctx.projectId, input.memId),
         memId: input.memId,
         text: input.text,

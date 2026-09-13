@@ -2406,8 +2406,8 @@ describe('project chat enrichment', () => {
       await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
 
       const [, sysPrompt] = mockBedrock.converseStream.mock.calls[0]
-      // The forced-files section starts with "Always-included project files (full content):"
-      const forcedSection = (sysPrompt as string).split('Always-included project files (full content):')[1] ?? ''
+      // The forced-files section starts with "Always-included project files (excerpts; read the full source when needed):"
+      const forcedSection = (sysPrompt as string).split('Always-included project files (excerpts; read the full source when needed):')[1] ?? ''
       expect(forcedSection).toContain('big1.txt')
       expect(forcedSection).toContain('big2.txt')
       expect(forcedSection).toContain('big4.txt')

@@ -113,7 +113,7 @@ export function assembleSystemPrompt(input: AssembleInput): string {
   // 7. Forced files (always-included content)
   if (input.forcedFiles && input.forcedFiles.length > 0) {
     const fileBlocks = input.forcedFiles.map(f => `--- ${f.name} ---\n${f.content}`).join('\n\n')
-    parts.push(`Always-included project files (full content):\n\n${fileBlocks}`)
+    parts.push(`Always-included project files (excerpts; read the full source when needed):\n\n${fileBlocks}`)
   }
 
   // 8. Deep research instructions — only for a turn running at researchDepth 'deep'.

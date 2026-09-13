@@ -390,3 +390,11 @@ resource "aws_apigatewayv2_route" "delete_project_file" {
   authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
   target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
 }
+
+resource "aws_apigatewayv2_route" "post_project_memory" {
+  api_id             = aws_apigatewayv2_api.http.id
+  route_key          = "POST /api/projects/{projectId}/memory"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.jwt.id
+  target             = "integrations/${aws_apigatewayv2_integration.http_projects.id}"
+}

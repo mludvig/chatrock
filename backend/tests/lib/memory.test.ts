@@ -31,7 +31,7 @@
  */
 
 import * as bedrock from '../../src/lib/bedrock'
-import { extractUserFacts, reconcile, executeMemoryTool, executeProjectMemoryTool } from '../../src/lib/memory'
+import { extractUserFacts, reconcile, reconcileMemoryList, executeMemoryTool, executeProjectMemoryTool } from '../../src/lib/memory'
 import type { UserMemory, ReconcileOp } from '../../src/lib/memory'
 import { MEMORY_EXTRACTION_MODEL } from '../../src/config/models'
 import * as dynamoLib from '../../src/lib/dynamo'
@@ -60,6 +60,14 @@ jest.mock('../../src/lib/ids', () => ({
 
 beforeEach(() => {
   jest.clearAllMocks()
+})
+
+test('automatic reconciliation preserves user-maintained facts even if rewritten or omitted', () => {
+  const existing = [{ memId: 'curated', text: 'Use metric units', category: 'convention', createdAt: 'now', userEdited: true }]
+  expect(reconcileMemoryList([], existing)).toEqual([])
+  expect(reconcileMemoryList([{ memId: 'curated', text: 'Use imperial units', category: 'other' }], existing)).toEqual([
+    { op: 'NOOP', memId: 'curated' },
+  ])
 })
 
 // ── extractUserFacts ──────────────────────────────────────────────────────────

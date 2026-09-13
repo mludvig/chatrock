@@ -370,7 +370,7 @@ export async function deleteUserMemory(sub: string, memId: string): Promise<void
 export async function updateUserMemory(
   sub: string,
   memId: string,
-  fields: Partial<{ text: string; category: string; updatedAt: string }>,
+  fields: Partial<{ text: string; category: string; updatedAt: string; userEdited: boolean }>,
 ) {
   const updates = Object.entries({ ...fields, updatedAt: new Date().toISOString() })
     .filter(([, v]) => v !== undefined)
@@ -602,7 +602,7 @@ export async function putProjectMemory(item: Record<string, unknown>): Promise<v
 export async function updateProjectMemory(
   projectId: string,
   memId: string,
-  fields: Partial<{ text: string; category: string; updatedAt: string }>,
+  fields: Partial<{ text: string; category: string; updatedAt: string; userEdited: boolean }>,
 ) {
   const updates = Object.entries({ ...fields, updatedAt: new Date().toISOString() })
     .filter(([, v]) => v !== undefined)
