@@ -152,7 +152,7 @@ async function chatCorpusItems(sub: string, filterProjectId?: string): Promise<S
 async function fileCorpusItemsForProject(projectId: string): Promise<SearchHistoryCorpusItem[]> {
   const rows = await listProjectFiles(projectId)
   return rows
-    .filter(r => r.status === 'ready' && (r.summary || r.microLabel))
+    .filter(r => r.status === 'ready' && r.inclusion !== 'never' && (r.summary || r.microLabel))
     .slice()
     .reverse() // listProjectFiles queries ascending (oldest-first) — flip to newest-first
     .map(r => ({

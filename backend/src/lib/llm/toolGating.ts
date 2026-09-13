@@ -16,8 +16,8 @@ export function buildToolList(settings: ModelSettings, ctx?: ToolContext): ToolS
   if (settings.webSearchEnabled !== false) list.push(...WEB_TOOLS)
   if (settings.browserCoreEnabled !== false) list.push(TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL)
   if (settings.browserExtendedEnabled === true) list.push(BROWSER_TOOL)
-  if (settings.memoryEnabled !== false) list.push(MEMORY_TOOL)
-  if (ctx?.projectId && settings.memoryEnabled !== false) list.push(MANAGE_PROJECT_MEMORY_TOOL)
+  if (settings.memoryEnabled !== false && !ctx?.sensitive) list.push(MEMORY_TOOL)
+  if (ctx?.projectId && settings.memoryEnabled !== false && ctx.projectMemoryEnabled !== false && !ctx.sensitive) list.push(MANAGE_PROJECT_MEMORY_TOOL)
   if (ctx?.projectId) list.push(READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL)
   // ctx.searchScope is set only for a forced/explicit Search turn (ws/sendMessage.ts) — force
   // the tool into the list even if searchEnabled:false, since a forced toolChoice requires the

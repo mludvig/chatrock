@@ -1,9 +1,10 @@
+import { chatDto, resolveChatModel } from '../lib/chatDto'
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, updateChatSensitive, updateChatEphemeral, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary, putSharePair, listChatShares, deleteSharePair, buildShareLookupKey, buildShareIndexKey } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
-import { TITLE_MODEL, DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
+import { TITLE_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
@@ -24,44 +25,6 @@ const err = (status: number, message: string): APIGatewayProxyResultV2 => ({
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ message }),
 })
-
-// A chat's stored `model` can go stale when that model id is later retired from
-// config/models.ts (e.g. a renamed inference profile with no back-compat alias). Rather than a
-// bulk migration, this self-heals lazily the next time the chat is read: swap in
-// DEFAULT_CHAT_MODEL and report what changed so the client can show a one-time notice. Only
-// affects the NEXT message — Message rows keep their own historical `model` field untouched, so
-// past turns still show what actually generated them.
-async function resolveChatModel(sub: string, chatId: string, chat: Record<string, unknown>): Promise<{ model: string; modelMigratedFrom?: string }> {
-  const model = chat.model as string
-  if (isValidModelId(model)) return { model }
-  await updateChatModel(sub, chatId, DEFAULT_CHAT_MODEL)
-  console.log(JSON.stringify({ event: 'chat_model_migrated', sub, chatId, from: model, to: DEFAULT_CHAT_MODEL }))
-  return { model: DEFAULT_CHAT_MODEL, modelMigratedFrom: model }
-}
-
-// Chat item -> client DTO. Shared by the list and single-chat GET routes so both expose the
-// same shape — sensitive chats ARE included (the sidebar eye/mask handles visibility, not the
-// API), only their content (memory/summary/search) is excluded elsewhere.
-async function chatDto(sub: string, i: Record<string, unknown>) {
-  const chatId = (i.SK as string).replace('CHAT#', '')
-  const { model, modelMigratedFrom } = await resolveChatModel(sub, chatId, i)
-  return {
-    chatId,
-    title: i.title,
-    model,
-    systemPrompt: i.systemPrompt,
-    createdAt: i.createdAt,
-    updatedAt: i.updatedAt,
-    ...(i.activeLeafId !== undefined ? { activeLeafId: i.activeLeafId } : {}),
-    ...(i.modelSettings !== undefined ? { modelSettings: i.modelSettings } : {}),
-    ...(i.projectId !== undefined ? { projectId: i.projectId } : {}),
-    ...(i.summary !== undefined ? { summary: i.summary } : {}),
-    ...(i.topics !== undefined ? { topics: i.topics } : {}),
-    ...(i.sensitive === true ? { sensitive: true } : {}),
-    ...(i.ephemeral === true ? { ephemeral: true, expiresAt: new Date((i.ttl as number) * 1000).toISOString() } : {}),
-    ...(modelMigratedFrom ? { modelMigratedFrom } : {}),
-  }
-}
 
 export const handler = async (
   event: APIGatewayProxyEventV2WithJWTAuthorizer,
@@ -240,13 +203,13 @@ export const handler = async (
         const proj = await getProject(sub, body.projectId)
         if (!proj) return err(400, 'Invalid projectId')
         await updateChatProject(sub, chatId, body.projectId)
-        if (!prevProjectId) {
+        if (prevProjectId !== body.projectId && chat.sensitive !== true) {
           await summarizeChatById(sub, chatId)
           // Backfill project memory on move — see docs/adr/0012-backfill-project-memory-on-chat-move.md.
           // Sensitive chats never write facts out into shared project memory — see
           // "Sensitive & ephemeral chats" in backend/CLAUDE.md.
           if (chat.sensitive !== true && (proj.memoryEnabled ?? true)) {
-            await enrichProjectFactsByChatId(chatId, body.projectId)
+            await enrichProjectFactsByChatId(chatId, body.projectId, sub)
           }
         }
       } else {

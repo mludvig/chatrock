@@ -51,6 +51,25 @@ const mockExecuteGenerateImageTool = (imageGenToolLib as jest.Mocked<typeof imag
 
 const TEST_CTX = { sub: 'test-user' }
 
+test('private chats cannot write either memory scope, even through explicit dispatch', async () => {
+  mockExecuteMemoryTool.mockClear()
+  mockExecuteProjectMemoryTool.mockClear()
+  const ctx = { ...TEST_CTX, projectId: 'project', sensitive: true }
+  for (const name of ['manage_memory', 'manage_project_memory']) {
+    expect((await executeTool(name, { operation: 'remember', text: 'secret' }, ctx)).isError).toBe(true)
+  }
+  expect(mockExecuteMemoryTool).not.toHaveBeenCalled()
+  expect(mockExecuteProjectMemoryTool).not.toHaveBeenCalled()
+})
+
+test('disabled project memory blocks explicit tool writes', async () => {
+  mockExecuteProjectMemoryTool.mockClear()
+  expect((await executeTool('manage_project_memory', { operation: 'remember' }, {
+    ...TEST_CTX, projectId: 'project', projectMemoryEnabled: false,
+  })).isError).toBe(true)
+  expect(mockExecuteProjectMemoryTool).not.toHaveBeenCalled()
+})
+
 describe('web_fetch executor', () => {
   const realFetch = global.fetch
   afterEach(() => { global.fetch = realFetch })

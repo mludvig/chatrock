@@ -24,7 +24,7 @@ export async function executeProjectReadFileTool(
   }
 
   const file = await getProjectFile(ctx.projectId, fileId)
-  if (!file) {
+  if (!file || file.inclusion === 'never' || file.status === 'error' || file.status === 'processing' || file.status === 'uploading') {
     return errorResult(`File ${fileId} not found in this project`)
   }
 
@@ -112,7 +112,7 @@ export async function executeProjectReadChatTool(
 
   // Verify ownership: the chat must belong to this project
   const chat = await getChat(ctx.sub, targetChatId)
-  if (!chat || chat.projectId !== ctx.projectId) {
+  if (!chat || chat.projectId !== ctx.projectId || chat.sensitive === true) {
     return errorResult(`Chat ${targetChatId} not found in this project`)
   }
 
@@ -128,8 +128,7 @@ export async function executeProjectReadChatTool(
         return textResult(`Chat: ${chat.title as string}\n\n(no messages)`)
       }
       const typedRows = rows as unknown as TurnRow[]
-      const leaf = typedRows[typedRows.length - 1]
-      const path = buildActivePath(typedRows, leaf.msgId)
+      const path = buildActivePath(typedRows, (chat.activeLeafId as string | undefined) ?? null)
       const transcript = path
         .filter(r => r.role === 'user' || r.role === 'assistant')
         .slice(-TRANSCRIPT_TURNS_CAP)

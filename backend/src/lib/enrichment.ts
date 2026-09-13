@@ -1,6 +1,6 @@
 import { converseOnce } from './bedrock'
 import { MEMORY_EXTRACTION_MODEL, TITLE_MODEL } from '../config/models'
-import { listMessages, updateChatSummary, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey } from './dynamo'
+import { getChat, getProject, listMessages, updateChatSummary, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey } from './dynamo'
 import { buildActivePath, type TurnRow } from './tree'
 import { reconcileMemoryList } from './memory'
 import { newId } from './ids'
@@ -243,7 +243,7 @@ export async function summarizeChat(
  */
 export async function summarizeChatById(sub: string, chatId: string): Promise<ChatSummaryResult | undefined> {
   try {
-    const transcript = await buildChatTranscript(chatId)
+    const transcript = await buildChatTranscript(sub, chatId)
     if (!transcript) return undefined
 
     const result = await summarizeChat(transcript, '', [], chatId)
@@ -262,12 +262,13 @@ export async function summarizeChatById(sub: string, chatId: string): Promise<Ch
  * backfill a chat's contribution to a store immediately (e.g. on moving it
  * into a project) rather than waiting for its next turn.
  */
-async function buildChatTranscript(chatId: string): Promise<string | undefined> {
+async function buildChatTranscript(sub: string, chatId: string): Promise<string | undefined> {
+  const chat = await getChat(sub, chatId)
+  if (!chat || chat.sensitive === true) return undefined
   const rows = (await listMessages(chatId)) as unknown as TurnRow[]
   if (rows.length === 0) return undefined
 
-  const leaf = rows[rows.length - 1]
-  const path = buildActivePath(rows, leaf.msgId)
+  const path = buildActivePath(rows, (chat.activeLeafId as string | undefined) ?? null)
   if (path.length === 0) return undefined
 
   return path
@@ -288,9 +289,12 @@ async function buildChatTranscript(chatId: string): Promise<string | undefined> 
  * contributes to project memory on its *next* turn, never for the history
  * it already carries in. Never throws.
  */
-export async function enrichProjectFactsByChatId(chatId: string, projectId: string): Promise<void> {
+export async function enrichProjectFactsByChatId(chatId: string, projectId: string, sub: string): Promise<void> {
   try {
-    const transcript = await buildChatTranscript(chatId)
+    const project = await getProject(sub, projectId)
+    const chat = await getChat(sub, chatId)
+    if (!project || project.memoryEnabled === false || !chat || chat.projectId !== projectId || chat.sensitive === true) return
+    const transcript = await buildChatTranscript(sub, chatId)
     if (!transcript) return
 
     const existingRaw = await listProjectMemories(projectId)

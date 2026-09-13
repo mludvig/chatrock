@@ -162,6 +162,7 @@ export const buildHandler = (postFn: PostFn) => async (
 
   const effectivePrefs = resolvePreferences({ user: userPrefs, project: projectPrefs, chat: chatPrefs })
   const memoryEnabled = effectivePrefs.memoryEnabled !== false
+  const projectMemoryEnabled = memoryEnabled && !!projectId && projectItem?.memoryEnabled !== false
 
   const effectiveModelSettings: ModelSettings = {
     thinkingEffort:         effectivePrefs.thinkingEffort,
@@ -199,7 +200,7 @@ export const buildHandler = (postFn: PostFn) => async (
     const allSiblingChats = (allChatsRaw as Record<string, unknown>[])
       .filter(c => {
         const cId = (c.SK as string).replace('CHAT#', '')
-        return c.projectId === projectId && cId !== chatId
+        return c.projectId === projectId && cId !== chatId && c.sensitive !== true
       })
       .map(c => ({
         chatId: (c.SK as string).replace('CHAT#', ''),
@@ -226,14 +227,14 @@ export const buildHandler = (postFn: PostFn) => async (
         if (isTextLike || (contentType === 'application/pdf' && f.extractedTextKey)) {
           try {
             const raw = await fetchS3Text(keyToRead)
-            if (totalForcedChars + raw.length > FORCED_FILES_TOTAL_CAP) {
+            if (totalForcedChars + Math.min(raw.length, 20000) > FORCED_FILES_TOTAL_CAP) {
               const remaining = alwaysFiles.length - i
               console.log(JSON.stringify({ event: 'forced_files_truncated', skipped: remaining, totalKept: totalForcedChars, projectId, chatId }))
               break
             }
             const capped = raw.length > 20000 ? raw.slice(0, 20000) + '\n\n[... truncated ...]' : raw
             forcedFiles.push({ name: f.filename as string, content: capped })
-            totalForcedChars += raw.length
+            totalForcedChars += Math.min(raw.length, 20000)
           } catch { /* skip unreadable file */ }
         }
         // Images and other binary types are excluded from forced injection
@@ -246,7 +247,7 @@ export const buildHandler = (postFn: PostFn) => async (
   const memoriesForPrompt = memoryEnabled
     ? userMemoriesRaw.map(i => ({ memId: i.memId as string, text: i.text as string, category: i.category as string }))
     : []
-  const projectMemoriesForPrompt = memoryEnabled && projectId
+  const projectMemoriesForPrompt = projectMemoryEnabled
     ? (projectMemoriesRaw as Record<string, unknown>[]).map(i => ({
         memId: i.memId as string,
         text: i.text as string,
@@ -258,10 +259,10 @@ export const buildHandler = (postFn: PostFn) => async (
     prefs: effectivePrefs,
     memories: memoriesForPrompt,
     now,
-    memoryToolEnabled: memoryEnabled,
+    memoryToolEnabled: memoryEnabled && !chat.sensitive,
     projectInstructions: projectItem ? (projectItem.instructions as string | undefined) : undefined,
     projectMemories: projectId ? projectMemoriesForPrompt : undefined,
-    projectMemoryToolEnabled: !!(projectId && memoryEnabled),
+    projectMemoryToolEnabled: projectMemoryEnabled && !chat.sensitive,
     projectManifest,
     forcedFiles: forcedFiles ?? undefined,
     projectReadToolsEnabled: !!projectId,
@@ -275,6 +276,7 @@ export const buildHandler = (postFn: PostFn) => async (
   const toolCtx: ToolContext = {
     sub,
     chatId,
+    projectMemoryEnabled,
     ...(projectId ? { projectId } : {}),
     ...(effectiveModelSettings.webSearchProvider ? { webSearchProvider: effectiveModelSettings.webSearchProvider } : {}),
     ...(search ? { searchScope: search.scope } : {}),
@@ -722,7 +724,8 @@ export const buildHandler = (postFn: PostFn) => async (
   // searchable store (user memory, project memory, the search_history-indexed summary) that could
   // surface this chat's content from a different chat. See "Sensitive & ephemeral chats" in
   // backend/CLAUDE.md.
-  if (memoryEnabled) {
+  {
+    // Organization works even when learning new facts is disabled. See docs/adr/0044-project-context-and-memory-policy.md.
     const transcript = [
       `User: ${content ?? ''}`,
       `Assistant: ${assistantTextForMemory}`,
@@ -767,8 +770,8 @@ export const buildHandler = (postFn: PostFn) => async (
         // (the dual-writer duplicate). One cheap read each — same partition the
         // tool just wrote to. See docs/adr/0007-passive-enrichment-fresh-reads.md.
         const [freshUserMemsRaw, freshProjectMemsRaw] = await Promise.all([
-          listUserMemories(sub),
-          projectId ? listProjectMemories(projectId) : Promise.resolve([]),
+          memoryEnabled ? listUserMemories(sub) : Promise.resolve([]),
+          projectMemoryEnabled ? listProjectMemories(projectId!) : Promise.resolve([]),
         ])
 
         // ── User facts (from the post-loop re-read, so tool writes are included) ──
@@ -778,7 +781,7 @@ export const buildHandler = (postFn: PostFn) => async (
           category: i.category as string,
           createdAt: i.createdAt as string,
         }))
-        const userResult = await enrichUserFacts(transcript, existingUserMems, chatId)
+        const userResult = memoryEnabled ? await enrichUserFacts(transcript, existingUserMems, chatId) : { memories: [] }
         const userOps = reconcileMemoryList(userResult.memories, existingUserMems)
         for (const op of userOps) {
           if (op.op === 'ADD') {
@@ -811,7 +814,7 @@ export const buildHandler = (postFn: PostFn) => async (
         }
 
         // ── Project facts (from the post-loop re-read, so tool writes are included) ──
-        if (isProject && projectId) {
+        if (isProject && projectId && projectMemoryEnabled) {
           const existingProjectMems = (freshProjectMemsRaw as Record<string, unknown>[]).map(i => ({
             memId: i.memId as string,
             text: i.text as string,

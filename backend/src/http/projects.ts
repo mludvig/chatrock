@@ -26,7 +26,15 @@ import { subFromClaims } from '../lib/auth'
 import { QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { summarizeFile } from '../lib/projectFiles'
 import { validateAttachment, presignPut, projectFilePrefix, deleteProjectObjects, deleteS3Objects } from '../lib/attachments'
-import { summarizeChatById } from '../lib/enrichment'
+import { chatDto } from '../lib/chatDto'
+import { isValidModelId } from '../config/models'
+
+const projectDto = (i: Record<string, unknown>) => ({
+  projectId: (i.SK as string).replace('PROJECT#', ''),
+  name: i.name, description: i.description, instructions: i.instructions,
+  memoryEnabled: i.memoryEnabled, defaultModel: i.defaultModel, modelSettings: i.modelSettings,
+  createdAt: i.createdAt, updatedAt: i.updatedAt,
+})
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -48,15 +56,7 @@ export const handler = async (
 
   if (route === 'GET /api/projects') {
     const items = await listProjects(sub)
-    const projects = items.map(i => ({
-      projectId: (i.SK as string).replace('PROJECT#', ''),
-      name: i.name,
-      description: i.description,
-      instructions: i.instructions,
-      memoryEnabled: i.memoryEnabled,
-      createdAt: i.createdAt,
-      updatedAt: i.updatedAt,
-    }))
+    const projects = items.map(projectDto)
     return ok({ projects })
   }
 
@@ -98,40 +98,8 @@ export const handler = async (
 
     const allChats = await listChats(sub)
     const memberChats = allChats.filter(c => c.projectId === projectId)
-    const chats = memberChats.map(c => ({
-      chatId: (c.SK as string).replace('CHAT#', ''),
-      title: c.title,
-      model: c.model,
-      systemPrompt: c.systemPrompt,
-      createdAt: c.createdAt,
-      updatedAt: c.updatedAt,
-      ...(c.activeLeafId !== undefined ? { activeLeafId: c.activeLeafId } : {}),
-      ...(c.modelSettings !== undefined ? { modelSettings: c.modelSettings } : {}),
-      projectId: c.projectId,
-      ...(c.summary !== undefined ? { summary: c.summary } : {}),
-      ...(c.topics !== undefined ? { topics: c.topics } : {}),
-    }))
-
-    // Fire-and-forget: summarize any member chats that have no summary yet
-    const unsummarized = memberChats.filter(c => c.summary === undefined)
-    if (unsummarized.length > 0) {
-      void Promise.allSettled(
-        unsummarized.map(c => summarizeChatById(sub, (c.SK as string).replace('CHAT#', '')))
-      )
-    }
-
-    return ok({
-      project: {
-        projectId: (project.SK as string).replace('PROJECT#', ''),
-        name: project.name,
-        description: project.description,
-        instructions: project.instructions,
-        memoryEnabled: project.memoryEnabled,
-        createdAt: project.createdAt,
-        updatedAt: project.updatedAt,
-      },
-      chats,
-    })
+    const chats = await Promise.all(memberChats.map(c => chatDto(sub, c)))
+    return ok({ project: projectDto(project), chats })
   }
 
   if (route === 'PATCH /api/projects/{projectId}') {
@@ -161,19 +129,24 @@ export const handler = async (
       return err(400, 'modelSettings must be a plain object')
     }
 
+    if (body.defaultModel !== undefined && body.defaultModel !== null &&
+        (typeof body.defaultModel !== 'string' || !isValidModelId(body.defaultModel))) {
+      return err(400, 'Invalid default model')
+    }
+
     const filteredFields: Partial<{
       name: string
       description: string
       instructions: string
       memoryEnabled: boolean
-      defaultModel: string
+      defaultModel: string | null
       modelSettings: Record<string, unknown>
     }> = {}
     if (body.name !== undefined) filteredFields.name = body.name as string
     if (body.description !== undefined) filteredFields.description = body.description as string
     if (body.instructions !== undefined) filteredFields.instructions = body.instructions as string
     if (body.memoryEnabled !== undefined) filteredFields.memoryEnabled = body.memoryEnabled as boolean
-    if (body.defaultModel !== undefined) filteredFields.defaultModel = body.defaultModel as string
+    if (body.defaultModel !== undefined) filteredFields.defaultModel = body.defaultModel as string | null
     if (body.modelSettings !== undefined) filteredFields.modelSettings = body.modelSettings as Record<string, unknown>
 
     await updateProjectFields(sub, projectId, filteredFields)

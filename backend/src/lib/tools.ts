@@ -26,6 +26,7 @@ export interface ToolContext {
   // in lib/search.ts for why this overrides any model-supplied scope on that turn.
   searchScope?: 'project' | 'global'
   sensitive?: boolean
+  projectMemoryEnabled?: boolean
   // The model this turn is running under. Set automatically by loop.ts (it already knows
   // its own modelId) on the ctx passed to every tool execution — not something a caller of
   // converseStream ever sets. run_research_task is the only reader today: its sub-agent has
@@ -342,6 +343,12 @@ const JINA_KEY = process.env.JINA_API_KEY ?? ''
 
 export async function executeTool(name: string, input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   try {
+    if ((name === 'manage_memory' || name === 'manage_project_memory') && ctx.sensitive) {
+      return errorResult('Memory updates are disabled for this private chat.')
+    }
+    if (name === 'manage_project_memory' && ctx.projectMemoryEnabled === false) {
+      return errorResult('Project memory is disabled.')
+    }
     if (name === 'manage_memory') {
       return await executeMemoryTool(input as Record<string, string>, ctx)
     }
