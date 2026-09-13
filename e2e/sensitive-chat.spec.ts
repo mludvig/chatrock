@@ -25,8 +25,7 @@ test('Private toggle creates a sensitive+ephemeral chat, hidden from the list un
 
   await expect(page.locator('.chat-item.sensitive')).toHaveCount(0)
 
-  await page.locator('.chat-list-filter .chat-filter-btn').click()
-  await page.getByText('Show sensitive chats').click()
+  await page.getByRole('button', { name: 'Show private chats', exact: true }).click()
 
   await expect(page.locator('.chat-item.sensitive').first()).toBeVisible({ timeout: 5_000 })
 })

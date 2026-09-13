@@ -6,7 +6,7 @@ import { sortByRecent } from '../lib/sort'
 import { useSaveStatus } from '../lib/useSaveStatus'
 import Dialog from './Dialog'
 import ProjectDetailsDialog from './ProjectDetailsDialog'
-import ChatListFilter, { applyChatListFilter, useChatListFilter } from './ChatListFilter'
+import PrivateChatToggle, { filterPrivateChats } from './PrivateChatToggle'
 import ItemMenu from './ItemMenu'
 
 export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => void }) {
@@ -32,7 +32,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
   const [newFact, setNewFact] = useState(false)
   const [fact, setFact] = useState('')
   const [pending, setPending] = useState(false)
-  const filter = useChatListFilter()
+  const [showPrivate, setShowPrivate] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
   const activeUploads = useRef(new Set<string>())
   const uploadFailures = useRef(new Map<string, string>())
@@ -69,7 +69,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
   }, [projectId, updateProject, patchChat, mergeProjectFiles])
   useEffect(() => {
     currentProject.current = projectId
-    setLoading(true); setFiles([]); setMemories([]); setDraft(''); setQuery(''); setActionError('')
+    setLoading(true); setFiles([]); setMemories([]); setDraft(''); setQuery(''); setActionError(''); setShowPrivate(false)
     void refresh()
     return () => { currentProject.current = '' }
   }, [refresh, projectId])
@@ -139,7 +139,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
       activeUploads.current.delete(`${target}/${id}`)
     }
   }
-  const projectChats = sortByRecent(applyChatListFilter(chats.filter(c => c.projectId === projectId), filter, { includeProjectChats: true }))
+  const projectChats = sortByRecent(filterPrivateChats(chats.filter(c => c.projectId === projectId), showPrivate))
   const matchingChats = projectChats.filter(c => `${c.title} ${c.summary ?? ''} ${c.topics?.join(' ') ?? ''}`.toLowerCase().includes(query.toLowerCase()))
   return <div className="project-view">
     <header className="project-view-header">
@@ -160,7 +160,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
       <nav className="project-tabs" aria-label="Project sections"><button aria-pressed={tab === 'chats'} onClick={() => setTab('chats')}>Chats ({projectChats.length})</button><button aria-pressed={tab === 'knowledge'} onClick={() => setTab('knowledge')}>Knowledge ({files.length + memories.length})</button></nav>
       {loading && <p role="status">Loading project…</p>}
       {tab === 'chats' ? <section className="project-section">
-        <div className="section-toolbar"><input className="search-field" aria-label="Filter project chats" placeholder="Filter chats…" value={query} onChange={e => setQuery(e.target.value)} /><button className="btn-action" onClick={() => setAddChats(true)}>Add existing chats</button><ChatListFilter filter={filter} showProjectToggle={false} /></div>
+        <div className="section-toolbar"><input className="search-field" aria-label="Filter project chats" placeholder="Filter chats…" value={query} onChange={e => setQuery(e.target.value)} /><button className="btn-action" onClick={() => setAddChats(true)}>Add existing chats</button><PrivateChatToggle visible={showPrivate} onToggle={() => setShowPrivate(v => !v)} /></div>
         {!loading && !matchingChats.length && <p className="panel-empty">No chats here yet. Start a conversation or add an existing chat.</p>}
         {matchingChats.map(c => <div key={c.chatId} className="chat-item project-chat-row"><Link className="chat-item-content" to={`/c/${c.chatId}`}><strong>{c.sensitive ? 'Private chat' : c.title}</strong>{!c.sensitive && c.summary && <span className="chat-summary">{c.summary}</span>}<small>{new Date(c.updatedAt).toLocaleDateString()}</small></Link><ItemMenu label={`Actions for ${c.title}`}><button onClick={() => action(async () => { await api.moveChatToProject(c.chatId, null); updateChatProjectId(c.chatId, null) })}>Remove from project</button><button onClick={() => navigate(`/c/${c.chatId}`)}>Open chat</button></ItemMenu></div>)}
       </section> : <div className="knowledge-sections">

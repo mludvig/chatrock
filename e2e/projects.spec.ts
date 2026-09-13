@@ -23,7 +23,7 @@ test('creation is explicit, rename persists, and deletion keeps member chats', a
     const row = page.locator('.project-item').filter({ hasText: `${name} renamed` })
     await row.locator('summary').click()
     page.once('dialog', async d => { expect(d.message()).toContain('chats will be kept'); await d.accept() })
-    await row.getByRole('button', { name: 'Delete project', exact: true }).click()
+    await page.getByRole('button', { name: 'Delete project', exact: true }).click()
     await expect(row).toHaveCount(0)
     deleted = true
     const chat = await request<{ projectId?: string }>(page, 'GET', `/chats/${c.chatId}`)
@@ -47,7 +47,7 @@ test('existing chats can be added from a project and removed without deleting', 
     const row = page.locator('.project-chat-row').filter({ hasText: title })
     await expect(row).toBeVisible()
     await row.locator('summary').click()
-    await row.getByRole('button', { name: 'Remove from project' }).click()
+    await page.getByRole('button', { name: 'Remove from project' }).click()
     await expect(row).toHaveCount(0)
     await expect(page.locator(`.chat-list a[href="/c/${c.chatId}"]`)).toBeVisible()
   } finally { await request(page, 'DELETE', `/chats/${c.chatId}`); await request(page, 'DELETE', `/projects/${p.projectId}`) }

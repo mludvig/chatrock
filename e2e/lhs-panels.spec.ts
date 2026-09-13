@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { openApp } from './ux.helpers'
+import { openApp, newProject, newChat, request, assertFits } from './ux.helpers'
 
 test('projects and recent chats share navigation; settings has a clear return', async ({ page }) => {
   await openApp(page)
@@ -13,3 +13,58 @@ test('projects and recent chats share navigation; settings has a clear return', 
   await expect(page.locator('.projects-panel')).toBeVisible()
   await expect(page.locator('.chat-list')).toBeVisible()
 })
+
+for (const width of [390, 1024]) {
+  test(`sidebar order, shared selection and private visibility at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 })
+    await openApp(page)
+    const p = await newProject(page, 'sidebar')
+    const chat = await newChat(page, p.projectId)
+    const privateChat = await newChat(page, p.projectId)
+    try {
+      await request(page, 'PATCH', `/chats/${privateChat.chatId}`, { title: 'E2E hidden sidebar chat', sensitive: true })
+      await page.goto(`/c/${chat.chatId}`)
+      if (width <= 720) await page.getByTitle('Open sidebar').click()
+      const recent = page.getByRole('region', { name: 'Recent chats', exact: true })
+      const projects = page.getByRole('region', { name: 'Projects', exact: true })
+      await expect(recent).toBeInViewport()
+      await expect(projects).toBeInViewport()
+      await expect(page.getByRole('separator')).toBeInViewport()
+      expect((await recent.boundingBox())!.y).toBeLessThan((await projects.boundingBox())!.y)
+      const toggle = recent.getByRole('button', { name: 'Show private chats', exact: true })
+      await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+      await expect(toggle.locator('svg')).toHaveAttribute('data-icon', 'eye-slash')
+      await expect(recent.locator(`a[href="/c/${privateChat.chatId}"]`)).toHaveCount(0)
+      await toggle.click()
+      await expect(recent.locator(`a[href="/c/${privateChat.chatId}"]`)).toBeVisible()
+      await expect(toggle.locator('svg')).toHaveAttribute('data-icon', 'eye')
+      await toggle.click()
+      await expect(recent.locator(`a[href="/c/${privateChat.chatId}"]`)).toHaveCount(0)
+      const selection = async () => page.locator('.sidebar .navigation-row.active').evaluate(el => {
+        const style = getComputedStyle(el)
+        return { border: style.borderLeft, background: style.backgroundColor, color: style.color, weight: style.fontWeight, padding: style.paddingLeft }
+      })
+      await expect(recent.locator('[aria-current="page"]')).toHaveAttribute('href', `/c/${chat.chatId}`)
+      const chatStyle = await selection()
+      expect(chatStyle.border).toContain('3px')
+      await recent.locator('.navigation-row.active summary').click()
+      await page.getByRole('button', { name: 'Rename chat', exact: true }).click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+      await assertFits(page, '.dialog input, .dialog button')
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await page.goto(`/p/${p.projectId}`)
+      if (width <= 720) await page.getByTitle('Open sidebar').click()
+      await expect(projects.locator('[aria-current="page"]')).toHaveAttribute('href', `/p/${p.projectId}`)
+      expect(await selection()).toEqual(chatStyle)
+      await projects.getByLabel(`Actions for ${p.name}`, { exact: true }).click()
+      await expect(page.getByRole('button', { name: 'New chat in this project', exact: true })).toBeInViewport()
+      await page.keyboard.press('Escape')
+      await page.screenshot({ path: `.screenshots/2026-09-16-sidebar-${width}.jpg` })
+    } finally {
+      await request(page, 'DELETE', `/chats/${chat.chatId}`)
+      await request(page, 'DELETE', `/chats/${privateChat.chatId}`)
+      await request(page, 'DELETE', `/projects/${p.projectId}`)
+    }
+  })
+}

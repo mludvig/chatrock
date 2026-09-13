@@ -49,8 +49,8 @@ export default function ProjectsPanel() {
       <input autoFocus aria-label="Project name" placeholder="Project name…" value={name} onChange={e => setName(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setCreating(false) }} />
       <div className="form-actions"><button type="button" onClick={() => setCreating(false)}>Cancel</button><button disabled={pending || !name.trim()}>{pending ? 'Creating…' : 'Create'}</button></div>
     </form>}
-    <div className="project-list">{recent.map(p => <div className={`project-item${active === p.projectId ? ' active' : ''}`} key={p.projectId}>
-      <Link className="project-title" to={`/p/${p.projectId}`}>{p.name}</Link>
+    <div className="project-list">{recent.map(p => <div className={`project-item navigation-row${active === p.projectId ? ' active' : ''}`} key={p.projectId}>
+      <Link className="project-title" to={`/p/${p.projectId}`} aria-current={active === p.projectId ? 'page' : undefined}>{p.name}</Link>
       <ItemMenu label={`Actions for ${p.name}`}>
         <button onClick={() => { bumpNewChatTick(); navigate(`/c/new?project=${p.projectId}`, { state: { draft: '' } }) }}>New chat in this project</button>
         <button onClick={() => navigate(`/p/${p.projectId}?settings=1`)}>Project settings</button>
