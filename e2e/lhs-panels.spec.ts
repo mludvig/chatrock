@@ -56,6 +56,7 @@ for (const width of [390, 1024]) {
       await page.goto(`/p/${p.projectId}`)
       if (width <= 720) await page.getByTitle('Open sidebar').click()
       await expect(projects.locator('[aria-current="page"]')).toHaveAttribute('href', `/p/${p.projectId}`)
+      await expect(recent.locator(`a[href="/c/${chat.chatId}"]`)).toBeVisible()
       expect(await selection()).toEqual(chatStyle)
       await projects.getByLabel(`Actions for ${p.name}`, { exact: true }).click()
       await expect(page.getByRole('button', { name: 'New chat in this project', exact: true })).toBeInViewport()
