@@ -11,6 +11,8 @@ import {
   batchDeleteKeys,
   buildProjectKey,
   listProjectMemories,
+  putProjectMemory,
+  buildProjectMemKey,
   deleteProjectMemory,
   updateProjectMemory,
   listProjectFiles,
@@ -25,7 +27,7 @@ import {
 import { subFromClaims } from '../lib/auth'
 import { QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { summarizeFile } from '../lib/projectFiles'
-import { validateAttachment, presignPut, projectFilePrefix, deleteProjectObjects, deleteS3Objects } from '../lib/attachments'
+import { validateAttachment, signCloudFrontUrl, presignPut, projectFilePrefix, deleteProjectObjects, deleteS3Objects } from '../lib/attachments'
 import { chatDto } from '../lib/chatDto'
 import { isValidModelId } from '../config/models'
 
@@ -185,12 +187,28 @@ export const handler = async (
     return { statusCode: 204, body: '' }
   }
 
+  if (route === 'POST /api/projects/{projectId}/memory') {
+    if (!await getProject(sub, projectId)) return err(404, 'Not found')
+    let body: Record<string, unknown>
+    try { body = JSON.parse(event.body ?? '{}') } catch { return err(400, 'Invalid JSON body') }
+    if (!body || typeof body.text !== 'string' || !body.text.trim() || body.text.length > 10000) return err(400, 'A fact must contain 1–10000 characters')
+    const category = typeof body.category === 'string' ? body.category : 'fact'
+    if (!['decision', 'convention', 'fact', 'constraint', 'glossary', 'other'].includes(category)) return err(400, 'Invalid category')
+    const memId = newId()
+    const now = new Date().toISOString()
+    // User-maintained facts survive automatic reconciliation. See docs/adr/0046-project-knowledge-controls.md.
+    await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: body.text.trim(), category, userEdited: true, createdAt: now, updatedAt: now })
+    return ok({ memId }, 201)
+  }
+
   if (route === 'GET /api/projects/{projectId}/memory') {
     const project = await getProject(sub, projectId)
     if (!project) return err(404, 'Not found')
     const items = await listProjectMemories(projectId)
     const memories = items.map(i => ({
       memId: i.memId,
+      userEdited: i.userEdited,
+      sourceChatId: i.sourceChatId,
       text: i.text,
       category: i.category,
       createdAt: i.createdAt,
@@ -231,7 +249,7 @@ export const handler = async (
     const fields: Partial<{ text: string; category: string }> = {}
     if (body.text !== undefined) fields.text = (body.text as string).trim()
     if (body.category !== undefined) fields.category = body.category as string
-    await updateProjectMemory(projectId, memId, fields)
+    await updateProjectMemory(projectId, memId, { ...fields, userEdited: true })
     return ok({ ok: true })
   }
 
@@ -313,19 +331,21 @@ export const handler = async (
     const project = await getProject(sub, projectId)
     if (!project) return err(404, 'Not found')
     const items = await listProjectFiles(projectId)
-    const files = items.map(i => ({
+    const files = await Promise.all(items.map(async i => ({
       fileId: i.fileId,
       filename: i.filename,
       contentType: i.contentType,
       sizeBytes: i.sizeBytes,
       s3Key: i.s3Key,
-      status: i.status,
+      status: ['uploading', 'processing'].includes(i.status as string) && Date.now() - Date.parse(i.updatedAt as string) > 15 * 60 * 1000 ? 'error' : i.status,
+      errorMessage: i.status === 'error' || (['uploading', 'processing'].includes(i.status as string) && Date.now() - Date.parse(i.updatedAt as string) > 15 * 60 * 1000) ? 'Processing did not finish. Retry, or remove this file and upload it again.' : undefined,
+      url: i.status === 'ready' ? await signCloudFrontUrl(i.s3Key as string) : undefined,
       microLabel: i.microLabel,
       summary: i.summary,
       inclusion: i.inclusion ?? 'auto',
       createdAt: i.createdAt,
       updatedAt: i.updatedAt,
-    }))
+    })))
     return ok({ files })
   }
 

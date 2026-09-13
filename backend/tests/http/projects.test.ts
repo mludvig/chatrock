@@ -76,6 +76,17 @@ test('null clears a project model override', async () => {
   expect(mockDynamo.updateProjectFields).toHaveBeenCalledWith('user-1', 'proj-1', { defaultModel: null })
 })
 
+test('users can add a protected project fact', async () => {
+  mockDynamo.getProject.mockResolvedValue({ SK: 'PROJECT#proj-1' })
+  const res = result(await handler(makeEvent('POST', '/api/projects/{projectId}/memory', {
+    text: '  Always use metric units  ', category: 'convention',
+  }, { projectId: 'proj-1' }) as any))
+  expect(res.statusCode).toBe(201)
+  expect(mockDynamo.putProjectMemory).toHaveBeenCalledWith(expect.objectContaining({
+    text: 'Always use metric units', userEdited: true, category: 'convention',
+  }))
+})
+
 test('GET /api/projects returns empty list when no projects', async () => {
   mockDynamo.listProjects.mockResolvedValue([])
   const res = result(await handler(makeEvent('GET', '/api/projects') as any))
@@ -410,7 +421,7 @@ test('PATCH /api/projects/{projectId}/memory/{memId} updates text and category',
   }, { projectId: 'proj-1', memId: 'mem-1' }) as any))
   expect(res.statusCode).toBe(200)
   expect(JSON.parse(res.body ?? '{}')).toEqual({ ok: true })
-  expect(mockDynamo.updateProjectMemory).toHaveBeenCalledWith('proj-1', 'mem-1', { text: 'Updated fact', category: 'fact' })
+  expect(mockDynamo.updateProjectMemory).toHaveBeenCalledWith('proj-1', 'mem-1', { text: 'Updated fact', category: 'fact', userEdited: true })
 })
 
 test('PATCH /api/projects/{projectId}/memory/{memId} updates text only', async () => {
@@ -420,7 +431,7 @@ test('PATCH /api/projects/{projectId}/memory/{memId} updates text only', async (
     text: 'Updated fact',
   }, { projectId: 'proj-1', memId: 'mem-1' }) as any))
   expect(res.statusCode).toBe(200)
-  expect(mockDynamo.updateProjectMemory).toHaveBeenCalledWith('proj-1', 'mem-1', { text: 'Updated fact' })
+  expect(mockDynamo.updateProjectMemory).toHaveBeenCalledWith('proj-1', 'mem-1', { text: 'Updated fact', userEdited: true })
 })
 
 test('PATCH /api/projects/{projectId}/memory/{memId} rejects empty text', async () => {

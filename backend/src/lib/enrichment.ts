@@ -303,6 +303,7 @@ export async function enrichProjectFactsByChatId(chatId: string, projectId: stri
       text: i.text as string,
       category: i.category as string,
       createdAt: i.createdAt as string,
+          userEdited: i.userEdited === true,
     }))
 
     const result = await enrichProjectFacts(transcript, existing, chatId)
@@ -311,9 +312,9 @@ export async function enrichProjectFactsByChatId(chatId: string, projectId: stri
     for (const op of ops) {
       if (op.op === 'ADD') {
         const memId = newId()
-        await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, text: op.text, category: op.category, createdAt: now, updatedAt: now })
+        await putProjectMemory({ ...buildProjectMemKey(projectId, memId), memId, sourceChatId: chatId, text: op.text, category: op.category, createdAt: now, updatedAt: now })
       } else if (op.op === 'UPDATE') {
-        await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: now })
+        await putProjectMemory({ ...buildProjectMemKey(projectId, op.memId), memId: op.memId, sourceChatId: chatId, text: op.text, category: op.category, createdAt: op.createdAt, updatedAt: now })
       } else if (op.op === 'DELETE') {
         await deleteProjectMemory(projectId, op.memId)
       }

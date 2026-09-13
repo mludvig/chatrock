@@ -264,3 +264,11 @@ tools and summary backfills. Excluded files are excluded from search and reads.
 Project memory has an additional gate independent of instructions/files. Titles
 and non-sensitive summaries continue when memory learning is off. Retrieval and
 backfill use the stored active conversation branch.
+
+## Curated project knowledge
+
+ADR 0046 adds `POST /api/projects/{projectId}/memory` for manual facts. UI-created
+and UI-edited facts carry `userEdited: true`; passive reconciliation preserves
+them. New automated facts record `sourceChatId`. GET project files returns a signed
+`url` for ready originals and displays uploading/processing records older than
+fifteen minutes as errors with recovery text. Finalization can be retried.

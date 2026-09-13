@@ -74,6 +74,7 @@ export const handler = async (
     if (body.ephemeral !== undefined && typeof body.ephemeral !== 'boolean') {
       return err(400, 'ephemeral must be a boolean')
     }
+    if (typeof body.projectId === 'string' && !await getProject(sub, body.projectId)) return err(400, 'Invalid projectId')
     const sensitive = body.sensitive === true
     const ephemeral = body.ephemeral === true
     // sensitive/ephemeral are independent flags — both are allowed on project chats. A
