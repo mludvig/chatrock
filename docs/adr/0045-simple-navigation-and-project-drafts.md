@@ -18,7 +18,10 @@ memory is part of settings. Project pages provide Chats and Knowledge sections,
 mobile navigation, a draft composer, and destination-side chat organization.
 
 Every new-chat action navigates to a draft with optional project and input text.
-Persist only on first send. Resolve user, project, chat, and per-send settings in
+An explicit New chat starts a fresh draft in the current project. Project-composer
+questions are consumed once into draft storage so reloading retains later edits
+instead of restoring the original question from browser history.
+Persist the chat record only on first send. Resolve user, project, chat, and per-send settings in
 that order; persist only explicit chat overrides. The primary composer mode
 retains all existing research budgets: Standard = brief, Research = extended,
 Deep research = deep. Thinking effort remains a directly visible select showing its current value,

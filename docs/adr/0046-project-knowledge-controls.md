@@ -22,6 +22,9 @@ on resume and every five seconds during processing; status older than fifteen
 minutes is displayed as a recoverable error. Retry reuses finalization, while
 missing uploads can be removed and uploaded again. Original file IDs remain
 stable throughout a client upload operation.
+Refreshes preserve known local failures until processing succeeds. An incomplete
+upload found after reload offers finalization retry; a locally active upload
+does not show that action while its bytes are still being transferred.
 
 File inclusion uses honest labels: relevant material, an included excerpt, or
 excluded context. Excerpts disclose character limits; images cannot be chosen

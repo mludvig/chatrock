@@ -34,6 +34,8 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
   const [pending, setPending] = useState(false)
   const filter = useChatListFilter()
   const fileInput = useRef<HTMLInputElement>(null)
+  const activeUploads = useRef(new Set<string>())
+  const uploadFailures = useRef(new Map<string, string>())
   const currentProject = useRef(projectId)
   useEffect(() => { currentProject.current = projectId }, [projectId])
   const { status: descStatus, track: trackDesc } = useSaveStatus()
@@ -51,7 +53,17 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
         ...s.chats.filter(c => !ids.has(c.chatId)).map(c => c.projectId === projectId ? { ...c, projectId: undefined } : c),
         ...detail.chats,
       ] }))
-      setFiles(fileRes.files); mergeProjectFiles(fileRes.files); setMemories(memoryRes.memories); setError('')
+      const refreshedFiles = fileRes.files.map(file => {
+        const key = `${projectId}/${file.fileId}`
+        if (file.status === 'ready') uploadFailures.current.delete(key)
+        const failure = uploadFailures.current.get(key)
+        return failure ? { ...file, status: 'error' as const, errorMessage: failure } : file
+      })
+      setFiles(previous => [
+        ...previous.filter(file => activeUploads.current.has(`${projectId}/${file.fileId}`) && !refreshedFiles.some(f => f.fileId === file.fileId)),
+        ...refreshedFiles,
+      ])
+      mergeProjectFiles(refreshedFiles); setMemories(memoryRes.memories); setError('')
     } catch (e) { if (currentProject.current === projectId) setError(`Could not load this project. ${String(e)}`) }
     finally { if (currentProject.current === projectId) setLoading(false) }
   }, [projectId, updateProject, patchChat, mergeProjectFiles])
@@ -104,12 +116,15 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
   async function upload(file: File) {
     const target = projectId
     let id = `local-${crypto.randomUUID()}`
+    activeUploads.current.add(`${target}/${id}`)
     const now = new Date().toISOString()
     const row: ProjectFile = { fileId: id, filename: file.name, contentType: file.type || 'application/octet-stream', sizeBytes: file.size, s3Key: '', status: 'uploading', inclusion: 'auto', createdAt: now, updatedAt: now }
     setFiles(prev => [row, ...prev])
     try {
       const res = await api.requestProjectFileUpload(target, file.name, row.contentType, file.size)
       const oldId = id; id = res.fileId
+      activeUploads.current.delete(`${target}/${oldId}`)
+      activeUploads.current.add(`${target}/${id}`)
       if (currentProject.current === target) setFiles(prev => prev.map(f => f.fileId === oldId ? { ...f, fileId: id, s3Key: res.s3Key } : f))
       await uploadToS3(res.uploadUrl, file)
       if (currentProject.current === target) setFiles(prev => prev.map(f => f.fileId === id ? { ...f, status: 'processing' } : f))
@@ -118,7 +133,10 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
     } catch (e) {
       if (currentProject.current !== target) return
       setActionError(`Upload failed for ${file.name}: ${String(e)}. Retry processing, or remove it and upload again.`)
-      setFiles(prev => prev.map(f => f.fileId === id ? { ...f, status: 'error' } : f))
+      uploadFailures.current.set(`${target}/${id}`, String(e))
+      setFiles(prev => prev.map(f => f.fileId === id ? { ...f, status: 'error', errorMessage: String(e) } : f))
+    } finally {
+      activeUploads.current.delete(`${target}/${id}`)
     }
   }
   const projectChats = sortByRecent(applyChatListFilter(chats.filter(c => c.projectId === projectId), filter, { includeProjectChats: true }))
@@ -154,7 +172,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
           {!files.length && <p className="panel-empty">Add notes, documents or reference material.</p>}
           {files.map(f => <article id={`file-${f.fileId}`} key={f.fileId} className={`project-file-item${params.get('file') === f.fileId ? ' project-file-item--selected' : ''}`}>
             <div className="project-file-main"><div className="file-info"><strong>{f.filename}</strong><small>{Math.ceil(f.sizeBytes / 1024)} KB · {f.status === 'ready' ? (f.inclusion === 'never' ? 'Excluded from AI context' : f.inclusion === 'always' ? 'Included excerpt every message' : 'Used when relevant') : f.status}</small>{f.errorMessage && <p role="alert">{f.errorMessage}</p>}
-              {f.status === 'error' && !f.fileId.startsWith('local-') && <button className="btn-action" disabled={pending} onClick={() => action(() => api.finalizeProjectFile(projectId, f.fileId))}>Retry processing</button>}
+              {(f.status === 'error' || (f.status === 'uploading' && !activeUploads.current.has(`${projectId}/${f.fileId}`))) && !f.fileId.startsWith('local-') && <button className="btn-action" disabled={pending} onClick={() => action(async () => { await api.finalizeProjectFile(projectId, f.fileId); uploadFailures.current.delete(`${projectId}/${f.fileId}`) })}>Retry processing</button>}
             </div>
               <ItemMenu label={`Actions for ${f.filename}`}>
                 {f.url && <a href={f.url} target="_blank" rel="noreferrer">Open / download file</a>}

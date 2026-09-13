@@ -21,7 +21,9 @@ Routes: `/c/new` is an unsaved draft, `/c/:chatId` a conversation, and
 `/p/:projectId` the project home. `?project=` supplies draft membership;
 route state may carry draft text from the project composer or a file action.
 All creation buttons open drafts, and only the first message creates a chat.
-Starting another draft retains the current draft's project scope.
+Starting another draft retains the current draft's project scope and clears its
+input. Incoming project questions are consumed once from route state and stored
+as drafts, so reload restores subsequent edits rather than the original question.
 
 ## Project home
 
@@ -39,6 +41,8 @@ ID after the upload request; retry finalizes that existing upload. A missing loc
 upload can be removed and uploaded again. The server marks processing status older
 than fifteen minutes as an error for display.
 Failed files show Retry processing directly beside their status.
+Refresh preserves known upload failures and in-flight local file rows; incomplete
+uploads found after reload can retry finalization immediately.
 
 Project facts can be added, edited and deleted. User-added/edited facts carry
 `userEdited`; automatic reconciliation preserves them. Newly generated facts may
