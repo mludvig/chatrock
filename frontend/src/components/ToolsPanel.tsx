@@ -1,7 +1,6 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGlobe, faMemory, faMagnifyingGlass, faClock, faImage, faGaugeHigh } from '@fortawesome/free-solid-svg-icons'
+import { faGlobe, faMemory, faMagnifyingGlass, faClock, faImage } from '@fortawesome/free-solid-svg-icons'
 import type { ModelSettings } from '../api/http'
-import { RESEARCH_DEPTHS } from '../api/http'
 
 interface Props {
   settings: ModelSettings
@@ -22,26 +21,6 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
     <div className="model-settings">
       <div className="pref-label">Tools</div>
 
-      <div className="model-setting-row model-setting-row--inline">
-        <label
-          className="setting-label"
-          title="How many tool rounds the model budgets for research before it must answer. Brief (3 rounds) is the default; Extended (8) suits deeper questions. This chat's default — the composer's own picker can go deeper for a single turn without changing it. See docs/adr/0020-research-depth-and-budget-pacing.md."
-        >
-          <FontAwesomeIcon icon={faGaugeHigh} />
-          <span>Research depth</span>
-        </label>
-        <select
-          className="model-select"
-          value={settings.researchDepth ?? 'brief'}
-          onChange={e => set({ researchDepth: e.target.value as ModelSettings['researchDepth'] })}
-        >
-          {RESEARCH_DEPTHS.map(d => (
-            <option key={d} value={d}>
-              {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep'}
-            </option>
-          ))}
-        </select>
-      </div>
       <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Toggle web search (Jina). When off, the model cannot call web_search or web_fetch tools.">
           <FontAwesomeIcon icon={faGlobe} />

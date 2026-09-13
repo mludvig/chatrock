@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEyeSlash, faTrash, faHashtag, faMemory } from '@fortawesome/free-solid-svg-icons'
-import type { Chat, ModelCapabilities, ModelSettings } from '../api/http'
+import type { Chat, ModelSettings } from '../api/http'
 import type { SaveStatus } from '../lib/useSaveStatus'
 import { describeChatPrivacy } from '../lib/privacyDescription'
 import Dialog from './Dialog'
@@ -29,7 +29,6 @@ interface Props {
   onToggleEphemeral: () => void
   showTokenStats: boolean
   onToggleShowTokenStats: () => void
-  caps: ModelCapabilities
   settings: ModelSettings
   onSettingsChange: (s: ModelSettings) => void
   systemPrompt: string
@@ -43,7 +42,7 @@ export default function ChatDetailsDialog({
   open, onClose, isNew, chat, onRename, onSummaryChange,
   sensitive, ephemeral, expiresAt, isProject, onToggleSensitive, onToggleEphemeral,
   showTokenStats, onToggleShowTokenStats,
-  caps, settings, onSettingsChange, systemPrompt, onSystemPromptChange, systemPromptSaveStatus,
+  settings, onSettingsChange, systemPrompt, onSystemPromptChange, systemPromptSaveStatus,
 }: Props) {
   // A draft chat has no title/summary yet, so there's nothing for an Info tab to
   // show — only a saved chat gets the tab bar; a draft just sees Settings directly.
@@ -189,7 +188,7 @@ export default function ChatDetailsDialog({
           </div>
 
           <ToolsPanel settings={settings} onChange={onSettingsChange} hideMemory />
-          <ModelTuningPanel caps={caps} settings={settings} onChange={onSettingsChange} />
+          <ModelTuningPanel settings={settings} onChange={onSettingsChange} />
 
           <div className="model-settings">
             <div className="model-setting-row model-setting-row--inline">

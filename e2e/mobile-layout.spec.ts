@@ -56,6 +56,7 @@ test.describe('redesigned chrome', () => {
     // Composer toolbar carries the per-send controls.
     await expect(page.locator('.composer-toolbar .model-picker')).toBeVisible()
     await expect(page.locator('select[title^="Research depth"]')).toBeVisible()
+    await expect(page.locator('select[title^="Thinking effort"]')).toBeVisible()
     await expect(page.locator('.composer-toolbar .btn-private-toggle')).toBeVisible()
 
     // "Deep", not "Deep Research".
