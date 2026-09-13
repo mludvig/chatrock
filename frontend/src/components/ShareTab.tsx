@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faCheck, faTrash, faDownload } from '@fortawesome/free-solid-svg-icons'
+import { faCopy, faCheck, faTrash, faDownload, faQrcode } from '@fortawesome/free-solid-svg-icons'
+import QRCode from 'qrcode'
 import { api, exportChat, type Share } from '../api/http'
 import { ENV } from '../env'
 import { useChatStore } from '../store/chatStore'
@@ -19,6 +20,9 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
   const [shareThinking, setShareThinking] = useState(false)
   const [shareTools, setShareTools] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [qrShareId, setQrShareId] = useState<string | null>(null)
+  const [qrCode, setQrCode] = useState<string | null>(null)
+  const [generatingQrId, setGeneratingQrId] = useState<string | null>(null)
 
   const [exportThinking, setExportThinking] = useState(false)
   const [exportTools, setExportTools] = useState(false)
@@ -47,6 +51,28 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
     })
   }
 
+  async function toggleQr(shareId: string) {
+    if (qrShareId === shareId) {
+      setQrShareId(null)
+      return
+    }
+
+    setGeneratingQrId(shareId)
+    try {
+      const code = await QRCode.toDataURL(shareUrl(shareId), {
+        width: 192,
+        margin: 1,
+        errorCorrectionLevel: 'M',
+      })
+      setQrCode(code)
+      setQrShareId(shareId)
+    } catch (err) {
+      pushToast({ kind: 'error', text: err instanceof Error ? err.message : 'Could not create QR code' })
+    } finally {
+      setGeneratingQrId(null)
+    }
+  }
+
   async function handleCreate() {
     setCreating(true)
     try {
@@ -66,6 +92,7 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
     try {
       await api.deleteShare(chatId, shareId)
       setShares(prev => (prev ?? []).filter(s => s.shareId !== shareId))
+      if (qrShareId === shareId) setQrShareId(null)
       pushToast({ kind: 'success', text: 'Share link revoked' })
     } catch (err) {
       pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
@@ -136,10 +163,26 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
                   <button className="action-btn" title="Copy link" onClick={() => copy(shareUrl(s.shareId), s.shareId)}>
                     <FontAwesomeIcon icon={copiedId === s.shareId ? faCheck : faCopy} />
                   </button>
+                  <button
+                    className="action-btn"
+                    title={qrShareId === s.shareId ? 'Hide QR code' : 'Show QR code'}
+                    aria-label={qrShareId === s.shareId ? 'Hide QR code' : 'Show QR code'}
+                    aria-expanded={qrShareId === s.shareId}
+                    disabled={generatingQrId !== null}
+                    onClick={() => toggleQr(s.shareId)}
+                  >
+                    <FontAwesomeIcon icon={faQrcode} />
+                  </button>
                   <button className="action-btn" title="Revoke" onClick={() => handleRevoke(s.shareId)}>
                     <FontAwesomeIcon icon={faTrash} />
                   </button>
                 </div>
+                {qrShareId === s.shareId && qrCode && (
+                  <div className="share-qr">
+                    <img src={qrCode} alt={`QR code for share link /s/${s.shareId}`} width="192" height="192" />
+                    <span>Scan to open this share link</span>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
