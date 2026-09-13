@@ -102,7 +102,7 @@ export default function PreferencesPanel() {
           value={prefs.researchDepth ?? 'brief'}
           onChange={v => patch({ researchDepth: v })}
           format={d => d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep'}
-          title="How many tool rounds the model budgets for research before it must answer. Brief is the default. See docs/adr/0020-research-depth-and-budget-pacing.md."
+          title="Default research depth for new conversations. You can change this in the composer."
         />
 
         <ToggleRow
@@ -111,6 +111,7 @@ export default function PreferencesPanel() {
           onToggle={() => patch({ webSearchEnabled: prefs.webSearchEnabled === false ? true : false })}
         />
 
+        <details className="advanced-tools"><summary>Advanced browsing options</summary>
         <EffortRow
           label="Web search provider"
           options={['jina', 'agentcore'] as const}
@@ -120,16 +121,17 @@ export default function PreferencesPanel() {
         />
 
         <ToggleRow
-          label="Browser — Core"
+          label="Browse websites"
           on={prefs.browserCoreEnabled !== false}
           onToggle={() => patch({ browserCoreEnabled: prefs.browserCoreEnabled === false ? true : false })}
         />
         <ToggleRow
-          label="Browser — Extended"
+          label="Interact with websites"
           on={prefs.browserExtendedEnabled === true}
           onToggle={() => patch({ browserExtendedEnabled: prefs.browserExtendedEnabled === true ? false : true })}
         />
 
+        </details>
         <EffortRow
           label="Answer length"
           options={['default', 'short', 'extensive'] as const}
@@ -143,7 +145,7 @@ export default function PreferencesPanel() {
           onToggle={() => patch({ showTokenStats: prefs.showTokenStats === true ? false : true })}
         />
         <ToggleRow
-          label="Inject current timestamp"
+          label="Include current date and time"
           on={prefs.injectCurrentDate !== false}
           onToggle={() => patch({ injectCurrentDate: prefs.injectCurrentDate === false ? true : false })}
         />

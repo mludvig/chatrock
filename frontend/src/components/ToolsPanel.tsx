@@ -18,8 +18,8 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
   }
 
   return (
-    <div className="model-settings">
-      <div className="pref-label">Tools</div>
+    <details className="model-settings advanced-tools">
+      <summary className="pref-label">Advanced tools</summary>
 
       <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Toggle web search (Jina). When off, the model cannot call web_search or web_fetch tools.">
@@ -37,7 +37,7 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
       <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Toggle take_screenshot / get_rendered_page. When off, the model cannot screenshot a page or read its JS-rendered content.">
           <FontAwesomeIcon icon={faGlobe} />
-          <span>Browser — Core</span>
+          <span>Browse websites</span>
         </label>
         <button
           className={`toggle-btn${settings.browserCoreEnabled !== false ? ' active' : ''}`}
@@ -50,7 +50,7 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
       <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Toggle browse_web. When on, the model can run multi-step scripted browsing (click, type, navigate between pages) in one isolated browser session.">
           <FontAwesomeIcon icon={faGlobe} />
-          <span>Browser — Extended</span>
+          <span>Interact with websites</span>
         </label>
         <button
           className={`toggle-btn${settings.browserExtendedEnabled === true ? ' active' : ''}`}
@@ -104,7 +104,7 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
       <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label" title="Inject the current date/time into the system prompt, so the model knows 'now' without you having to say it.">
           <FontAwesomeIcon icon={faClock} />
-          <span>Inject current timestamp</span>
+          <span>Include current date and time</span>
         </label>
         <button
           className={`toggle-btn${settings.injectCurrentDate !== false ? ' active' : ''}`}
@@ -114,6 +114,6 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
           {settings.injectCurrentDate !== false ? 'On' : 'Off'}
         </button>
       </div>
-    </div>
+    </details>
   )
 }

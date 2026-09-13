@@ -8,7 +8,8 @@ test.describe('AgentCore web search provider', () => {
     await page.waitForLoadState('networkidle')
 
     // Switch the Defaults web search provider to AgentCore
-    await page.locator('[data-panel="prefs"]').click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByText('Advanced browsing options', { exact: true }).click()
     // The provider picker is a <select> (EffortRow), not a row of buttons.
     await page.locator('.pref-section', { hasText: 'Web search provider' })
       .locator('select')
@@ -16,7 +17,7 @@ test.describe('AgentCore web search provider', () => {
     await page.waitForTimeout(1200) // debounced save
 
     // Ask something that forces a real web_search tool call
-    await page.locator('[data-panel="chats"]').click()
+    await page.getByRole('button', { name: 'Back to chats and projects', exact: false }).click()
     await page.locator('.message-input').fill(
       'Use the web_search tool to find AWS’s announcement of "Web Search on Amazon Bedrock AgentCore" and summarize it in one sentence.',
     )

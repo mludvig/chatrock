@@ -1,201 +1,39 @@
 import { useState } from 'react'
-import { useNavigate, useMatch } from 'react-router-dom'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPenToSquare, faTrash, faWandMagicSparkles, faFolder, faFolderOpen, faFolderPlus, faCircleNotch } from '@fortawesome/free-solid-svg-icons'
+import { Link, useMatch, useNavigate } from 'react-router-dom'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
-import { useChatActions } from '../lib/useChatActions'
 import { sortByRecent } from '../lib/sort'
 import ChatListFilter, { applyChatListFilter, useChatListFilter } from './ChatListFilter'
+import ItemMenu from './ItemMenu'
+import Dialog from './Dialog'
 
 export default function ChatsPanel() {
+  const active = useMatch('/c/:chatId')?.params.chatId
   const navigate = useNavigate()
-  const match = useMatch('/c/:chatId')
-  const activeChatId = match?.params.chatId
-  const { chats, pushToast, projects, addProject, updateChatProjectId, sendingByChat } = useChatStore()
-  const { editingId, setEditingId, editTitle, setEditTitle, retitling, handleRetitle, handleDelete, startRename, commitRename } = useChatActions()
-  const [movingId, setMovingId] = useState<string | null>(null)
-  const [creatingProjectFor, setCreatingProjectFor] = useState<string | null>(null)
-  const [newProjectName, setNewProjectName] = useState('')
+  const { chats, projects, patchChat, removeChat, updateChatProjectId, sendingByChat, pushToast } = useChatStore()
   const filter = useChatListFilter()
-
-  function toggleMoveMenu(e: React.MouseEvent, chatId: string) {
-    e.stopPropagation()
-    setMovingId(prev => prev === chatId ? null : chatId)
-    setCreatingProjectFor(null)
+  const [editing, setEditing] = useState<{ id: string; title: string } | null>(null)
+  const [moving, setMoving] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  async function run(fn: () => Promise<void>) {
+    setPending(true); setError('')
+    try { await fn() } catch (e) { setError(String(e)); pushToast({ kind: 'error', text: String(e) }) }
+    finally { setPending(false) }
   }
-
-  async function moveChat(chatId: string, projectId: string | null) {
-    setMovingId(null)
-    updateChatProjectId(chatId, projectId)
-    try {
-      await api.moveChatToProject(chatId, projectId)
-    } catch (err) {
-      const chat = chats.find(c => c.chatId === chatId)
-      updateChatProjectId(chatId, chat?.projectId ?? null)
-      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    }
-  }
-
-  async function handleMove(e: React.MouseEvent, chatId: string, projectId: string | null) {
-    e.stopPropagation()
-    await moveChat(chatId, projectId)
-  }
-
-  function startCreateProject(e: React.MouseEvent, chatId: string) {
-    e.stopPropagation()
-    setCreatingProjectFor(chatId)
-    setNewProjectName('')
-  }
-
-  // Lets the "Move to project" menu create-and-move in one step, instead of forcing a
-  // detour through the Projects panel to create a project first.
-  async function commitCreateProject(chatId: string) {
-    const name = newProjectName.trim()
-    setCreatingProjectFor(null)
-    if (!name) return
-    try {
-      const res = await api.createProject(name)
-      const now = new Date().toISOString()
-      addProject({ projectId: res.projectId, name, createdAt: now, updatedAt: now })
-      await moveChat(chatId, res.projectId)
-    } catch (err) {
-      pushToast({ kind: 'error', text: err instanceof Error ? err.message : String(err) })
-    }
-  }
-
-  const sorted = sortByRecent(applyChatListFilter(chats, filter))
-
-  return (
-    <>
-      <div className="chat-list-header">
-        <ChatListFilter filter={filter} />
-      </div>
-      <div className="chat-list">
-        {sorted.map(chat => {
-          const chatProject = chat.projectId ? projects.find(p => p.projectId === chat.projectId) : null
-          return (
-            <div
-              key={chat.chatId}
-              className={`chat-item${chat.chatId === activeChatId ? ' active' : ''}${chat.sensitive ? ' sensitive' : ''}`}
-              style={{ position: 'relative', flexDirection: 'column', alignItems: 'stretch', gap: 2 }}
-              onClick={() => { setMovingId(null); navigate(`/c/${chat.chatId}`) }}
-            >
-              {editingId === chat.chatId ? (
-                <input
-                  autoFocus
-                  className="rename-input"
-                  value={editTitle}
-                  onChange={e => setEditTitle(e.target.value)}
-                  onBlur={() => commitRename(chat.chatId)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') commitRename(chat.chatId)
-                    if (e.key === 'Escape') setEditingId(null)
-                  }}
-                  onClick={e => e.stopPropagation()}
-                />
-              ) : (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-                    {sendingByChat[chat.chatId] && (
-                      // FontAwesomeIcon's `title` prop doesn't render as a real DOM title/SVG
-                      // <title> in this fontawesome-svg-core version, so the tooltip needs a
-                      // wrapping element with the attribute instead.
-                      <span title="Generating a response…" style={{ display: 'flex', flexShrink: 0 }}>
-                        <FontAwesomeIcon icon={faCircleNotch} spin style={{ color: '#6b7280' }} />
-                      </span>
-                    )}
-                    <span className="chat-title">{chat.title}</span>
-                    <div className="chat-actions">
-                      <button
-                        onClick={e => handleRetitle(e, chat.chatId)}
-                        title="Re-generate title"
-                        disabled={retitling === chat.chatId}
-                      >
-                        <FontAwesomeIcon icon={faWandMagicSparkles} spin={retitling === chat.chatId} />
-                      </button>
-                      <button onClick={e => startRename(e, chat)} title="Rename">
-                        <FontAwesomeIcon icon={faPenToSquare} />
-                      </button>
-                      <button
-                        onClick={e => toggleMoveMenu(e, chat.chatId)}
-                        title="Move to project"
-                      >
-                        <FontAwesomeIcon icon={faFolderOpen} />
-                      </button>
-                      <button onClick={e => handleDelete(e, chat.chatId)} title="Delete">
-                        <FontAwesomeIcon icon={faTrash} />
-                      </button>
-                    </div>
-                  </div>
-                  {chatProject && (
-                    <span
-                      className="project-chip"
-                      onClick={e => { e.stopPropagation(); navigate(`/p/${chat.projectId}`) }}
-                    >
-                      <FontAwesomeIcon icon={faFolder} /> {chatProject.name}
-                    </span>
-                  )}
-                  {movingId === chat.chatId && (
-                    <div className="move-menu" onClick={e => e.stopPropagation()}>
-                      {creatingProjectFor === chat.chatId ? (
-                        <input
-                          autoFocus
-                          className="rename-input"
-                          placeholder="Project name…"
-                          value={newProjectName}
-                          onChange={e => setNewProjectName(e.target.value)}
-                          onBlur={() => commitCreateProject(chat.chatId)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') commitCreateProject(chat.chatId)
-                            if (e.key === 'Escape') setCreatingProjectFor(null)
-                          }}
-                        />
-                      ) : (
-                        <div
-                          className="move-menu-item move-menu-new"
-                          onClick={e => startCreateProject(e, chat.chatId)}
-                        >
-                          <FontAwesomeIcon icon={faFolderPlus} style={{ marginRight: 6 }} />
-                          New project…
-                        </div>
-                      )}
-                      {projects.map(p => (
-                        <div
-                          key={p.projectId}
-                          className={`move-menu-item${chat.projectId === p.projectId ? ' active' : ''}`}
-                          onClick={e => handleMove(e, chat.chatId, p.projectId)}
-                        >
-                          <FontAwesomeIcon icon={faFolder} style={{ marginRight: 6 }} />
-                          {p.name}
-                        </div>
-                      ))}
-                      {projects.length === 0 && (
-                        <div className="move-menu-item" style={{ color: '#6b7280' }}>No projects</div>
-                      )}
-                      {chat.projectId && (
-                        <div
-                          className="move-menu-item remove"
-                          onClick={e => handleMove(e, chat.chatId, null)}
-                        >
-                          Remove from project
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )
-        })}
-        {sorted.length === 0 && (
-          <p className="empty-hint">
-            {chats.length > 0
-              ? 'No chats match the current filter. Adjust the filter above to see them.'
-              : 'No chats yet. Click + to start.'}
-          </p>
-        )}
-      </div>
-    </>
-  )
+  return <>
+    <div className="chat-list-header"><ChatListFilter filter={filter} showProjectToggle={false} /></div>
+    <div className="chat-list">{sortByRecent(applyChatListFilter(chats, filter, { includeProjectChats: true })).map(c => <div key={c.chatId} className={`chat-item unified-chat-row${c.chatId === active ? ' active' : ''}`}>
+      <Link to={`/c/${c.chatId}`} className="chat-item-content"><span className="chat-title">{sendingByChat[c.chatId] ? '◌ ' : ''}{c.title}</span>{c.projectId && <small>{projects.find(p => p.projectId === c.projectId)?.name ?? 'Project'}</small>}</Link>
+      <ItemMenu label={`Actions for ${c.title}`}>
+        <button onClick={() => setEditing({ id: c.chatId, title: c.title })}>Rename chat</button>
+        <button onClick={() => setMoving(c.chatId)}>Move to project</button>
+        <button disabled={pending} onClick={() => run(async () => { const r = await api.retitleChat(c.chatId); patchChat(c.chatId, { title: r.title }) })}>Suggest title</button>
+        <button disabled={pending} onClick={() => { if (confirm('Delete this chat and its messages? This cannot be undone.')) void run(async () => { await api.deleteChat(c.chatId); removeChat(c.chatId); if (active === c.chatId) navigate('/c/new') }) }}>Delete chat</button>
+      </ItemMenu>
+    </div>)}</div>
+    {!chats.length && <p className="empty-hint">Start a chat to begin.</p>}
+    <Dialog open={!!editing} onClose={() => setEditing(null)} title="Rename chat"><input autoFocus className="search-field" aria-label="Chat title" value={editing?.title ?? ''} onChange={e => setEditing(x => x && { ...x, title: e.target.value })} />{error && <p role="alert">{error}</p>}<div className="form-actions"><button onClick={() => setEditing(null)}>Cancel</button><button disabled={pending || !editing?.title.trim()} onClick={() => run(async () => { if (!editing) return; await api.renameChat(editing.id, editing.title.trim()); patchChat(editing.id, { title: editing.title.trim() }); setEditing(null) })}>Save</button></div></Dialog>
+    <Dialog open={!!moving} onClose={() => setMoving(null)} title="Move chat to project">{error && <p role="alert">{error}</p>}{[{ projectId: '', name: 'No project' }, ...projects].map(p => <button className="search-result" key={p.projectId} disabled={pending} onClick={() => run(async () => { if (!moving) return; await api.moveChatToProject(moving, p.projectId || null); updateChatProjectId(moving, p.projectId || null); setMoving(null) })}>{p.name}</button>)}</Dialog>
+  </>
 }

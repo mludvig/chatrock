@@ -7,7 +7,7 @@ import { api, setAccessToken } from './api/http'
 import { setTokenProvider } from './api/ws'
 import { ENV } from './env'
 import { useChatStore } from './store/chatStore'
-import ActivityBar from './components/ActivityBar'
+import SearchDialog from './components/SearchDialog'
 import Sidebar from './components/Sidebar'
 import ChatView from './components/ChatView'
 import ProjectView from './components/ProjectView'
@@ -21,15 +21,12 @@ const TOKEN_RENEW_SLACK_S = 120
 function AuthedApp() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setPendingSearch, setActivePanel, bumpNewChatTick, bumpNewProjectTick } = useChatStore()
+  const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setActivePanel, bumpNewChatTick, bumpNewProjectTick } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  // Default on: searching from inside a project most often means "this project", not everywhere.
-  const [searchProjectOnly, setSearchProjectOnly] = useState(true)
+  const [searchOpen, setSearchOpen] = useState(false)
 
   const auth = useAuth()
   const accessToken = auth.user?.access_token ?? ''
-  const userName = auth.user?.profile.email ?? auth.user?.profile.sub ?? 'User'
 
   // Set synchronously during render so child effects (e.g. ChatView's listMessages)
   // see the token immediately on first mount.  A useEffect would run after children's
@@ -100,7 +97,7 @@ function AuthedApp() {
   // Auto-close sidebar on navigation (mobile)
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
 
-  const defaultModel = lastModel || userPreferences.defaultModel || models[1]?.id || models[0]?.id || ''
+  const defaultModel = userPreferences.defaultModel || lastModel || models[1]?.id || models[0]?.id || ''
 
   // Search's "Project only" toggle only makes sense when the current view is project-scoped:
   // either the project dashboard itself, or a chat that belongs to a project. Also reused by
@@ -117,21 +114,12 @@ function AuthedApp() {
     navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new')
   }
 
-  function submitSearch() {
-    const query = searchQuery.trim()
-    if (!query) return
-    const scope: 'project' | 'global' = (contextProjectId && searchProjectOnly) ? 'project' : 'global'
-    setPendingSearch({ query, scope, ...(scope === 'project' ? { projectId: contextProjectId } : {}) })
-    setSearchQuery('')
-    navigate('/c/new')
-  }
-
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent) => {
       // Subtract the 48px activity bar from the pointer position
-      const w = Math.max(180, Math.min(480, ev.clientX - 48))
+      const w = Math.max(180, Math.min(480, ev.clientX))
       setSidebarWidth(w)
     }
     const onUp = () => {
@@ -153,54 +141,14 @@ function AuthedApp() {
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
       )}
-      <div className="sidebar-global-header" onClick={startNewChat} title="New chat">
-        <span className="sidebar-brand">
-          <FontAwesomeIcon icon={faComments} className="sidebar-brand-icon" />
-          <span className="sidebar-brand-text">Chatrock</span>
-        </span>
-        <div className="search-box" onClick={e => e.stopPropagation()}>
-          <FontAwesomeIcon icon={faMagnifyingGlass} className="search-icon" />
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search past chats & files…"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') submitSearch() }}
-          />
-          {contextProjectId && (
-            <button
-              type="button"
-              className={`search-scope-toggle${searchProjectOnly ? ' active' : ''}`}
-              onClick={() => setSearchProjectOnly(v => !v)}
-              title={searchProjectOnly ? 'Searching this project only — click to search everywhere' : 'Searching everywhere — click to limit to project'}
-            >
-              Project
-            </button>
-          )}
-        </div>
-        <button
-          className="btn-new"
-          onClick={e => { e.stopPropagation(); startNewChat() }}
-          title="New chat"
-          tabIndex={-1}
-        >
-          <FontAwesomeIcon icon={faPlus} />
-        </button>
-        <button
-          className="btn-new btn-new--secondary"
-          onClick={e => { e.stopPropagation(); setActivePanel('projects'); setSidebarOpen(true); bumpNewProjectTick() }}
-          title="New project"
-          tabIndex={-1}
-        >
-          <FontAwesomeIcon icon={faFolderPlus} />
-        </button>
+      <div className="sidebar-global-header">
+        <button className="sidebar-brand" onClick={startNewChat}><FontAwesomeIcon icon={faComments} /> Chatrock</button>
+        <button className="btn-new" onClick={startNewChat} title="New chat"><FontAwesomeIcon icon={faPlus} /></button>
+        <button className="btn-new" onClick={() => setSearchOpen(true)} title="Search chats and files"><FontAwesomeIcon icon={faMagnifyingGlass} /></button>
+        <button className="btn-new" onClick={() => { setActivePanel('projects'); setSidebarOpen(true); bumpNewProjectTick() }} title="New project"><FontAwesomeIcon icon={faFolderPlus} /></button>
       </div>
-      <ActivityBar
-        userName={userName}
-        onSignOut={() => auth.signoutRedirect({ extraQueryParams: { client_id: ENV.cognitoClientId, logout_uri: `${ENV.appUrl}/` } })}
-      />
-      <Sidebar />
+      <Sidebar onSignOut={() => auth.signoutRedirect({ extraQueryParams: { client_id: ENV.cognitoClientId, logout_uri: `${ENV.appUrl}/` } })} />
+      <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} projectId={contextProjectId} />
       <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />
       <main className="main">
         <Routes>
@@ -217,7 +165,7 @@ function AuthedApp() {
               />
             }
           />
-          <Route path="/p/:projectId" element={<ProjectView defaultModel={defaultModel} />} />
+          <Route path="/p/:projectId" element={<ProjectView onOpenSidebar={() => setSidebarOpen(true)} />} />
           <Route path="*" element={<Navigate to="/c/new" replace />} />
         </Routes>
       </main>

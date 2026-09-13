@@ -150,6 +150,8 @@ export interface UserMemory {
 }
 
 export interface ProjectMemory {
+  userEdited?: boolean
+  sourceChatId?: string
   memId: string
   text: string
   category: 'decision' | 'convention' | 'fact' | 'constraint' | 'glossary' | 'other'
@@ -158,6 +160,8 @@ export interface ProjectMemory {
 }
 
 export interface ProjectFile {
+  url?: string
+  errorMessage?: string
   fileId: string
   filename: string
   contentType: string
@@ -287,8 +291,9 @@ export const api = {
   listProjects: () => req<{ projects: Project[] }>('GET', '/api/projects'),
   createProject: (name: string) => req<{ projectId: string }>('POST', '/api/projects', { name }),
   getProject: (projectId: string) => req<{ project: Project; chats: Chat[] }>('GET', `/api/projects/${projectId}`),
-  updateProject: (projectId: string, fields: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'memoryEnabled' | 'defaultModel' | 'modelSettings'>>) =>
+  updateProject: (projectId: string, fields: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'memoryEnabled' | 'modelSettings'>> & { defaultModel?: string | null }) =>
     req<{ ok: boolean }>('PATCH', `/api/projects/${projectId}`, fields),
+  createProjectMemory: (projectId: string, text: string) => req<{ memId: string }>('POST', `/api/projects/${projectId}/memory`, { text, category: 'fact' }),
   deleteProject: (projectId: string) => req<void>('DELETE', `/api/projects/${projectId}`),
   moveChatToProject: (chatId: string, projectId: string | null) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { projectId }),

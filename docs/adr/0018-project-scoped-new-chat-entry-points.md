@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR 0045](0045-simple-navigation-and-project-drafts.md): all entry points now open project-aware drafts and persist on first send.
 
 ## Context
 

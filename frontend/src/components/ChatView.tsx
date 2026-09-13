@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faFolder, faEyeSlash, faTriangleExclamation, faGear, faRotate } from '@fortawesome/free-solid-svg-icons'
-import { api, defaultSettings, migrateSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS, THINKING_EFFORTS } from '../api/http'
+import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear, faRotate } from '@fortawesome/free-solid-svg-icons'
+import { api, defaultSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS, THINKING_EFFORTS } from '../api/http'
 import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth, ThinkingEffort } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
@@ -12,6 +12,7 @@ import type { WSEvent, ConnectionState } from '../api/ws'
 import { useChatStore } from '../store/chatStore'
 import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
+import ItemMenu from './ItemMenu'
 import { describeChatPrivacy } from '../lib/privacyDescription'
 
 interface Props {
@@ -93,6 +94,7 @@ function enrichMessages(bubbles: Message[]): Message[] {
 export default function ChatView({ models, defaultModel, onModelChange, onOpenSidebar, onNewChat }: Props) {
   const { chatId } = useParams<{ chatId?: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   const isNew = !chatId || chatId === 'new'
 
@@ -110,7 +112,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   } = useChatStore()
 
   // For /c/new: local model state (not yet persisted)
-  const [newModel, setNewModel] = useState(defaultModel)
+  const [newModel, setNewModel] = useState('')
   // For /c/new: draft sensitive/ephemeral flags, independently settable — mirrors the
   // saved-chat cog exactly (see handleToggleFlag) so the Chat details dialog is the same
   // component in both states. Included directly in the createChat() flags payload.
@@ -221,9 +223,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const streamingMsg = viewedOrPendingChatId ? streamingByChat[viewedOrPendingChatId] : undefined
   // Debounce refs for the Chat details dialog's system-prompt/model-settings edits
   // (moved here from the old PreferencesPanel "This chat" tab — same 800ms pattern).
-  const chatInstructionsDebounceRef = useRef<number | null>(null)
   const { status: systemPromptSaveStatus, track: trackSystemPromptSave } = useSaveStatus()
-  const chatSettingsDebounceRef = useRef<number | null>(null)
   const [showScrollDown, setShowScrollDown] = useState(false)
   // Ref so the WS done-handler can access the current chatId without stale closure
   const chatIdRef = useRef<string | undefined>(chatId)
@@ -234,24 +234,30 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
   const chatProject = activeChat?.projectId ? projects.find(p => p.projectId === activeChat.projectId) : null
 
-  const currentModelId = isNew ? (newModel || defaultModel) : (activeChat?.model || defaultModel)
+  const draftProject = projects.find(p => p.projectId === draftProjectId)
+  const currentModelId = isNew ? (newModel || draftProject?.defaultModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
     ?? { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
 
+  // Store only explicit overrides; display and send the resolved values. See docs/adr/0045-simple-navigation-and-project-drafts.md.
+  const effectiveSettings: ModelSettings = {
+    ...defaultSettings(currentCaps), ...userPreferences,
+    ...((isNew ? draftProject : chatProject)?.modelSettings ?? {}), ...draftModelSettings,
+  }
   // Per-chat override wins when set; otherwise fall back to the global default. Usage is
   // always recorded either way — this only gates whether it's rendered.
-  const effectiveShowTokenStats = draftModelSettings.showTokenStats ?? userPreferences.showTokenStats ?? false
+  const effectiveShowTokenStats = effectiveSettings.showTokenStats ?? false
 
   // Effective reasoning settings for the *next* send. Composer overrides win when set and
   // are merged at send-time only — never written back via handleChatSettingsChange, so a
   // one-off escalation never becomes the chat's permanent default. See docs/adr/0043.
-  const effectiveResearchDepth = composerResearchDepth ?? draftModelSettings.researchDepth ?? 'brief'
+  const effectiveResearchDepth = composerResearchDepth ?? effectiveSettings.researchDepth ?? 'brief'
   const effectiveThinkingEffort = currentCaps.thinking === 'none'
     ? undefined
-    : composerThinkingEffort ?? draftModelSettings.thinkingEffort ?? defaultSettings(currentCaps).thinkingEffort
+    : composerThinkingEffort ?? effectiveSettings.thinkingEffort ?? defaultSettings(currentCaps).thinkingEffort
   const modelSettingsForSend: ModelSettings = {
-    ...draftModelSettings,
+    ...effectiveSettings,
     researchDepth: effectiveResearchDepth,
     ...(effectiveThinkingEffort ? { thinkingEffort: effectiveThinkingEffort } : {}),
   }
@@ -391,8 +397,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   useEffect(() => {
     return () => {
       attachments.forEach(a => { if (a.localUrl) URL.revokeObjectURL(a.localUrl) })
-      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
-      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -476,9 +480,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   }, [chatId, isNew])
 
   // Sync newModel when defaultModel resolves (models loaded async)
-  useEffect(() => {
-    if (isNew && defaultModel && !newModel) setNewModel(defaultModel)
-  }, [defaultModel, isNew, newModel])
+
 
   // A Search submitted from the global header (App.tsx) lands here as a single-use pendingSearch —
   // fire the same new-chat-send flow handleSend() uses for a normal first message, but with the
@@ -492,7 +494,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     useChatStore.getState().setPendingSearch(null)
     void handleSend(pf.query, { scope: pf.scope }, pf.projectId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isNew])
+  }, [isNew, newChatTick])
 
   // Project files are normally loaded by ProjectView/ProjectsPanel into the shared
   // projectFilesById map. Opening a project chat directly (deep link, reload) never
@@ -514,67 +516,21 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     }
   }, [chatId])
 
-  // Seed draftModelSettings when chatId changes
   useEffect(() => {
     setCurrentChatId(chatId ?? null)
     if (chatId && justCreatedChatIdRef.current === chatId) {
-      justCreatedChatIdRef.current = null  // our own /c/new -> /c/:chatId navigation, not a chat switch
+      justCreatedChatIdRef.current = null
     } else {
-      setComposerResearchDepth(null)
-      setComposerThinkingEffort(null)
+      setComposerResearchDepth(null); setComposerThinkingEffort(null)
     }
-    if (isNew) {
-      setDraftSystemPrompt('')
-      if (currentModelDef) {
-        const base = defaultSettings(currentModelDef.capabilities)
-        setDraftModelSettings({
-          ...base,
-          ...(userPreferences.webSearchEnabled !== undefined ? { webSearchEnabled: userPreferences.webSearchEnabled } : {}),
-          ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
-            ? { thinkingEffort: userPreferences.thinkingEffort }
-            : {}),
-        })
-      }
-    } else {
-      const chat = useChatStore.getState().chats.find(c => c.chatId === chatId)
-      if (chat?.modelSettings && Object.keys(chat.modelSettings).length > 0) {
-        setDraftModelSettings(chat.modelSettings)
-      } else if (currentModelDef) {
-        const base = defaultSettings(currentModelDef.capabilities)
-        const project = chat?.projectId
-          ? useChatStore.getState().projects.find(p => p.projectId === chat.projectId)
-          : null
-        const projectLayer = project?.modelSettings ?? {}
-        setDraftModelSettings({
-          ...base,
-          ...(userPreferences.webSearchEnabled !== undefined ? { webSearchEnabled: userPreferences.webSearchEnabled } : {}),
-          ...(currentModelDef.capabilities.thinking !== 'none' && userPreferences.thinkingEffort !== undefined
-            ? { thinkingEffort: userPreferences.thinkingEffort }
-            : {}),
-          ...projectLayer,
-        })
-      }
-    }
+    if (isNew) { setDraftModelSettings({}); setDraftSystemPrompt(''); setNewModel('') }
+    else setDraftModelSettings(activeChat?.modelSettings ?? {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId, isNew])
+  }, [chatId, isNew, newChatTick, activeChat?.modelSettings])
 
-  // Backfill: if chats were not loaded when the seed effect ran (cold navigation),
-  // fill draftModelSettings once the chat record arrives in the store.
   useEffect(() => {
-    if (isNew || !chatId) return
-    if (Object.keys(draftModelSettings).length > 0) return  // already seeded
-    const chat = chats.find(c => c.chatId === chatId)
-    if (chat?.modelSettings && Object.keys(chat.modelSettings).length > 0) {
-      setDraftModelSettings(chat.modelSettings)
-    } else if (chat) {
-      const project = chat.projectId ? projects.find(p => p.projectId === chat.projectId) : null
-      const projectLayer = project?.modelSettings ?? {}
-      if (Object.keys(projectLayer).length > 0) {
-        setDraftModelSettings({ ...projectLayer })
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chats, chatId, isNew])
+    if (isNew && typeof location.state?.draft === 'string') setInput(location.state.draft)
+  }, [isNew, location.key, location.state])
 
   // Register WS event handler. Every frame carries the chatId it belongs to (see WSEvent's
   // doc comment) so a chat streaming in the background is kept fully up to date in the
@@ -811,7 +767,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     setDraftEphemeral(false)
     setDraftProjectId(searchParams.get('project') ?? '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [newChatTick])
+  }, [newChatTick, isNew, searchParams])
 
   // Close the Chat details dialog when switching chats so it doesn't linger open across
   // navigation to a different chat.
@@ -1369,7 +1325,11 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   function handleModelChange(modelId: string) {
     onModelChange(modelId)
     const newCaps = models.find(m => m.id === modelId)?.capabilities
-    if (newCaps) setDraftModelSettings(migrateSettings(draftModelSettings, newCaps))
+    if (newCaps?.thinking === 'none' && draftModelSettings.thinkingEffort) {
+      const rest = { ...draftModelSettings }
+      delete rest.thinkingEffort
+      setDraftModelSettings(rest)
+    }
     setComposerThinkingEffort(null)
 
     if (isNew) {
@@ -1377,7 +1337,10 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       return
     }
     if (!chatId) return
-    api.updateModel(chatId, modelId)
+    api.updateModel(chatId, modelId).catch(err => {
+      setErrorMsg(`Model was not saved: ${String(err)}`)
+      useChatStore.setState(s => ({ chats: s.chats.map(c => c.chatId === chatId ? { ...c, model: currentModelId } : c) }))
+    })
     useChatStore.setState(s => ({
       chats: s.chats.map(c => c.chatId === chatId ? { ...c, model: modelId } : c),
     }))
@@ -1391,22 +1354,29 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       setDraftSystemPrompt(value)
     } else if (chatId) {
       updateChatSystemPrompt(chatId, value)
-      if (chatInstructionsDebounceRef.current !== null) clearTimeout(chatInstructionsDebounceRef.current)
-      chatInstructionsDebounceRef.current = window.setTimeout(() => {
-        trackSystemPromptSave(api.updateSystemPrompt(chatId, value))
-      }, 800)
+      trackSystemPromptSave(api.updateSystemPrompt(chatId, value))
     }
   }
 
   function handleChatSettingsChange(newSettings: ModelSettings) {
-    setDraftModelSettings(newSettings)
+    const changed = Object.fromEntries(Object.entries(newSettings).filter(([key, value]) => value !== effectiveSettings[key as keyof ModelSettings]))
+    const overrides = Object.keys(newSettings).length ? { ...draftModelSettings, ...changed } : {}
+    setDraftModelSettings(overrides)
     if (!isNew && chatId) {
-      updateChatSettings(chatId, newSettings)
-      if (chatSettingsDebounceRef.current !== null) clearTimeout(chatSettingsDebounceRef.current)
-      chatSettingsDebounceRef.current = window.setTimeout(() => {
-        api.updateChatSettings(chatId, newSettings).catch(() => {})
-      }, 800)
+      const previous = activeChat?.modelSettings ?? {}
+      updateChatSettings(chatId, overrides)
+      void api.updateChatSettings(chatId, overrides).catch(err => {
+        updateChatSettings(chatId, previous); setDraftModelSettings(previous)
+        setErrorMsg(`Settings were not saved. Please retry: ${String(err)}`)
+      })
     }
+  }
+
+  async function changeProject(id: string) {
+    if (isNew) { setDraftProjectId(id); return }
+    if (!chatId) return
+    try { await api.moveChatToProject(chatId, id || null); patchChat(chatId, { projectId: id || undefined }) }
+    catch (err) { setErrorMsg(`Could not move chat: ${String(err)}`) }
   }
 
   // Sensitive/ephemeral are independent per-chat flags (see backend/CLAUDE.md) — toggled from
@@ -1523,13 +1493,17 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           <span
             className="private-chip"
             title={describeChatPrivacy({
-              memoryEnabled: draftModelSettings.memoryEnabled !== false,
+              memoryEnabled: effectiveSettings.memoryEnabled !== false,
               sensitive, isProject: isChatInProject, ephemeral, expiresAt: activeChat?.expiresAt,
             })}
           >
             <FontAwesomeIcon icon={faEyeSlash} /> Sensitive
           </span>
         )}
+        {projects.length > 0 && <select className="header-project-select" aria-label="Project" title="Move chat to a project" value={isNew ? draftProjectId : activeChat?.projectId ?? ''} onChange={e => changeProject(e.target.value)}>
+          <option value="">No project</option>{projects.map(p => <option value={p.projectId} key={p.projectId}>{p.name}</option>)}
+        </select>}
+        {!isNew && <ItemMenu label="Chat actions"><button onClick={() => { setDetailsOpen(true); window.setTimeout(() => document.querySelector<HTMLButtonElement>('.prefs-tab[data-share]')?.click(), 0) }}>Share / export</button><button onClick={() => handleChatSettingsChange({})}>Use inherited settings</button></ItemMenu>}
         {/* Per-send controls (model, reasoning, project, Private) live in the composer
             toolbar, not here — see docs/adr/0028-composer-owns-per-send-controls.md. The header
             keeps only what identifies the chat plus the two navigational actions. */}
@@ -1683,7 +1657,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           <div className="private-footer">
             <FontAwesomeIcon icon={faEyeSlash} />
             {describeChatPrivacy({
-              memoryEnabled: draftModelSettings.memoryEnabled !== false,
+              memoryEnabled: effectiveSettings.memoryEnabled !== false,
               sensitive, isProject: isChatInProject, ephemeral, expiresAt: activeChat?.expiresAt,
             })}
           </div>
@@ -1762,49 +1736,32 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             ))}
           </select>
           {currentCaps.thinking !== 'none' && effectiveThinkingEffort && (
+            <details className="composer-options"><summary>Reasoning</summary><label>Thinking effort
             <select
               className="composer-select composer-thinking-picker"
               value={effectiveThinkingEffort}
               disabled={sending || creatingChat}
-              title="Thinking effort: how much reasoning the model uses for this turn. Sticks for this chat session. See docs/adr/0043-composer-owns-reasoning-controls.md."
+              title="Reasoning effort for this conversation session"
               onChange={e => setComposerThinkingEffort(e.target.value as ThinkingEffort)}
             >
               {(currentCaps.thinkingLevels ?? THINKING_EFFORTS).map(e => (
                 <option key={e} value={e}>{e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}</option>
               ))}
-            </select>
+            </select></label></details>
           )}
           <select
             className="composer-select composer-research-picker"
             value={effectiveResearchDepth}
             disabled={sending || creatingChat}
-            title="Research depth: how many tool rounds the model budgets for this turn. Sticks for this chat session. See docs/adr/0043-composer-owns-reasoning-controls.md."
+            title="Response mode"
             onChange={e => setComposerResearchDepth(e.target.value as ResearchDepth)}
           >
             {RESEARCH_DEPTHS.map(d => (
               <option key={d} value={d}>
-                {d === 'brief' ? 'Brief' : d === 'extended' ? 'Extended' : 'Deep'}
+                {d === 'brief' ? 'Standard' : d === 'extended' ? 'Research' : 'Deep research'}
               </option>
             ))}
           </select>
-          {isNew && projects.length > 0 && (
-            /* Unfiled is the default and says nothing worth a word of the row: it collapses to
-               the folder icon, and only a chosen project spends width on its (ellipsised) name. */
-            <span className={`project-picker-wrap${draftProjectId ? '' : ' is-empty'}`}>
-              {!draftProjectId && <FontAwesomeIcon icon={faFolder} className="project-picker-icon" />}
-              <select
-                className="composer-select project-picker"
-                value={draftProjectId}
-                onChange={e => setDraftProjectId(e.target.value)}
-                title="File this chat into a project"
-              >
-                <option value="">No project</option>
-                {projects.map(p => (
-                  <option key={p.projectId} value={p.projectId}>{p.name}</option>
-                ))}
-              </select>
-            </span>
-          )}
           <button
             type="button"
             className={`btn-private-toggle${isPrivate ? ' active' : ''}`}
@@ -1918,7 +1875,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         onToggleEphemeral={() => isNew ? setDraftEphemeral(v => !v) : handleToggleFlag('ephemeral')}
         showTokenStats={effectiveShowTokenStats}
         onToggleShowTokenStats={() => handleChatSettingsChange({ ...draftModelSettings, showTokenStats: !effectiveShowTokenStats })}
-        settings={draftModelSettings}
+        settings={effectiveSettings}
         onSettingsChange={handleChatSettingsChange}
         systemPrompt={isNew ? draftSystemPrompt : (activeChat?.systemPrompt ?? '')}
         onSystemPromptChange={handleChatInstructionsChange}
