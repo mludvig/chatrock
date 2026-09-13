@@ -47,8 +47,8 @@ project facts, separately from files and instructions.
 
 `ChatView.tsx` owns model and response mode in the composer. Mode labels map to
 existing budgets: Standard = `brief`, Research = `extended`, Deep research =
-`deep`. Thinking effort lives in a Reasoning disclosure and remains an independent
-session override. The header project select assigns drafts and moves saved chats.
+`deep`. Thinking effort is directly visible alongside response mode and remains an
+independent session override. The header project select assigns drafts and moves saved chats.
 A project chip links to the project home on desktop; mobile retains the selector.
 
 `draftModelSettings` contains explicit chat overrides, not copied defaults.
