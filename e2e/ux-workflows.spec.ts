@@ -98,6 +98,30 @@ test('project facts can be added and edited and files can be opened', async ({ p
   } finally { await request(page, 'DELETE', `/projects/${p.projectId}`) }
 })
 
+test('a failed file-processing request can be retried without another upload', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openApp(page)
+  const p = await newProject(page, 'upload-recovery')
+  const route = `**/api/projects/${p.projectId}/files/*`
+  try {
+    await page.goto(`/p/${p.projectId}`)
+    await page.getByRole('button', { name: /Knowledge/ }).click()
+    await page.route(route, intercepted => intercepted.request().method() === 'PUT'
+      ? intercepted.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"Temporary test outage"}' })
+      : intercepted.continue())
+    await page.locator('input[type=file]').setInputFiles({ name: 'retry-reference.txt', mimeType: 'text/plain', buffer: Buffer.from('The recovered project reference uses metric units.') })
+    const file = page.locator('.project-file-item').filter({ hasText: 'retry-reference.txt' })
+    await expect(file.getByRole('button', { name: 'Retry processing' })).toBeVisible()
+    await page.unroute(route)
+    await file.getByRole('button', { name: 'Retry processing' }).click()
+    await expect(file.getByText('Used when relevant', { exact: false })).toBeVisible({ timeout: 90_000 })
+    await page.reload()
+    await page.getByRole('button', { name: /Knowledge/ }).click()
+    await expect(file.getByText('Used when relevant', { exact: false })).toBeVisible()
+    expect((await request<{ files: unknown[] }>(page, 'GET', `/projects/${p.projectId}/files`)).files).toHaveLength(1)
+  } finally { await page.unroute(route); await request(page, 'DELETE', `/projects/${p.projectId}`) }
+})
+
 for (const width of [320, 390, 768, 1440]) {
   test(`navigation and project actions are reachable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 })
@@ -137,11 +161,67 @@ test('recent chats remain in the visible sidebar and effort is a direct control'
     const thinkingModel = await page.locator('.model-picker option').filter({ hasText: /Sonnet|Opus/ }).first().getAttribute('value')
     await page.locator('.model-picker').selectOption(thinkingModel!)
     await expect(page.getByLabel('Thinking effort', { exact: true })).toBeVisible()
+    await expect(page.locator('.scroll-fabs')).toHaveCount(0)
+    await expect(page.getByTitle('Chat list filters')).not.toHaveClass(/active/)
     expect(await page.getByLabel('Thinking effort', { exact: true }).inputValue()).not.toBe('')
     const style = await page.getByTitle('Search chats and files', { exact: true }).evaluate(el => ({ color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor }))
     expect(style.background).toBe('rgba(0, 0, 0, 0)')
     await page.screenshot({ path: '.screenshots/2026-09-16-sidebar-and-controls.jpg' })
   } finally { await request(page, 'DELETE', `/chats/${c.chatId}`) }
+})
+
+test('a phone can rerun, fork, export, and share a conversation', async ({ page, browser }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openApp(page)
+  const c = await newChat(page)
+  const chatIds = [c.chatId]
+  try {
+    await request(page, 'PATCH', `/chats/${c.chatId}`, { modelSettings: { memoryEnabled: false, webSearchEnabled: false } })
+    await page.goto(`/c/${c.chatId}`)
+    await page.locator('.message-input').fill('Reply with exactly: GREEN_WIDGET')
+    await page.locator('.btn-send').click()
+    await expect(page.locator('.message.assistant')).toContainText('GREEN_WIDGET', { timeout: 90_000 })
+    await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 90_000 })
+    await page.getByTitle('Re-run this answer', { exact: true }).click()
+    await expect(page.locator('.btn-stop')).toBeVisible()
+    await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 90_000 })
+    await page.reload()
+    await expect(page.locator('.message.assistant')).toContainText('GREEN_WIDGET')
+    page.once('dialog', d => d.accept())
+    await page.locator('.message.assistant').getByTitle('Fork to a new chat (up to here)').click()
+    await expect(page).not.toHaveURL(new RegExp(c.chatId))
+    const forkId = page.url().split('/c/')[1]
+    expect(forkId).toMatch(/^[a-z0-9]+$/)
+    chatIds.push(forkId)
+    await expect(page.locator('.message.assistant')).toContainText('GREEN_WIDGET')
+    await page.getByLabel('Chat actions', { exact: true }).click()
+    await page.getByRole('button', { name: 'Share / export', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Download Markdown' })).toBeVisible()
+    const downloading = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Download Markdown' }).click()
+    const stream = await (await downloading).createReadStream()
+    const chunks: Buffer[] = []
+    for await (const chunk of stream) chunks.push(chunk)
+    expect(Buffer.concat(chunks).toString()).toContain('GREEN_WIDGET')
+    await page.getByRole('button', { name: 'Create share link' }).click()
+    const link = page.locator('.share-list-url').first()
+    await expect(link).toBeVisible()
+    const url = (await link.getAttribute('href'))!
+    const publicContext = await browser.newContext()
+    try {
+      const publicPage = await publicContext.newPage()
+      await publicPage.goto(url)
+      await expect(publicPage.locator('body')).toContainText('GREEN_WIDGET')
+      page.once('dialog', d => d.accept())
+      await page.getByTitle('Revoke', { exact: true }).click()
+      await expect(link).toHaveCount(0)
+      expect((await publicPage.reload())?.status()).toBe(404)
+    } finally { await publicContext.close() }
+    await page.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByTitle('Chat details', { exact: true }).click()
+    await expect(page.locator('.prefs-tab.active')).toHaveText('Settings')
+    await assertFits(page, '.dialog input, .dialog select, .dialog button')
+  } finally { for (const id of chatIds) await request(page, 'DELETE', `/chats/${id}`) }
 })
 
 test('a phone sends with the selected project model and restores the answer after reload', async ({ page }) => {

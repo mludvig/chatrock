@@ -16,6 +16,7 @@ import SaveIndicator from './SaveIndicator'
 // docs/adr/0015-privacy-toggle-labels-and-sensitive-flag-mapping.md.
 interface Props {
   open: boolean
+  initialTab?: Tab
   onClose: () => void
   isNew: boolean
   chat: Chat | null                 // null for a not-yet-created draft
@@ -39,7 +40,7 @@ interface Props {
 type Tab = 'settings' | 'info' | 'share'
 
 export default function ChatDetailsDialog({
-  open, onClose, isNew, chat, onRename, onSummaryChange,
+  open, initialTab = 'settings', onClose, isNew, chat, onRename, onSummaryChange,
   sensitive, ephemeral, expiresAt, isProject, onToggleSensitive, onToggleEphemeral,
   showTokenStats, onToggleShowTokenStats,
   settings, onSettingsChange, systemPrompt, onSystemPromptChange, systemPromptSaveStatus,
@@ -47,7 +48,7 @@ export default function ChatDetailsDialog({
   // A draft chat has no title/summary yet, so there's nothing for an Info tab to
   // show — only a saved chat gets the tab bar; a draft just sees Settings directly.
   const [tab, setTab] = useState<Tab>('settings')
-  useEffect(() => { if (open) setTab('settings') }, [open])
+  useEffect(() => { if (open) setTab(initialTab) }, [open, initialTab])
 
   const [titleDraft, setTitleDraft] = useState(chat?.title ?? '')
   useEffect(() => { if (open) setTitleDraft(chat?.title ?? '') }, [open, chat?.title])
@@ -78,7 +79,7 @@ export default function ChatDetailsDialog({
             Info
           </button>
           {hasShare && (
-            <button data-share className={`prefs-tab${tab === 'share' ? ' active' : ''}`} onClick={() => setTab('share')}>
+            <button className={`prefs-tab${tab === 'share' ? ' active' : ''}`} onClick={() => setTab('share')}>
               Share
             </button>
           )}
