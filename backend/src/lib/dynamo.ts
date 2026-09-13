@@ -434,12 +434,13 @@ export async function updateProjectFields(
     description: string
     instructions: string
     memoryEnabled: boolean
-    defaultModel: string
+    defaultModel: string | null
     modelSettings: Record<string, unknown>
     updatedAt: string
   }>,
 ): Promise<void> {
   const updates: string[] = []
+  const removals: string[] = []
   const names: Record<string, string> = {}
   const values: Record<string, unknown> = {}
 
@@ -457,6 +458,7 @@ export async function updateProjectFields(
     if (key in fieldMap) {
       const alias = `#${key}`
       names[alias] = fieldMap[key]
+      if (value === null) { removals.push(alias); continue }
       values[`:${key}`] = value
       updates.push(`${alias} = :${key}`)
     }
@@ -470,7 +472,7 @@ export async function updateProjectFields(
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
     Key: buildProjectKey(sub, projectId),
-    UpdateExpression: `SET ${updates.join(', ')}`,
+    UpdateExpression: `SET ${updates.join(', ')}${removals.length ? ` REMOVE ${removals.join(', ')}` : ''}`,
     ExpressionAttributeNames: names,
     ExpressionAttributeValues: values,
   }))

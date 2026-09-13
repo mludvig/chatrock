@@ -966,7 +966,7 @@ test('proj: PATCH projectId (move in from no project) → summarizeChatById call
   mockDynamo.updateChatProject.mockResolvedValue(undefined)
   await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'proj-1' }, { chatId: 'c1' }) as any)
   expect(mockEnrichment.summarizeChatById).toHaveBeenCalledWith('user-1', 'c1')
-  expect(mockEnrichment.enrichProjectFactsByChatId).toHaveBeenCalledWith('c1', 'proj-1')
+  expect(mockEnrichment.enrichProjectFactsByChatId).toHaveBeenCalledWith('c1', 'proj-1', 'user-1')
 })
 
 test('proj: PATCH projectId (sensitive chat) → enrichProjectFactsByChatId NOT called', async () => {
@@ -974,7 +974,7 @@ test('proj: PATCH projectId (sensitive chat) → enrichProjectFactsByChatId NOT 
   mockDynamo.getProject.mockResolvedValue({ PK: 'USER#user-1', SK: 'PROJECT#proj-1', name: 'Test' })
   mockDynamo.updateChatProject.mockResolvedValue(undefined)
   await handler(makeEvent('PATCH', '/api/chats/{chatId}', { projectId: 'proj-1' }, { chatId: 'c1' }) as any)
-  expect(mockEnrichment.summarizeChatById).toHaveBeenCalledWith('user-1', 'c1')
+  expect(mockEnrichment.summarizeChatById).not.toHaveBeenCalled()
   expect(mockEnrichment.enrichProjectFactsByChatId).not.toHaveBeenCalled()
 })
 

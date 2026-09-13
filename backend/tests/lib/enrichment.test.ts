@@ -7,6 +7,7 @@ jest.mock('../../src/lib/bedrock')
 jest.mock('../../src/lib/dynamo', () => ({
   ...jest.requireActual('../../src/lib/dynamo'),
   listMessages: jest.fn(),
+  getChat: jest.fn().mockResolvedValue({ activeLeafId: 'm2' }),
   updateChatSummary: jest.fn(),
 }))
 jest.mock('../../src/lib/tree', () => ({

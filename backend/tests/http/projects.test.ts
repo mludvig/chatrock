@@ -52,6 +52,30 @@ beforeEach(() => {
 
 // ── GET /api/projects ─────────────────────────────────────────────────────────
 
+test('project reads retain saved defaults and member privacy flags', async () => {
+  const project = {
+    SK: 'PROJECT#proj-1', name: 'Project', defaultModel: 'saved-model',
+    modelSettings: { researchDepth: 'deep', browserCoreEnabled: false },
+  }
+  mockDynamo.listProjects.mockResolvedValue([project])
+  mockDynamo.getProject.mockResolvedValue(project)
+  mockDynamo.listChats.mockResolvedValue([{
+    SK: 'CHAT#private', projectId: 'proj-1', sensitive: true, ephemeral: true, ttl: 1800000000,
+  }])
+  const list = JSON.parse(result(await handler(makeEvent('GET', '/api/projects') as any)).body!)
+  const detail = JSON.parse(result(await handler(makeEvent('GET', '/api/projects/{projectId}', undefined, { projectId: 'proj-1' }) as any)).body!)
+  expect(list.projects[0]).toMatchObject({ defaultModel: 'saved-model', modelSettings: project.modelSettings })
+  expect(detail.project).toMatchObject({ defaultModel: 'saved-model', modelSettings: project.modelSettings })
+  expect(detail.chats[0]).toMatchObject({ sensitive: true, ephemeral: true, expiresAt: new Date(1800000000000).toISOString() })
+})
+
+test('null clears a project model override', async () => {
+  mockDynamo.getProject.mockResolvedValue({ SK: 'PROJECT#proj-1' })
+  const res = result(await handler(makeEvent('PATCH', '/api/projects/{projectId}', { defaultModel: null }, { projectId: 'proj-1' }) as any))
+  expect(res.statusCode).toBe(200)
+  expect(mockDynamo.updateProjectFields).toHaveBeenCalledWith('user-1', 'proj-1', { defaultModel: null })
+})
+
 test('GET /api/projects returns empty list when no projects', async () => {
   mockDynamo.listProjects.mockResolvedValue([])
   const res = result(await handler(makeEvent('GET', '/api/projects') as any))

@@ -253,3 +253,14 @@ Projects group related chats + files and give the model project-scoped memory vi
 - **File processing**: `summarizeFile()` produces `microLabel` + `summary`. PDFs also get an extracted-text sidecar. Status: `uploading → processing → ready / error`.
 - **Ownership**: all tool executors validate `ctx.projectId` — never trust model-supplied ids.
 - **Membership**: moving a chat is a single `projectId` attribute write — no re-keying of messages.
+
+## Project policy and defaults
+
+See `docs/adr/0044-project-context-and-memory-policy.md`. Project responses retain
+model defaults/settings and use the shared chat DTO for member chats. PATCH
+`defaultModel: null` resets the project override. Project GET performs no enrichment.
+Sensitive chats are excluded from sibling manifests, cross-chat reads, memory
+tools and summary backfills. Excluded files are excluded from search and reads.
+Project memory has an additional gate independent of instructions/files. Titles
+and non-sensitive summaries continue when memory learning is off. Retrieval and
+backfill use the stored active conversation branch.

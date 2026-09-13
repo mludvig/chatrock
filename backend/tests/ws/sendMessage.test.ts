@@ -2088,6 +2088,20 @@ describe('project chat enrichment', () => {
     mockBedrock.converseStream.mockReturnValue(gen())
   }
 
+  test('project memory off blocks injection and enrichment but keeps project instructions', async () => {
+    projectBase()
+    mockDynamo.getProject.mockResolvedValue({ memoryEnabled: false, instructions: 'Use TypeScript' })
+    mockDynamo.listProjectMemories.mockResolvedValue([{ memId: 'secret', text: 'Hidden fact', category: 'fact' }])
+    simpleStream()
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+    const [, prompt, , options] = mockBedrock.converseStream.mock.calls[0]
+    expect(prompt).toContain('Use TypeScript')
+    expect(prompt).not.toContain('Hidden fact')
+    expect(options?.ctx?.projectMemoryEnabled).toBe(false)
+    expect(mockEnrichment.enrichProjectFacts).not.toHaveBeenCalled()
+    expect(mockEnrichment.summarizeChat).toHaveBeenCalled()
+  })
+
   test('P1: project chat — enrichProjectFacts called (project-specific enrichment)', async () => {
     projectBase()
     simpleStream()
@@ -2373,15 +2387,17 @@ describe('project chat enrichment', () => {
     }
   })
 
-  test('P13: 3 always-files of 40000 chars each → only first two included, forced_files_truncated logged', async () => {
+  test('P13: five large files budget their included slices and stop at the total cap', async () => {
     projectBase()
     const alwaysFiles = [
       { fileId: 'fa1', filename: 'big1.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big1.txt' },
       { fileId: 'fa2', filename: 'big2.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big2.txt' },
       { fileId: 'fa3', filename: 'big3.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big3.txt' },
+      { fileId: 'fa4', filename: 'big4.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big4.txt' },
+      { fileId: 'fa5', filename: 'big5.txt', contentType: 'text/plain', status: 'ready', inclusion: 'always', s3Key: 'k/big5.txt' },
     ] as Record<string, unknown>[]
     mockDynamo.listProjectFiles.mockResolvedValue(alwaysFiles)
-    // Each file returns 40000 chars; first two fit (80000 total), third would exceed 80000
+    // Each file contributes a 20000-character slice; four fit the total budget.
     mockProjectFiles.fetchS3Text.mockResolvedValue('x'.repeat(40000))
     simpleStream()
 
@@ -2394,7 +2410,8 @@ describe('project chat enrichment', () => {
       const forcedSection = (sysPrompt as string).split('Always-included project files (full content):')[1] ?? ''
       expect(forcedSection).toContain('big1.txt')
       expect(forcedSection).toContain('big2.txt')
-      expect(forcedSection).not.toContain('big3.txt')
+      expect(forcedSection).toContain('big4.txt')
+      expect(forcedSection).not.toContain('big5.txt')
 
       const truncatedCall = consoleSpy.mock.calls.find(args =>
         typeof args[0] === 'string' && args[0].includes('forced_files_truncated')

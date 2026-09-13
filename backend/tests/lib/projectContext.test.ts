@@ -37,6 +37,24 @@ void blocksLib
 
 const ctx = { sub: 'user1', projectId: 'proj1', chatId: 'chat-current' }
 
+test('private sibling chats cannot be read by a known ID', async () => {
+  mockGetChat.mockResolvedValue({ projectId: 'proj1', sensitive: true })
+  expect((await executeProjectReadChatTool({ chatId: 'secret', detail: 'full' }, ctx)).isError).toBe(true)
+})
+
+test('excluded files cannot be read by a known ID', async () => {
+  mockGetProjectFile.mockResolvedValue({ inclusion: 'never', status: 'ready', summary: 'secret' })
+  expect((await executeProjectReadFileTool({ fileId: 'secret', detail: 'summary' }, ctx)).isError).toBe(true)
+})
+
+test('cross-chat reads follow the selected branch rather than the newest row', async () => {
+  mockGetChat.mockResolvedValue({ projectId: 'proj1', activeLeafId: 'chosen', title: 'Branches' })
+  mockListMessages.mockResolvedValue([{ msgId: 'newest' }])
+  mockBuildActivePath.mockReturnValue([])
+  await executeProjectReadChatTool({ chatId: 'sibling', detail: 'full' }, ctx)
+  expect(mockBuildActivePath).toHaveBeenLastCalledWith([{ msgId: 'newest' }], 'chosen')
+})
+
 // Helper to get content array safely
 function content0(result: { entries?: unknown[] }) {
   return result.entries![0]
