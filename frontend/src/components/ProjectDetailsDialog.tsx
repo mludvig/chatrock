@@ -62,7 +62,7 @@ export default function ProjectDetailsDialog({
 
         <ToggleRow
           label="Project memory"
-          title="When off, project memories are not injected and the manage_project_memory tool is disabled."
+          title="When off, saved project facts are neither used nor updated. Files and instructions remain available."
           on={memoryEnabled}
           onToggle={onToggleMemory}
         />
@@ -81,7 +81,7 @@ export default function ProjectDetailsDialog({
           </select>
         </div>
 
-        <ToolsPanel settings={settings} onChange={onSettingsChange} />
+        <ToolsPanel settings={settings} onChange={onSettingsChange} hideMemory />
         <ModelTuningPanel settings={settings} onChange={onSettingsChange} />
       </div>
     </Dialog>

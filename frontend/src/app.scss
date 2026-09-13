@@ -3145,3 +3145,63 @@ $private-light: #ece2fa;
     font-size: 11px;
   }
 }
+
+// Unified navigation and touch-first project workspace. See docs/adr/0045-simple-navigation-and-project-drafts.md.
+.layout { grid-template-columns: var(--sidebar-w, 280px) minmax(0, 1fr); }
+.sidebar-global-header { grid-column: 1; padding: 8px; .sidebar-brand { border: 0; background: none; color: inherit; cursor: pointer; display: flex; gap: 7px; align-items: center; font: inherit; font-weight: 650; flex: 1; } }
+.sidebar { grid-column: 1; display: flex; flex-direction: column; min-height: 0; overflow: visible; }
+.main { grid-column: 2; }
+.sidebar-scroll { overflow-y: auto; flex: 1; min-height: 0; padding-bottom: 30px; }
+.sidebar-footer, .settings-nav { display: flex; gap: 8px; padding: 10px; border-top: 1px solid $border; }
+.sidebar-footer button, .settings-nav button, .nav-back { border: 0; background: $surface2; border-radius: 8px; padding: 10px; color: $text; cursor: pointer; }
+.nav-back { margin: 8px; }
+.sidebar .projects-panel, .sidebar .project-list { overflow: visible; flex: none; }
+.sidebar .project-list { max-height: 30vh; overflow-y: auto; }
+.sidebar .project-item { padding: 5px 10px; }
+a.project-title, .project-chat-row a { color: inherit; text-decoration: none; min-width: 0; }
+a.project-title { padding: 9px 0; }
+button, a, input, select, textarea, summary { &:focus-visible { outline: 2px solid $accent; outline-offset: 3px; } }
+.form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.form-actions button { padding: 9px 14px; border-radius: 8px; border: 1px solid $border; background: $surface; cursor: pointer; }
+.new-project-bar { display: block; input { width: 100%; } }
+.item-menu { position: relative; flex-shrink: 0; summary { list-style: none; cursor: pointer; border-radius: 8px; padding: 10px; min-width: 40px; min-height: 40px; text-align: center; &::-webkit-details-marker { display: none; } } }
+.item-menu[open] > summary { background: $surface2; }
+.item-menu-content { position: absolute; right: 0; top: 100%; z-index: 70; min-width: 210px; max-width: min(300px, 85vw); background: $surface; border: 1px solid $border; border-radius: 10px; box-shadow: 0 5px 22px #0002; padding: 5px; button, a { display: block; text-align: left; width: 100%; padding: 12px; border: 0; background: none; color: $text; text-decoration: none; font: inherit; cursor: pointer; border-radius: 5px; &:hover { background: $surface2; } } }
+.project-view .project-view-header { h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; } }
+.project-view .project-view-body { width: 100%; max-width: 1100px; margin: 0 auto; padding: 24px; }
+.project-description { color: $muted; margin-bottom: 16px; }
+.project-composer { border: 1px solid $border; background: $surface; padding: 18px; border-radius: 14px; display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; label { font-weight: 600; } textarea { width: 100%; min-height: 80px; resize: vertical; border: 0; background: transparent; font: inherit; } button { align-self: flex-end; padding: 10px 18px; } }
+.project-tabs { display: flex; gap: 8px; margin-bottom: 20px; border-bottom: 1px solid $border; button { border: 0; background: transparent; padding: 13px 18px; cursor: pointer; color: $muted; font: inherit; &[aria-pressed="true"] { color: $accent; box-shadow: inset 0 -2px $accent; } } }
+.section-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; .search-field { flex: 1; width: auto; min-width: 120px; } }
+.search-field { width: 100%; padding: 12px; border: 1px solid $border; border-radius: 9px; font: inherit; background: $surface; color: $text; }
+.project-chat-row { display: flex; align-items: center; padding: 14px 8px; border-bottom: 1px solid $border; .chat-item-content { flex: 1; display: flex; flex-direction: column; gap: 6px; } small { color: $muted; } }
+.project-section-header { display: flex; justify-content: space-between; align-items: center; }
+.knowledge-instructions { white-space: pre-wrap; line-height: 1.6; }
+.knowledge-sections .project-section { margin-bottom: 28px; }
+.project-view .project-file-item { padding: 10px; details { padding: 10px; summary { cursor: pointer; padding: 7px 0; } p { margin: 10px 0; white-space: pre-wrap; } label { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; } select { padding: 9px; max-width: 100%; } small { display: block; margin-top: 10px; color: $muted; } } .file-info { display: flex; flex-direction: column; gap: 5px; overflow-wrap: anywhere; } }
+.memory-item .memory-text { min-width: 0; p { white-space: pre-wrap; } small, a { display: block; color: $muted; margin-top: 6px; font-size: 12px; } }
+.search-results { margin: 16px 0; }
+.search-result { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 5px; padding: 13px; background: $surface; border: 0; border-bottom: 1px solid $border; cursor: pointer; color: $text; font: inherit; &:hover { background: $surface2; } span { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 13px; color: $muted; } small { color: $muted; } }
+.header-project-select { max-width: 180px; min-width: 0; border: 1px solid $border; border-radius: 8px; padding: 8px; color: $text; background: $surface; }
+.composer-options { position: relative; summary { cursor: pointer; padding: 8px; font-size: 13px; } label { position: absolute; bottom: 100%; left: 0; background: $surface; border: 1px solid $border; border-radius: 8px; padding: 12px; min-width: 160px; z-index: 10; } }
+.composer-toolbar { overflow: visible; flex-wrap: wrap; }
+@media (max-width: 720px) {
+  .sidebar-global-header { width: min(330px, 88vw); }
+  .sidebar { left: 0; width: min(330px, 88vw); transform: translateX(-100%); }
+  .main { grid-column: unset; }
+  .project-view .project-view-header { gap: 6px; padding: 8px; h2 { font-size: 16px; } .btn-action { font-size: 13px; padding: 9px; } }
+  .project-view .project-view-body { padding: 16px 12px; }
+  .project-composer { padding: 14px; }
+  .dialog { max-height: calc(var(--app-h, 100dvh) - 16px); }
+  .dialog-body input, .dialog-body textarea, .project-composer textarea, .search-field { font-size: 16px; }
+  .header-project-select { max-width: 105px; }
+  .chat-header .project-chip { display: none; }
+  .composer-toolbar { gap: 4px; padding: 8px 10px; }
+  .composer-select { max-width: 145px; }
+  .composer-research-picker { max-width: 125px; }
+  .composer-options summary { font-size: 12px; }
+  .btn-icon, .btn-new, .item-menu summary { min-width: 40px; min-height: 40px; }
+  .section-toolbar > .search-field { flex-basis: 100%; }
+}
+.unified-chat-row { display: flex; align-items: center; .chat-item-content { flex: 1; min-width: 0; color: inherit; text-decoration: none; display: flex; flex-direction: column; padding: 6px 0; } small { color: $muted; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; margin-top: 4px; } }
+.advanced-tools { padding: 12px 0; > summary { cursor: pointer; min-height: 36px; } }

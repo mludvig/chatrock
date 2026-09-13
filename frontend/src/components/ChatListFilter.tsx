@@ -7,7 +7,7 @@ import { faFilter } from '@fortawesome/free-solid-svg-icons'
 // should never appear on screen just because the sidebar re-rendered.
 export function useChatListFilter() {
   const [showSensitive, setShowSensitive] = useState(false)
-  const [showProjectChats, setShowProjectChats] = useState(false)
+  const [showProjectChats, setShowProjectChats] = useState(true)
   return { showSensitive, setShowSensitive, showProjectChats, setShowProjectChats }
 }
 

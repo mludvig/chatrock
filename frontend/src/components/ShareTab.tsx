@@ -16,7 +16,7 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
   const { pushToast } = useChatStore()
   const [shares, setShares] = useState<Share[] | null>(null)
   const [creating, setCreating] = useState(false)
-  const [mode, setMode] = useState<'live' | 'snapshot'>('live')
+  const [mode, setMode] = useState<'live' | 'snapshot'>('snapshot')
   const [shareThinking, setShareThinking] = useState(false)
   const [shareTools, setShareTools] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)

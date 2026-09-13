@@ -44,7 +44,7 @@ npm --prefix frontend run build     # tsc + vite build → frontend/dist/
 npm --prefix frontend run dev       # local dev server (needs VITE_* env vars — see frontend/.deploy-env after a deploy)
 ```
 
-The frontend has no test suite. Type-checking is part of `npm run build` (tsc runs first).
+Frontend unit tests run with `npm --prefix frontend test` (Vitest). Type-checking is part of `npm run build` (tsc runs first).
 
 ### E2E tests
 

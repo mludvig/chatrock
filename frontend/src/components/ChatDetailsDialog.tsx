@@ -58,13 +58,17 @@ export default function ChatDetailsDialog({
   const [topicsDraft, setTopicsDraft] = useState((chat?.topics ?? []).join(', '))
   useEffect(() => { if (open) setTopicsDraft((chat?.topics ?? []).join(', ')) }, [open, chat?.topics])
 
+  const [instructionDraft, setInstructionDraft] = useState(systemPrompt)
+  useEffect(() => { if (open) setInstructionDraft(systemPrompt) }, [open, systemPrompt])
+  const saveInstructions = () => { if (instructionDraft !== systemPrompt) onSystemPromptChange(instructionDraft) }
+
   const hasInfo = !isNew
   // Sharing/export need a persisted chatId to hang share records and messages off of — a
   // not-yet-saved /c/new draft has nothing to share yet, same reasoning as the Info tab above.
   const hasShare = !isNew && !!chat?.chatId
 
   return (
-    <Dialog open={open} onClose={onClose} title="Chat details">
+    <Dialog open={open} onClose={() => { saveInstructions(); onClose() }} title="Chat details">
       {hasInfo && (
         <div className="prefs-tabs">
           <button className={`prefs-tab${tab === 'settings' ? ' active' : ''}`} onClick={() => setTab('settings')}>
@@ -74,7 +78,7 @@ export default function ChatDetailsDialog({
             Info
           </button>
           {hasShare && (
-            <button className={`prefs-tab${tab === 'share' ? ' active' : ''}`} onClick={() => setTab('share')}>
+            <button data-share className={`prefs-tab${tab === 'share' ? ' active' : ''}`} onClick={() => setTab('share')}>
               Share
             </button>
           )}
@@ -141,8 +145,9 @@ export default function ChatDetailsDialog({
             <textarea
               className="pref-textarea"
               placeholder="Override global instructions for this chat only…"
-              value={systemPrompt}
-              onChange={e => onSystemPromptChange(e.target.value)}
+              value={instructionDraft}
+              onChange={e => setInstructionDraft(e.target.value)}
+              onBlur={saveInstructions}
             />
           </div>
 
@@ -173,7 +178,7 @@ export default function ChatDetailsDialog({
             <div className="model-setting-row model-setting-row--inline">
               <label
                 className="setting-label"
-                title={ephemeral && expiresAt ? `Expires ${new Date(expiresAt).toLocaleString()}.` : 'Deletes itself after a TTL.'}
+                title={ephemeral && expiresAt ? `Expires ${new Date(expiresAt).toLocaleString()}.` : 'Automatically deletes this chat after seven days.'}
               >
                 <FontAwesomeIcon icon={faTrash} />
                 <span>Auto-delete</span>
