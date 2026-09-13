@@ -8,6 +8,8 @@ import { faTrash, faBrain } from '@fortawesome/free-solid-svg-icons'
 export default function MemoryPanel() {
   const [memories, setMemories] = useState<UserMemory[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [retry, setRetry] = useState(0)
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
   const [editMemoryText, setEditMemoryText] = useState('')
   const memoryRefreshTick = useChatStore(s => s.memoryRefreshTick)
@@ -25,16 +27,22 @@ export default function MemoryPanel() {
 
   // Load memories on mount and whenever memoryRefreshTick changes
   useEffect(() => {
+    let cancelled = false
     setLoading(true)
+    setError('')
     api.listMemory()
-      .then(r => setMemories(r.memories))
-      .catch(() => {}) // silently ignore errors
-      .finally(() => setLoading(false))
-  }, [memoryRefreshTick])
+      .then(r => { if (!cancelled) setMemories(r.memories) })
+      .catch(() => { if (!cancelled) setError('Could not load personal memory.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [memoryRefreshTick, retry])
 
   async function handleDelete(memId: string) {
-    await api.deleteMemory(memId)
-    setMemories(prev => prev.filter(m => m.memId !== memId))
+    try {
+      await api.deleteMemory(memId)
+      setMemories(prev => prev.filter(m => m.memId !== memId))
+      setError('')
+    } catch { setError('Could not delete this memory. Please try again.') }
   }
 
   function startMemoryEdit(e: React.MouseEvent, mem: UserMemory) {
@@ -72,10 +80,11 @@ export default function MemoryPanel() {
       <p className="memory-hint">
         Ask in any chat to add, correct, or remove a memory (e.g. "remember I'm in Wellington" or "correct my location").
       </p>
+      {error && <div className="error-banner" role="alert">{error}<button onClick={() => setRetry(v => v + 1)}>Retry loading</button></div>}
       {loading ? (
         <div className="panel-loading">Loading…</div>
       ) : memories.length === 0 ? (
-        <div className="panel-empty">No memories yet. Chat with the assistant to build up facts — just say "remember that…".</div>
+        !error && <div className="panel-empty">No memories yet. Chat with the assistant to build up facts — just say "remember that…".</div>
       ) : (
         <div className="memory-list">
           {categories.map(cat => {

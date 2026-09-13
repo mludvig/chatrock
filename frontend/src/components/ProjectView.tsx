@@ -27,6 +27,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
   const [draft, setDraft] = useState('')
   const [description, setDescription] = useState('')
   const [instructions, setInstructions] = useState('')
+  const previousProjectText = useRef({ projectId: '', description: '', instructions: '' })
   const [edit, setEdit] = useState<{ kind: 'memory' | 'file' | 'name'; id: string; text: string } | null>(null)
   const [newFact, setNewFact] = useState(false)
   const [fact, setFact] = useState('')
@@ -61,7 +62,14 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
     return () => { currentProject.current = '' }
   }, [refresh, projectId])
   useEffect(() => { void refresh() }, [memoryRefreshTick, refresh])
-  useEffect(() => { setDescription(project?.description ?? ''); setInstructions(project?.instructions ?? '') }, [project?.description, project?.instructions, projectId])
+  useEffect(() => {
+    const previous = previousProjectText.current
+    const next = { projectId, description: project?.description ?? '', instructions: project?.instructions ?? '' }
+    // Resume refreshes may update metadata while the user is typing; retain those edits.
+    setDescription(value => previous.projectId !== projectId || value === previous.description ? next.description : value)
+    setInstructions(value => previous.projectId !== projectId || value === previous.instructions ? next.instructions : value)
+    previousProjectText.current = next
+  }, [project?.description, project?.instructions, projectId])
   useEffect(() => {
     if (params.get('file')) setTab('knowledge')
     if (params.get('settings')) setDetails(true)
@@ -145,11 +153,12 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
           <input ref={fileInput} type="file" multiple hidden onChange={e => { Array.from(e.target.files ?? []).forEach(f => void upload(f)); e.target.value = '' }} />
           {!files.length && <p className="panel-empty">Add notes, documents or reference material.</p>}
           {files.map(f => <article id={`file-${f.fileId}`} key={f.fileId} className={`project-file-item${params.get('file') === f.fileId ? ' project-file-item--selected' : ''}`}>
-            <div className="project-file-main"><div className="file-info"><strong>{f.filename}</strong><small>{Math.ceil(f.sizeBytes / 1024)} KB · {f.status === 'ready' ? (f.inclusion === 'never' ? 'Excluded from AI context' : f.inclusion === 'always' ? 'Included excerpt every message' : 'Used when relevant') : f.status}</small>{f.errorMessage && <p role="alert">{f.errorMessage}</p>}</div>
+            <div className="project-file-main"><div className="file-info"><strong>{f.filename}</strong><small>{Math.ceil(f.sizeBytes / 1024)} KB · {f.status === 'ready' ? (f.inclusion === 'never' ? 'Excluded from AI context' : f.inclusion === 'always' ? 'Included excerpt every message' : 'Used when relevant') : f.status}</small>{f.errorMessage && <p role="alert">{f.errorMessage}</p>}
+              {f.status === 'error' && !f.fileId.startsWith('local-') && <button className="btn-action" disabled={pending} onClick={() => action(() => api.finalizeProjectFile(projectId, f.fileId))}>Retry processing</button>}
+            </div>
               <ItemMenu label={`Actions for ${f.filename}`}>
                 {f.url && <a href={f.url} target="_blank" rel="noreferrer">Open / download file</a>}
                 {f.status === 'ready' && <><button onClick={() => setEdit({ kind: 'file', id: f.fileId, text: f.summary ?? '' })}>Edit description</button><button onClick={() => { bumpNewChatTick(); navigate(`/c/new?project=${projectId}`, { state: { draft: `Please read project file ${f.filename} (fileId: ${f.fileId}) and help me with: ` } }) }}>Ask about this file</button></>}
-                {(f.status === 'error' || f.status === 'uploading') && !f.fileId.startsWith('local-') && <button disabled={pending} onClick={() => action(() => api.finalizeProjectFile(projectId, f.fileId))}>Retry processing</button>}
                 <button disabled={pending} onClick={() => {
                   if (!confirm(`Remove ${f.filename} from this project?`)) return
                   if (f.fileId.startsWith('local-')) setFiles(fs => fs.filter(x => x.fileId !== f.fileId))
@@ -165,7 +174,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
         </section>
       </div>}
     </div>
-    <ProjectDetailsDialog open={details} onClose={() => setDetails(false)} projectName={project?.name ?? 'Project'} descDraft={description} onDescChange={setDescription} onDescBlur={() => { if (description !== project?.description) trackDesc(save({ description })) }} descSaveStatus={descStatus} instrDraft={instructions} onInstrChange={setInstructions} onInstrBlur={() => { if (instructions !== project?.instructions) trackInstr(save({ instructions })) }} instrSaveStatus={instrStatus} models={models} defaultModel={project?.defaultModel ?? ''} onDefaultModelChange={v => { void action(() => save({ defaultModel: v || null })) }} settings={{ ...userPreferences, ...project?.modelSettings }} onSettingsChange={(next: ModelSettings) => { const effective = { ...userPreferences, ...project?.modelSettings }; const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => value !== effective[key as keyof ModelSettings])); void action(() => save({ modelSettings: { ...project?.modelSettings, ...changed } })) }} memoryEnabled={project?.memoryEnabled !== false} onToggleMemory={() => { void action(() => save({ memoryEnabled: project?.memoryEnabled === false })) }} />
+    <ProjectDetailsDialog open={details} onClose={() => { if (description !== (project?.description ?? '')) trackDesc(save({ description })); if (instructions !== (project?.instructions ?? '')) trackInstr(save({ instructions })); setDetails(false) }} projectName={project?.name ?? 'Project'} descDraft={description} onDescChange={setDescription} onDescBlur={() => { if (description !== project?.description) trackDesc(save({ description })) }} descSaveStatus={descStatus} instrDraft={instructions} onInstrChange={setInstructions} onInstrBlur={() => { if (instructions !== project?.instructions) trackInstr(save({ instructions })) }} instrSaveStatus={instrStatus} models={models} defaultModel={project?.defaultModel ?? ''} onDefaultModelChange={v => { void action(() => save({ defaultModel: v || null })) }} settings={{ ...userPreferences, ...project?.modelSettings }} onSettingsChange={(next: ModelSettings) => { const effective = { ...userPreferences, ...project?.modelSettings }; const changed = Object.fromEntries(Object.entries(next).filter(([key, value]) => value !== effective[key as keyof ModelSettings])); void action(() => save({ modelSettings: { ...project?.modelSettings, ...changed } })) }} memoryEnabled={project?.memoryEnabled !== false} onToggleMemory={() => { void action(() => save({ memoryEnabled: project?.memoryEnabled === false })) }} />
     <Dialog open={addChats} onClose={() => setAddChats(false)} title="Add existing chats"><p>Choose a chat to move into this project.</p>{sortByRecent(chats.filter(c => c.projectId !== projectId && !c.sensitive)).map(c => <button key={c.chatId} className="search-result" disabled={pending} onClick={() => action(async () => { await api.moveChatToProject(c.chatId, projectId); updateChatProjectId(c.chatId, projectId); pushToast({ kind: 'success', text: 'Chat added to project' }) })}>{c.title}</button>)}</Dialog>
     <Dialog open={!!edit} onClose={() => setEdit(null)} title={edit?.kind === 'name' ? 'Rename project' : 'Edit description or fact'}><textarea className="pref-textarea" aria-label="Edit text" value={edit?.text ?? ''} onChange={e => setEdit(x => x && { ...x, text: e.target.value })} />{actionError && <p role="alert">{actionError}</p>}<div className="form-actions"><button onClick={() => setEdit(null)}>Cancel</button><button disabled={pending || !edit?.text.trim()} onClick={async () => { if (!edit) return; const ok = await action(() => edit.kind === 'name' ? save({ name: edit.text.trim() }) : edit.kind === 'memory' ? api.updateProjectMemory(projectId, edit.id, { text: edit.text.trim() }) : api.updateProjectFile(projectId, edit.id, { summary: edit.text.trim() })); if (ok) setEdit(null) }}>Save</button></div></Dialog>
     <Dialog open={newFact} onClose={() => setNewFact(false)} title="Add project fact"><textarea className="pref-textarea" aria-label="Fact" placeholder="A decision, convention, or fact to remember…" value={fact} onChange={e => setFact(e.target.value)} />{actionError && <p role="alert">{actionError}</p>}<button className="btn-action" disabled={pending || !fact.trim()} onClick={async () => { if (await action(() => api.createProjectMemory(projectId, fact.trim()))) { setFact(''); setNewFact(false) } }}>Save fact</button></Dialog>

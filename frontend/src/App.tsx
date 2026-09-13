@@ -24,6 +24,8 @@ function AuthedApp() {
   const { chats, setChats, setModels, models, setLoading, lastModel, setLastModel, sidebarWidth, setSidebarWidth, setUserPreferences, userPreferences, setProjects, setActivePanel, bumpNewChatTick, bumpNewProjectTick } = useChatStore()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   const auth = useAuth()
   const accessToken = auth.user?.access_token ?? ''
@@ -77,22 +79,27 @@ function AuthedApp() {
 
   useEffect(() => {
     if (!auth.isAuthenticated || !accessToken) return
+    let cancelled = false
     setLoading(true)
-    Promise.all([api.listChats(), api.getPreferences(), api.listProjects()])
+    setLoadError('')
+    Promise.allSettled([api.listChats(), api.getPreferences(), api.listProjects()])
       .then(([chatsRes, prefsRes, projectsRes]) => {
-        const sorted = chatsRes.chats.sort(
-          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-        )
-        setChats(sorted)
-        setUserPreferences(prefsRes.preferences)
-        setProjects(projectsRes.projects)
+        if (cancelled) return
+        if (chatsRes.status === 'fulfilled') setChats(chatsRes.value.chats.sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()))
+        if (prefsRes.status === 'fulfilled') setUserPreferences(prefsRes.value.preferences)
+        if (projectsRes.status === 'fulfilled') setProjects(projectsRes.value.projects)
+        const failed = [chatsRes, prefsRes, projectsRes].flatMap((result, index) =>
+          result.status === 'rejected' ? [['chats', 'preferences', 'projects'][index]] : [])
+        if (failed.length) setLoadError(`Could not refresh ${failed.join(', ')}. Your previously loaded data is still available.`)
       })
-      .finally(() => setLoading(false))
+      .finally(() => { if (!cancelled) setLoading(false) })
     // Models are cached in localStorage (see chatStore's partialize) and revalidated here,
     // outside the loading gate — the pickers render from the cached list immediately rather
     // than sitting empty until this round-trip lands.
-    api.listModels().then(res => setModels(res.models)).catch(() => { /* keep the cached list */ })
-  }, [auth.isAuthenticated, accessToken, setChats, setModels, setLoading, setUserPreferences, setProjects])
+    api.listModels().then(res => { if (!cancelled) setModels(res.models) }).catch(() => { /* keep the cached list */ })
+    return () => { cancelled = true }
+  }, [auth.isAuthenticated, accessToken, loadAttempt, setChats, setModels, setLoading, setUserPreferences, setProjects])
 
   // Auto-close sidebar on navigation (mobile)
   useEffect(() => { setSidebarOpen(false) }, [location.pathname])
@@ -102,11 +109,12 @@ function AuthedApp() {
   // Search's "Project only" toggle only makes sense when the current view is project-scoped:
   // either the project dashboard itself, or a chat that belongs to a project. Also reused by
   // the "+" buttons below to file a new chat into the same project — see
-  // docs/adr/0018-project-scoped-new-chat-entry-points.md.
+  // docs/adr/0045-simple-navigation-and-project-drafts.md.
   const projectViewMatch = /^\/p\/([^/]+)/.exec(location.pathname)
   const chatViewMatch = /^\/c\/([^/]+)/.exec(location.pathname)
   const currentChatProjectId = chatViewMatch ? chats.find(c => c.chatId === chatViewMatch[1])?.projectId : undefined
-  const contextProjectId = projectViewMatch?.[1] ?? currentChatProjectId
+  const draftProjectId = chatViewMatch?.[1] === 'new' ? new URLSearchParams(location.search).get('project') ?? undefined : undefined
+  const contextProjectId = projectViewMatch?.[1] ?? currentChatProjectId ?? draftProjectId
 
   function startNewChat() {
     setActivePanel('chats')
@@ -118,8 +126,7 @@ function AuthedApp() {
     e.preventDefault()
     document.body.style.userSelect = 'none'
     const onMove = (ev: PointerEvent) => {
-      // Subtract the 48px activity bar from the pointer position
-      const w = Math.max(180, Math.min(480, ev.clientX))
+      const w = Math.max(250, Math.min(480, ev.clientX))
       setSidebarWidth(w)
     }
     const onUp = () => {
@@ -136,7 +143,7 @@ function AuthedApp() {
   return (
     <div
       className={`layout${sidebarOpen ? ' sidebar-open' : ''}`}
-      style={{ ['--sidebar-w' as string]: `${sidebarWidth}px` }}
+      style={{ ['--sidebar-w' as string]: `${Math.max(250, sidebarWidth)}px` }}
     >
       {sidebarOpen && (
         <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />
@@ -151,6 +158,7 @@ function AuthedApp() {
       <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} projectId={contextProjectId} />
       <div className="sidebar-resizer" onPointerDown={startResize} title="Drag to resize sidebar" />
       <main className="main">
+        {loadError && <div className="error-banner" role="alert">{loadError}<button onClick={() => setLoadAttempt(v => v + 1)}>Retry</button></div>}
         <Routes>
           <Route path="/" element={<Navigate to="/c/new" replace />} />
           <Route
