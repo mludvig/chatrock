@@ -52,7 +52,7 @@ export default function ProjectsPanel() {
     <div className="project-list">{recent.map(p => <div className={`project-item${active === p.projectId ? ' active' : ''}`} key={p.projectId}>
       <Link className="project-title" to={`/p/${p.projectId}`}>{p.name}</Link>
       <ItemMenu label={`Actions for ${p.name}`}>
-        <button onClick={() => { bumpNewChatTick(); navigate(`/c/new?project=${p.projectId}`) }}>New chat in this project</button>
+        <button onClick={() => { bumpNewChatTick(); navigate(`/c/new?project=${p.projectId}`, { state: { draft: '' } }) }}>New chat in this project</button>
         <button onClick={() => navigate(`/p/${p.projectId}?settings=1`)}>Project settings</button>
         <button onClick={() => remove(p.projectId)}>Delete project</button>
       </ItemMenu>

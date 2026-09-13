@@ -530,8 +530,23 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   }, [isNew, activeChat?.modelSettings, setDraftModelSettings])
 
   useEffect(() => {
-    if (isNew && typeof location.state?.draft === 'string') setInput(location.state.draft)
-  }, [isNew, location.key, location.state])
+    if (!isNew || typeof location.state?.draft !== 'string') return
+    const content = location.state.draft
+    if (draftSaveTimerRef.current !== null) {
+      clearTimeout(draftSaveTimerRef.current)
+      draftSaveTimerRef.current = null
+    }
+    setInput(content)
+    setAttachments(previous => {
+      previous.forEach(a => { if (a.localUrl) URL.revokeObjectURL(a.localUrl) })
+      return []
+    })
+    if (content) savePersistedDraft('new', content)
+    else clearPersistedDraftIfMatches('new')
+    // Consume a project question once; reload should restore subsequent edits.
+    // See docs/adr/0045-simple-navigation-and-project-drafts.md.
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null })
+  }, [isNew, location.key, location.state, location.pathname, location.search, navigate])
 
   // Register WS event handler. Every frame carries the chatId it belongs to (see WSEvent's
   // doc comment) so a chat streaming in the background is kept fully up to date in the

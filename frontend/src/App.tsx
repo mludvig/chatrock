@@ -119,7 +119,7 @@ function AuthedApp() {
   function startNewChat() {
     setActivePanel('chats')
     bumpNewChatTick()
-    navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new')
+    navigate(contextProjectId ? `/c/new?project=${contextProjectId}` : '/c/new', { state: { draft: '' } })
   }
 
   const startResize = (e: React.PointerEvent) => {
