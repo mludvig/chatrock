@@ -28,7 +28,7 @@ export function applyChatListFilter<T extends { sensitive?: boolean; projectId?:
 // to one project (ProjectView), where an "include project chats" toggle makes no sense.
 export default function ChatListFilter({ filter, showProjectToggle = true }: { filter: ChatListFilterState; showProjectToggle?: boolean }) {
   const [open, setOpen] = useState(false)
-  const active = filter.showSensitive || filter.showProjectChats
+  const active = filter.showSensitive || (showProjectToggle && !filter.showProjectChats)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // A plain document 'click' listener also catches the SAME click that just opened this

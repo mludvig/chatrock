@@ -122,6 +122,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // before its first send instead of only via "New chat" from inside a project.
   const [draftProjectId, setDraftProjectId] = useState('')
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const [detailsTab, setDetailsTab] = useState<'settings' | 'share'>('settings')
 
   // Composer reasoning overrides are sticky within a chat session but never persisted.
   // `null` means use the saved chat/project/user default; they reset on chat switch so a
@@ -1503,7 +1504,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         {projects.length > 0 && <select className="header-project-select" aria-label="Project" title="Move chat to a project" value={isNew ? draftProjectId : activeChat?.projectId ?? ''} onChange={e => changeProject(e.target.value)}>
           <option value="">No project</option>{projects.map(p => <option value={p.projectId} key={p.projectId}>{p.name}</option>)}
         </select>}
-        {!isNew && <ItemMenu label="Chat actions"><button onClick={() => { setDetailsOpen(true); window.setTimeout(() => document.querySelector<HTMLButtonElement>('.prefs-tab[data-share]')?.click(), 0) }}>Share / export</button><button onClick={() => handleChatSettingsChange({})}>Use inherited settings</button></ItemMenu>}
+        {!isNew && <ItemMenu label="Chat actions"><button onClick={() => { setDetailsTab('share'); setDetailsOpen(true) }}>Share / export</button><button onClick={() => handleChatSettingsChange({})}>Use inherited settings</button></ItemMenu>}
         {/* Per-send controls (model, reasoning, project, Private) live in the composer
             toolbar, not here — see docs/adr/0028-composer-owns-per-send-controls.md. The header
             keeps only what identifies the chat plus the two navigational actions. */}
@@ -1516,7 +1517,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
               <FontAwesomeIcon icon={faRotate} />
             </button>
           )}
-          <button className="btn-icon" onClick={() => setDetailsOpen(true)} title="Chat details">
+          <button className="btn-icon" onClick={() => { setDetailsTab('settings'); setDetailsOpen(true) }} title="Chat details">
             <FontAwesomeIcon icon={faGear} />
           </button>
         </div>
@@ -1616,7 +1617,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         </div>
 
         {/* Scroll FABs (C2) + prev/next message nav (C3) */}
-        <div className="scroll-fabs">
+        {allMessages.length > 0 && <div className="scroll-fabs">
           <button className="scroll-fab" title="Scroll to top" onClick={scrollToTop}>
             <FontAwesomeIcon icon={faChevronUp} />
           </button>
@@ -1633,7 +1634,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           <button className="scroll-fab" title="Next message" onClick={() => stepBubble(1)}>
             ›
           </button>
-        </div>
+        </div>}
       </div>
 
       {errorMsg && (
@@ -1861,6 +1862,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
 
       <ChatDetailsDialog
         open={detailsOpen}
+        initialTab={detailsTab}
         onClose={() => setDetailsOpen(false)}
         isNew={isNew}
         chat={activeChat ?? null}
