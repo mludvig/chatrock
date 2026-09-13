@@ -3155,7 +3155,7 @@ $private-light: #ece2fa;
 .sidebar-footer, .settings-nav { display: flex; gap: 8px; padding: 10px; border-top: 1px solid $border; }
 .sidebar-footer button, .settings-nav button, .nav-back { border: 0; background: $surface2; border-radius: 8px; padding: 10px; color: $text; cursor: pointer; }
 .nav-back { margin: 8px; }
-.sidebar .projects-panel, .sidebar .project-list { overflow: visible; flex: none; }
+.sidebar .projects-panel, .sidebar .project-list { height: auto; overflow: visible; flex: none; }
 .sidebar .project-list { max-height: 30vh; overflow-y: auto; }
 .sidebar .project-item { padding: 5px 10px; }
 a.project-title, .project-chat-row a { color: inherit; text-decoration: none; min-width: 0; }
@@ -3205,3 +3205,8 @@ button, a, input, select, textarea, summary { &:focus-visible { outline: 2px sol
 }
 .unified-chat-row { display: flex; align-items: center; .chat-item-content { flex: 1; min-width: 0; color: inherit; text-decoration: none; display: flex; flex-direction: column; padding: 6px 0; } small { color: $muted; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; margin-top: 4px; } }
 .advanced-tools { padding: 12px 0; > summary { cursor: pointer; min-height: 36px; } }
+
+.sidebar-global-header { gap: 6px; cursor: default; &:hover { background: $surface; } .btn-new { width: 34px; height: 34px; background: transparent; color: $muted; border: 1px solid transparent; font-size: 16px; &:hover { background: $surface2; color: $text; border-color: $border; } } }
+.sidebar-resizer { left: var(--sidebar-w, 280px); }
+.sidebar .chat-list { overflow: visible; }
+@media (max-width: 720px) { .sidebar-global-header .btn-new { width: 40px; height: 40px; } }

@@ -21,8 +21,9 @@ Every new-chat action navigates to a draft with optional project and input text.
 Persist only on first send. Resolve user, project, chat, and per-send settings in
 that order; persist only explicit chat overrides. The primary composer mode
 retains all existing research budgets: Standard = brief, Research = extended,
-Deep research = deep. Thinking effort remains separately available in a
-disclosure, with no automatic remapping of saved preferences.
+Deep research = deep. Thinking effort remains a directly visible select showing its current value,
+with no automatic remapping of saved preferences. User feedback rejected an
+extra disclosure because it hid the selected effort and added an unnecessary click.
 
 Search opens ordinary results without creating a chat. Search by meaning is an
 explicit subsequent action using the existing model search. Current search

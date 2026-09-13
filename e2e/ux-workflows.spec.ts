@@ -90,9 +90,8 @@ test('project facts can be added and edited and files can be opened', async ({ p
     await file.getByLabel('Actions for project-reference.txt').click()
     const url = await file.getByRole('link', { name: 'Open / download file' }).getAttribute('href')
     expect(url).toMatch(/^https:/)
-    const downloaded = await page.request.get(url!)
-    expect(downloaded.ok()).toBe(true)
-    expect(await downloaded.text()).toContain('green widget')
+    const downloaded = await page.evaluate(async url => { const r = await fetch(url); if (!r.ok) throw new Error(`File download: ${r.status}`); return r.text() }, url!)
+    expect(downloaded).toContain('green widget')
     await page.reload()
     await page.getByRole('button', { name: /Knowledge/ }).click()
     await expect(page.getByText('Use metric units for this project.', { exact: true })).toBeVisible()
@@ -126,3 +125,46 @@ for (const width of [320, 390, 768, 1440]) {
     } finally { await request(page, 'DELETE', `/projects/${p.projectId}`) }
   })
 }
+
+test('recent chats remain in the visible sidebar and effort is a direct control', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 600 })
+  await openApp(page)
+  const c = await newChat(page)
+  try {
+    await request(page, 'PATCH', `/chats/${c.chatId}`, { title: 'E2E visible recent chat' })
+    await page.reload()
+    await expect(page.locator(`.chat-list a[href="/c/${c.chatId}"]`)).toBeInViewport()
+    const thinkingModel = await page.locator('.model-picker option').filter({ hasText: /Sonnet|Opus/ }).first().getAttribute('value')
+    await page.locator('.model-picker').selectOption(thinkingModel!)
+    await expect(page.getByLabel('Thinking effort', { exact: true })).toBeVisible()
+    expect(await page.getByLabel('Thinking effort', { exact: true }).inputValue()).not.toBe('')
+    const style = await page.getByTitle('Search chats and files', { exact: true }).evaluate(el => ({ color: getComputedStyle(el).color, background: getComputedStyle(el).backgroundColor }))
+    expect(style.background).toBe('rgba(0, 0, 0, 0)')
+    await page.screenshot({ path: '.screenshots/2026-09-16-sidebar-and-controls.jpg' })
+  } finally { await request(page, 'DELETE', `/chats/${c.chatId}`) }
+})
+
+test('a phone sends with the selected project model and restores the answer after reload', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openApp(page)
+  const p = await newProject(page, 'real-send')
+  let chatId: string | undefined
+  try {
+    const { models } = await request<{ models: Array<{ id: string; name: string }> }>(page, 'GET', '/models')
+    const model = models.find(m => /Haiku/.test(m.name))!.id
+    await request(page, 'PATCH', `/projects/${p.projectId}`, { defaultModel: model, instructions: 'When asked for the project code, answer GREEN_WIDGET.', modelSettings: { memoryEnabled: false, webSearchEnabled: false, browserCoreEnabled: false } })
+    await page.goto(`/c/new?project=${p.projectId}`)
+    await expect(page.locator('.model-picker')).toHaveValue(model)
+    await page.locator('.message-input').fill('What is the project code? Reply with only that code.')
+    await page.locator('.btn-send').click()
+    await expect(page).toHaveURL(/\/c\/(?!new)[a-z0-9]+/)
+    chatId = page.url().split('/c/')[1]
+    await expect(page.locator('.message.assistant')).toContainText('GREEN_WIDGET', { timeout: 90_000 })
+    await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 90_000 })
+    const saved = await request<{ model: string; projectId: string }>(page, 'GET', `/chats/${chatId}`)
+    expect(saved.model).toBe(model); expect(saved.projectId).toBe(p.projectId)
+    await page.reload()
+    await expect(page.locator('.message.assistant')).toContainText('GREEN_WIDGET')
+    await assertFits(page, '.chat-header button, .chat-header select, .composer-toolbar > *')
+  } finally { if (chatId) await request(page, 'DELETE', `/chats/${chatId}`); await request(page, 'DELETE', `/projects/${p.projectId}`) }
+})

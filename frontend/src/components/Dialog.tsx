@@ -27,7 +27,7 @@ export default function Dialog({ open, onClose, title, children }: {
   if (!open) return null
   return <div className="dialog-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
     <div ref={ref} className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
-      <div className="dialog-head"><span id={titleId} className="dialog-title">{title}</span><button className="btn-icon" onClick={onClose} title="Close">✕</button></div>
+      <div className="dialog-head"><span id={titleId} className="dialog-title">{title}</span><button className="btn-icon" onClick={onClose} title="Close" aria-label="Close">✕</button></div>
       <div className="dialog-body">{children}</div>
     </div>
   </div>

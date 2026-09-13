@@ -518,15 +518,15 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
 
   useEffect(() => {
     setCurrentChatId(chatId ?? null)
-    if (chatId && justCreatedChatIdRef.current === chatId) {
-      justCreatedChatIdRef.current = null
-    } else {
-      setComposerResearchDepth(null); setComposerThinkingEffort(null)
-    }
+    if (chatId && justCreatedChatIdRef.current === chatId) justCreatedChatIdRef.current = null
+    else { setComposerResearchDepth(null); setComposerThinkingEffort(null) }
     if (isNew) { setDraftModelSettings({}); setDraftSystemPrompt(''); setNewModel('') }
-    else setDraftModelSettings(activeChat?.modelSettings ?? {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId, isNew, newChatTick, activeChat?.modelSettings])
+  }, [chatId, isNew, newChatTick])
+
+  useEffect(() => {
+    if (!isNew) setDraftModelSettings(activeChat?.modelSettings ?? {})
+  }, [isNew, activeChat?.modelSettings, setDraftModelSettings])
 
   useEffect(() => {
     if (isNew && typeof location.state?.draft === 'string') setInput(location.state.draft)
@@ -1210,7 +1210,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
 
     if (isNew) {
       setCreatingChat(true)
-      const model = newModel || defaultModel
+      const model = newModel || projects.find(p => p.projectId === effectiveProjectId)?.defaultModel || defaultModel
       const systemPrompt = draftSystemPrompt
       const newChatId = pendingNewChatIdRef.current ?? newId()
       // Claim it immediately (not just after createChat succeeds) so viewedOrPendingChatId
@@ -1736,18 +1736,17 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             ))}
           </select>
           {currentCaps.thinking !== 'none' && effectiveThinkingEffort && (
-            <details className="composer-options"><summary>Reasoning</summary><label>Thinking effort
             <select
               className="composer-select composer-thinking-picker"
               value={effectiveThinkingEffort}
               disabled={sending || creatingChat}
-              title="Reasoning effort for this conversation session"
+              title="Thinking effort" aria-label="Thinking effort"
               onChange={e => setComposerThinkingEffort(e.target.value as ThinkingEffort)}
             >
               {(currentCaps.thinkingLevels ?? THINKING_EFFORTS).map(e => (
                 <option key={e} value={e}>{e === 'off' ? 'Off' : e.charAt(0).toUpperCase() + e.slice(1)}</option>
               ))}
-            </select></label></details>
+            </select>
           )}
           <select
             className="composer-select composer-research-picker"
