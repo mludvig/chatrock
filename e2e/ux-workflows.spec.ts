@@ -207,10 +207,17 @@ test('a phone can rerun, fork, export, and share a conversation', async ({ page,
   await openApp(page)
   const c = await newChat(page)
   const chatIds = [c.chatId]
+  let releaseChatList: () => void = () => {}
+  const chatListReady = new Promise<void>(resolve => { releaseChatList = resolve })
   try {
     await request(page, 'PATCH', `/chats/${c.chatId}`, { modelSettings: { memoryEnabled: false, webSearchEnabled: false } })
+    await page.route('**/api/chats', async route => { await chatListReady; await route.continue() })
     await page.goto(`/c/${c.chatId}`)
     await page.locator('.message-input').fill('Reply with exactly: GREEN_WIDGET')
+    await expect(page.locator('.btn-send')).toBeDisabled()
+    await page.locator('.message-input').press('Enter')
+    await expect(page.locator('.message-input')).toHaveValue('Reply with exactly: GREEN_WIDGET')
+    releaseChatList()
     await page.locator('.btn-send').click()
     await expect(page.locator('.message.assistant')).toContainText('GREEN_WIDGET', { timeout: 90_000 })
     await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 90_000 })
@@ -253,7 +260,11 @@ test('a phone can rerun, fork, export, and share a conversation', async ({ page,
     await page.getByTitle('Chat details', { exact: true }).click()
     await expect(page.locator('.prefs-tab.active')).toHaveText('Settings')
     await assertFits(page, '.dialog input, .dialog select, .dialog button')
-  } finally { for (const id of chatIds) await request(page, 'DELETE', `/chats/${id}`) }
+  } finally {
+    releaseChatList()
+    await page.unroute('**/api/chats')
+    for (const id of chatIds) await request(page, 'DELETE', `/chats/${id}`)
+  }
 })
 
 test('a phone sends with the selected project model and restores the answer after reload', async ({ page }) => {
