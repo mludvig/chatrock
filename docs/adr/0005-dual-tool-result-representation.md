@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-A tool-use round's results — especially image-bearing ones like browser screenshots — need to serve two different purposes at once: (a) get replayed back to the model in the very next round of the same agentic-loop invocation, where the Converse/Mantle APIs need inline image bytes; (b) get durably persisted to DynamoDB, where a multi-MB image blob would blow the 400KB item size limit and bloat every future read of that chat.
+A tool-use round's results — especially image-bearing ones like browser screenshots — need to serve two different purposes at once: (a) get replayed back to the model in the very next round of the same agentic-loop invocation, where the Converse/Responses APIs need inline image bytes; (b) get durably persisted to DynamoDB, where a multi-MB image blob would blow the 400KB item size limit and bloat every future read of that chat.
 
 Alternatives considered:
 
