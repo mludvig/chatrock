@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [0048](0048-openai-models-on-bedrock-runtime.md)
 
 ## Context
 

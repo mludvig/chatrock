@@ -113,7 +113,7 @@ export interface Message {
 export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
 
 export interface ModelCapabilities {
-  provider: 'bedrock-converse' | 'bedrock-mantle'
+  provider: 'bedrock-converse' | 'bedrock-responses'
   thinking: 'adaptive' | 'effort' | 'none'
   thinkingLevels?: ThinkingEffort[]
   attachments: boolean

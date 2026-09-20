@@ -7,9 +7,9 @@
 import type { ChatProvider } from './types'
 import { getCapabilities } from '../../config/models'
 import { bedrockConverseProvider } from './providers/bedrockConverse'
-import { bedrockMantleProvider } from './providers/bedrockMantle'
+import { bedrockResponsesProvider } from './providers/bedrockResponses'
 
-export const CHAT_PROVIDERS: ChatProvider[] = [bedrockConverseProvider, bedrockMantleProvider]
+export const CHAT_PROVIDERS: ChatProvider[] = [bedrockConverseProvider, bedrockResponsesProvider]
 
 export function getProvider(modelId: string): ChatProvider {
   const providerId = getCapabilities(modelId).provider

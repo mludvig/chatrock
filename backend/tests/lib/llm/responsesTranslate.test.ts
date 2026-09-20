@@ -1,8 +1,8 @@
 import type { ResponseOutputItem } from 'openai/resources/responses/responses'
-import { toNeutral, fromNeutralMessages } from '../../../src/lib/llm/providers/mantleTranslate'
+import { toNeutral, fromNeutralMessages } from '../../../src/lib/llm/providers/responsesTranslate'
 import { encodeOpaque, type Block, type NeutralMessage } from '../../../src/lib/llm/blocks'
 
-describe('mantleTranslate: toNeutral (output items -> Block[])', () => {
+describe('responsesTranslate: toNeutral (output items -> Block[])', () => {
   test('message item with output_text becomes a text block', () => {
     const items = [
       { type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'hello', annotations: [] }] },
@@ -25,7 +25,7 @@ describe('mantleTranslate: toNeutral (output items -> Block[])', () => {
     expect(neutral).toHaveLength(1)
     expect(neutral[0]).toMatchObject({ kind: 'thinking', text: 'thinking about it' })
     const opaque = (neutral[0] as Extract<Block, { kind: 'thinking' }>).opaque!
-    expect(opaque.provider).toBe('bedrock-mantle')
+    expect(opaque.provider).toBe('bedrock-responses')
   })
 
   test('reasoning item with empty summary still carries opaque (id-only continuity)', () => {
@@ -33,7 +33,7 @@ describe('mantleTranslate: toNeutral (output items -> Block[])', () => {
       { type: 'reasoning', id: 'rs_xyz', summary: [] },
     ] as unknown as ResponseOutputItem[]
     const neutral = toNeutral(items)
-    expect(neutral).toEqual([{ kind: 'thinking', text: '', opaque: expect.objectContaining({ provider: 'bedrock-mantle' }) }])
+    expect(neutral).toEqual([{ kind: 'thinking', text: '', opaque: expect.objectContaining({ provider: 'bedrock-responses' }) }])
   })
 
   test('function_call item becomes a tool_call block, arguments JSON-parsed', () => {
@@ -69,7 +69,7 @@ describe('mantleTranslate: toNeutral (output items -> Block[])', () => {
   })
 })
 
-describe('mantleTranslate: fromNeutralMessages (NeutralMessage[] -> flat input items)', () => {
+describe('responsesTranslate: fromNeutralMessages (NeutralMessage[] -> flat input items)', () => {
   test('user text message -> one message item with input_text', () => {
     const messages: NeutralMessage[] = [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }]
     expect(fromNeutralMessages(messages)).toEqual([
@@ -139,7 +139,7 @@ describe('mantleTranslate: fromNeutralMessages (NeutralMessage[] -> flat input i
   })
 
   test('thinking block with our own opaque round-trips to a reasoning item', () => {
-    const opaque = encodeOpaque('bedrock-mantle', { id: 'rs_1', encryptedContent: 'ENC' })
+    const opaque = encodeOpaque('bedrock-responses', { id: 'rs_1', encryptedContent: 'ENC' })
     const messages: NeutralMessage[] = [
       { role: 'assistant', content: [{ kind: 'thinking', text: 'plan', opaque }] },
     ]
@@ -201,7 +201,7 @@ describe('mantleTranslate: fromNeutralMessages (NeutralMessage[] -> flat input i
   })
 })
 
-describe('mantleTranslate: round-trip (toNeutral then fromNeutralMessages)', () => {
+describe('responsesTranslate: round-trip (toNeutral then fromNeutralMessages)', () => {
   test('a full round-trips text + reasoning + tool_call through both directions', () => {
     const items = [
       { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'plan' }], encrypted_content: 'ENC' },

@@ -4,8 +4,8 @@ import type { ModelSettings } from '../../config/models'
 
 // ── Stream chunk types sent back over WebSocket ───────────────────────────────
 //
-// Provider-agnostic: every ChatProvider (bedrock-converse today, bedrock-mantle
-// later) yields this same shape from streamTurn(), and ws/sendMessage.ts only
+// Provider-agnostic: every ChatProvider (bedrock-converse, bedrock-responses)
+// yields this same shape from streamTurn(), and ws/sendMessage.ts only
 // ever sees this union — never a provider's native wire events.
 
 export type StreamChunk =

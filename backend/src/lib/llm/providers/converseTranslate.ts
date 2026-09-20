@@ -1,6 +1,6 @@
 // Pure Block[] <-> Bedrock Converse ContentBlock[] translation. No I/O, no SDK calls —
 // just the two directions. Kept separate from bedrockConverse.ts (which owns the wire
-// protocol) so it's trivially unit-testable and so its counterpart, mantleTranslate.ts,
+// protocol) so it's trivially unit-testable and so its counterpart, responsesTranslate.ts,
 // has an obvious sibling to mirror.
 import type { ContentBlock, ToolResultContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'

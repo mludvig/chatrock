@@ -1,7 +1,7 @@
 // Neutral tool descriptor + result — plain JSON Schema, no Bedrock/OpenAI wire shape.
 // Each provider lowers ToolSpec[] to its own tool-declaration format:
 //   Converse: { toolSpec: { name, description, inputSchema: { json } } } + trailing cachePoint
-//   Mantle:   { type: 'function', name, description, parameters, strict: false }
+//   Responses: { type: 'function', name, description, parameters, strict: false }
 
 export interface ToolSpec {
   name: string

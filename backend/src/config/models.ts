@@ -7,14 +7,13 @@ export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'
 export interface ModelCapabilities {
   provider: ProviderId
   // 'adaptive' = Bedrock Converse's thinking.type=adaptive + output_config.effort (Anthropic);
-  // 'effort' = a plain reasoning.effort dial (e.g. Bedrock Mantle/OpenAI); 'none' = unsupported.
+  // 'effort' = a plain reasoning.effort dial (e.g. OpenAI via Bedrock Responses); 'none' = unsupported.
   thinking: 'adaptive' | 'effort' | 'none'
   // Which of ThinkingEffort's five levels this model accepts. Omit -> all five.
   thinkingLevels?: ThinkingEffort[]
   attachments: boolean                           // images
   documents: boolean                             // pdf/txt/csv/md
   promptCaching: 'auto' | 'explicit' | 'none'
-  region?: string                                // per-model region pin; undefined -> bedrockRegion()
   maxOutputTokens?: number
 }
 
@@ -65,50 +64,46 @@ export const MODELS: Model[] = [
     name: 'Claude Haiku 4.5',
     capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
-  // Bedrock Mantle (OpenAI Responses API) — no cross-region inference profile, no
-  // ap-southeast-2 availability as of Aug 2026: pinned to us-east-1 (see backend/CLAUDE.md's
-  // "LLM providers" section). Always reasons (no 'off' level) — thinkingLevels omits it.
-  // GPT-6 Astra is the one exception: confirmed 404 on the Mantle data plane in
-  // us-east-1/us-east-2 despite being listed there by ListFoundationModels — only
-  // us-west-2 actually serves it (verified via backend/scripts/mantle-spike.mjs).
+  // OpenAI GPT via the Responses API on bedrock-runtime (docs/adr/0048-openai-models-on-bedrock-runtime.md).
+  // Always reasons (no 'off' level) — thinkingLevels omits it.
   {
-    id: 'openai.gpt-6-astra',
+    id: 'global.openai.gpt-6-astra',
     name: 'GPT-6 Astra',
     capabilities: {
-      provider: 'bedrock-mantle',
+      provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
-      region: 'us-west-2', maxOutputTokens: 16000,
+      maxOutputTokens: 16000,
     },
   },
   {
-    id: 'openai.gpt-5.6-sol',
+    id: 'global.openai.gpt-5.6-sol',
     name: 'GPT-5.6 Sol',
     capabilities: {
-      provider: 'bedrock-mantle',
+      provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
-      region: 'us-east-1', maxOutputTokens: 16000,
+      maxOutputTokens: 16000,
     },
   },
   {
-    id: 'openai.gpt-5.6-terra',
+    id: 'global.openai.gpt-5.6-terra',
     name: 'GPT-5.6 Terra',
     capabilities: {
-      provider: 'bedrock-mantle',
+      provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
-      region: 'us-east-1', maxOutputTokens: 16000,
+      maxOutputTokens: 16000,
     },
   },
   {
-    id: 'openai.gpt-5.6-luna',
+    id: 'global.openai.gpt-5.6-luna',
     name: 'GPT-5.6 Luna',
     capabilities: {
-      provider: 'bedrock-mantle',
+      provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
-      region: 'us-east-1', maxOutputTokens: 16000,
+      maxOutputTokens: 16000,
     },
   },
   // xAI Grok 4.6 via Bedrock Converse. Verified live against ap-southeast-2 Aug 2026:

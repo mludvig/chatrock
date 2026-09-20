@@ -13,7 +13,7 @@ jest.mock('openai/providers/bedrock/aws', () => ({
 }))
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { bedrockMantleProvider } = require('../../../src/lib/llm/providers/bedrockMantle')
+const { bedrockResponsesProvider } = require('../../../src/lib/llm/providers/bedrockResponses')
 
 async function* fakeStream(events: unknown[]) {
   for (const e of events) yield e
@@ -35,22 +35,22 @@ beforeEach(() => {
   mockCreate.mockReset()
 })
 
-describe('bedrockMantle.streamTurn', () => {
+describe('bedrockResponses.streamTurn', () => {
   test('basic text streaming builds correct StreamChunks and TurnResult', async () => {
     const response = {
       status: 'completed',
-      output_text: 'Hello from Mantle',
-      output: [{ type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Hello from Mantle', annotations: [] }] }],
+      output_text: 'Hello from GPT',
+      output: [{ type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'Hello from GPT', annotations: [] }] }],
       usage: { input_tokens: 20, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 }, output_tokens: 5, output_tokens_details: {}, total_tokens: 25 },
     }
     mockCreate.mockResolvedValue(fakeStream([
       { type: 'response.output_text.delta', delta: 'Hello ' },
-      { type: 'response.output_text.delta', delta: 'from Mantle' },
+      { type: 'response.output_text.delta', delta: 'from GPT' },
       { type: 'response.completed', response },
     ]))
 
-    const gen = bedrockMantleProvider.streamTurn({
-      modelId: 'openai.gpt-5.6-terra',
+    const gen = bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-5.6-terra',
       systemPrompt: 'be helpful',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }],
       tools: [],
@@ -61,19 +61,19 @@ describe('bedrockMantle.streamTurn', () => {
 
     expect(chunks).toEqual([
       { type: 'delta', text: 'Hello ' },
-      { type: 'delta', text: 'from Mantle' },
+      { type: 'delta', text: 'from GPT' },
     ])
     expect(result).toMatchObject({
       stopReason: 'end_turn',
-      textContent: 'Hello from Mantle',
+      textContent: 'Hello from GPT',
       toolUses: [],
-      content: [{ kind: 'text', text: 'Hello from Mantle' }],
+      content: [{ kind: 'text', text: 'Hello from GPT' }],
       usage: { inputTokens: 20, outputTokens: 5 },
     })
 
     // instructions/store:false/stream:true are always sent
     const params = mockCreate.mock.calls[0][0]
-    expect(params.model).toBe('openai.gpt-5.6-terra')
+    expect(params.model).toBe('global.openai.gpt-5.6-terra')
     expect(params.instructions).toBe('be helpful')
     expect(params.store).toBe(false)
     expect(params.stream).toBe(true)
@@ -97,8 +97,8 @@ describe('bedrockMantle.streamTurn', () => {
       { type: 'response.completed', response },
     ]))
 
-    const gen = bedrockMantleProvider.streamTurn({
-      modelId: 'openai.gpt-5.6-terra',
+    const gen = bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-5.6-terra',
       systemPrompt: '',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'What is 7*8?' }] }],
       tools: [],
@@ -138,8 +138,8 @@ describe('bedrockMantle.streamTurn', () => {
     }
     mockCreate.mockResolvedValue(fakeStream([{ type: 'response.completed', response }]))
 
-    const { result } = await drain(bedrockMantleProvider.streamTurn({
-      modelId: 'openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'max' }, cacheBoundaryIndex: -1,
+    const { result } = await drain(bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'max' }, cacheBoundaryIndex: -1,
     }))
 
     expect(result.content[0]).toEqual({ kind: 'thinking', text: 'deep thought' })
@@ -151,8 +151,8 @@ describe('bedrockMantle.streamTurn', () => {
     mockCreate.mockResolvedValue(fakeStream([
       { type: 'response.completed', response: { status: 'completed', output_text: 'ok', output: [], usage: undefined } },
     ]))
-    await drain(bedrockMantleProvider.streamTurn({
-      modelId: 'openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'off' }, cacheBoundaryIndex: -1,
+    await drain(bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'off' }, cacheBoundaryIndex: -1,
     }))
     const params = mockCreate.mock.calls[0][0]
     expect(params.reasoning).toBeUndefined()
@@ -168,8 +168,8 @@ describe('bedrockMantle.streamTurn', () => {
       { type: 'response.completed', response },
     ]))
 
-    const gen = bedrockMantleProvider.streamTurn({
-      modelId: 'openai.gpt-5.6-terra',
+    const gen = bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-5.6-terra',
       systemPrompt: '',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'search for x' }] }],
       tools: [{ name: 'web_search', description: 'search', inputSchema: { type: 'object', properties: {} } }],
@@ -193,8 +193,8 @@ describe('bedrockMantle.streamTurn', () => {
     mockCreate.mockResolvedValue(fakeStream([
       { type: 'response.completed', response: { status: 'completed', output_text: '', output: [], usage: undefined } },
     ]))
-    await drain(bedrockMantleProvider.streamTurn({
-      modelId: 'openai.gpt-5.6-terra',
+    await drain(bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-5.6-terra',
       systemPrompt: '',
       messages: [],
       tools: [{ name: 'search_history', description: 'x', inputSchema: {} }],
@@ -212,20 +212,20 @@ describe('bedrockMantle.streamTurn', () => {
       { type: 'response.output_text.delta', delta: 'partial' },
       { type: 'response.incomplete', response },
     ]))
-    const { result } = await drain(bedrockMantleProvider.streamTurn({
-      modelId: 'openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: {}, cacheBoundaryIndex: -1,
+    const { result } = await drain(bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: {}, cacheBoundaryIndex: -1,
     }))
     expect(result.stopReason).toBe('max_tokens')
   })
 })
 
-describe('bedrockMantle.sanitizeHistory', () => {
+describe('bedrockResponses.sanitizeHistory', () => {
   test('drops thinking blocks with foreign (bedrock-converse) opaque', () => {
     const opaque = encodeOpaque('bedrock-converse', { signature: 'sig' })
     const messages: NeutralMessage[] = [
       { role: 'assistant', content: [{ kind: 'thinking', text: 'claude thought', opaque }, { kind: 'text', text: 'answer' }] },
     ]
-    const sanitized = bedrockMantleProvider.sanitizeHistory(messages)
+    const sanitized = bedrockResponsesProvider.sanitizeHistory(messages)
     expect(sanitized).toEqual([{ role: 'assistant', content: [{ kind: 'text', text: 'answer' }] }])
   })
 
@@ -234,7 +234,7 @@ describe('bedrockMantle.sanitizeHistory', () => {
       { role: 'user', content: [{ kind: 'text', text: 'Q' }] },
       { role: 'user', content: [{ kind: 'text', text: 'continue' }] },
     ]
-    const sanitized = bedrockMantleProvider.sanitizeHistory(messages)
+    const sanitized = bedrockResponsesProvider.sanitizeHistory(messages)
     expect(sanitized).toEqual([{ role: 'user', content: [{ kind: 'text', text: 'Q' }, { kind: 'text', text: 'continue' }] }])
   })
 
@@ -243,7 +243,7 @@ describe('bedrockMantle.sanitizeHistory', () => {
       { role: 'user', content: [{ kind: 'text', text: 'Q' }] },
       { role: 'assistant', content: [{ kind: 'tool_call', callId: 'call_1', name: 'web_search', input: {} }] },
     ]
-    const sanitized = bedrockMantleProvider.sanitizeHistory(messages)
+    const sanitized = bedrockResponsesProvider.sanitizeHistory(messages)
     expect(sanitized).toHaveLength(3)
     expect(sanitized[2]).toEqual({
       role: 'user',
@@ -252,20 +252,20 @@ describe('bedrockMantle.sanitizeHistory', () => {
   })
 
   test('is a no-op for a well-formed alternating history with our own thinking blocks', () => {
-    const opaque = encodeOpaque('bedrock-mantle', { id: 'rs_1' })
+    const opaque = encodeOpaque('bedrock-responses', { id: 'rs_1' })
     const messages: NeutralMessage[] = [
       { role: 'user', content: [{ kind: 'text', text: 'Q' }] },
       { role: 'assistant', content: [{ kind: 'thinking', text: 'plan', opaque }, { kind: 'text', text: 'A' }] },
     ]
-    expect(bedrockMantleProvider.sanitizeHistory(messages)).toEqual(messages)
+    expect(bedrockResponsesProvider.sanitizeHistory(messages)).toEqual(messages)
   })
 })
 
-describe('bedrockMantle.once', () => {
+describe('bedrockResponses.once', () => {
   test('returns trimmed output_text, sends store:false', async () => {
     mockCreate.mockResolvedValue({ output_text: '  Paris  ' })
-    const result = await bedrockMantleProvider.once({
-      modelId: 'openai.gpt-5.6-terra',
+    const result = await bedrockResponsesProvider.once({
+      modelId: 'global.openai.gpt-5.6-terra',
       systemPrompt: 'Answer concisely.',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'capital of France?' }] }],
       maxTokens: 32,
@@ -275,5 +275,19 @@ describe('bedrockMantle.once', () => {
     expect(params.store).toBe(false)
     expect(params.max_output_tokens).toBe(32)
     expect(params.stream).toBeUndefined()
+  })
+})
+
+describe('bedrockResponses client', () => {
+  test('targets the bedrock-runtime endpoint in the backend region', async () => {
+    mockCreate.mockResolvedValue({ output_text: 'ok' })
+    await bedrockResponsesProvider.once({
+      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '',
+      messages: [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }],
+    })
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { bedrock } = require('openai/providers/bedrock/aws')
+    expect(bedrock).toHaveBeenCalledTimes(1)
+    expect(bedrock.mock.calls[0][0]).toEqual(expect.objectContaining({ endpoint: 'runtime', region: 'ap-southeast-2' }))
   })
 })

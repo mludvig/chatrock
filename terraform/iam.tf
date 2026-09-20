@@ -62,23 +62,11 @@ data "aws_iam_policy_document" "lambda_policy" {
       "arn:aws:bedrock:${var.aws_region}::foundation-model/*",
       "arn:aws:bedrock:*::foundation-model/*",
       "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+      # OpenAI-compatible endpoints on bedrock-runtime (lib/llm/providers/bedrockResponses.ts)
+      # also authorize against the account's default project.
+      # See docs/adr/0048-openai-models-on-bedrock-runtime.md.
+      "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:project/default",
     ]
-  }
-
-  # Bedrock Mantle (OpenAI Responses API, lib/llm/providers/bedrockMantle.ts) signs as a
-  # distinct service (`bedrock-mantle`, not `bedrock`) with its own action namespace and
-  # resource type — NOT the foundation-model/inference-profile ARNs above. Action + resource
-  # ARN confirmed empirically from a real AccessDeniedException (not guessed — the SDK gives
-  # no documented IAM reference for this as of Aug 2026): "arn:aws:bedrock-mantle:<region>:
-  # <account>:project/default" is a fixed per-account "default" project, not per-model.
-  # Region wildcarded since Mantle models are pinned to specific regions independent of the
-  # backend's own region (see config/models.ts's per-model `region`), and IAM has no notion
-  # of "every region a model happens to be pinned to" short of listing them all by hand.
-  # See docs/adr/0010-bedrock-mantle-distinct-iam-signing-service.md.
-  statement {
-    sid       = "InvokeBedrockMantle"
-    actions   = ["bedrock-mantle:CreateInference"]
-    resources = ["arn:aws:bedrock-mantle:*:${data.aws_caller_identity.current.account_id}:project/default"]
   }
 
   statement {
