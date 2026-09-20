@@ -29,7 +29,7 @@ describe('converseTranslate: toNeutral / fromNeutral round-trip', () => {
   })
 
   test('thinking block with foreign opaque is dropped on fromNeutral', () => {
-    const neutral: Block[] = [{ kind: 'thinking', text: 'gpt reasoning', opaque: { provider: 'bedrock-mantle', v: 1, data: 'xxx' } }]
+    const neutral: Block[] = [{ kind: 'thinking', text: 'gpt reasoning', opaque: { provider: 'bedrock-responses', v: 1, data: 'xxx' } }]
     expect(fromNeutral(neutral)).toEqual([])
   })
 

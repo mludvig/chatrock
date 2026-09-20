@@ -1,7 +1,7 @@
-// Pure Block[]/NeutralMessage[] <-> Bedrock Mantle (OpenAI Responses API) item[]
+// Pure Block[]/NeutralMessage[] <-> Bedrock Responses (OpenAI Responses API) item[]
 // translation. No I/O, no SDK client calls — just the two directions, mirroring
 // converseTranslate.ts's role for the Converse provider. Kept separate from
-// bedrockMantle.ts (which owns the wire protocol / streaming) so it's trivially
+// bedrockResponses.ts (which owns the wire protocol / streaming) so it's trivially
 // unit-testable.
 //
 // Structural difference from converseTranslate: Converse's ContentBlock[] nests
@@ -11,9 +11,9 @@
 // translation from the neutral format operates on the whole NeutralMessage[]
 // array (fromNeutralMessages), not per-message like Converse's fromNeutralMessage.
 //
-// See backend/scripts/mantle-spike.mjs for the empirically-confirmed wire shapes
-// this maps onto (SSE event names, call_id round-tripping, reasoning encrypted
-// payload sizes).
+// See docs/adr/0048-openai-models-on-bedrock-runtime.md for the empirically-confirmed
+// wire shapes this maps onto (SSE event names, call_id round-tripping, reasoning
+// encrypted payload sizes).
 import type { ResponseInputItem, ResponseOutputItem, ResponseInputContent } from 'openai/resources/responses/responses'
 import {
   type Block, type NeutralMessage, type MediaSource, type DocumentFormat,
@@ -21,7 +21,7 @@ import {
   encodeOpaque, decodeOpaque,
 } from '../blocks'
 
-interface MantleReasoning {
+interface ResponsesReasoning {
   id: string
   encryptedContent?: string
 }
@@ -62,10 +62,10 @@ export function toNeutral(items: ResponseOutputItem[]): Block[] {
       out.push({
         kind: 'thinking',
         text,
-        opaque: encodeOpaque('bedrock-mantle', {
+        opaque: encodeOpaque('bedrock-responses', {
           id: item.id,
           ...(item.encrypted_content ? { encryptedContent: item.encrypted_content } : {}),
-        } satisfies MantleReasoning),
+        } satisfies ResponsesReasoning),
       })
     } else if (item.type === 'function_call') {
       out.push({
@@ -130,9 +130,9 @@ export function fromNeutralMessages(messages: NeutralMessage[]): ResponseInputIt
         case 'thinking': {
           flush()
           // Foreign/absent opaque -> drop (defense in depth; sanitizeHistory in
-          // bedrockMantle.ts is the primary filter run before this).
-          if (!block.opaque || block.opaque.provider !== 'bedrock-mantle') break
-          const { id, encryptedContent } = decodeOpaque<MantleReasoning>(block.opaque)
+          // bedrockResponses.ts is the primary filter run before this).
+          if (!block.opaque || block.opaque.provider !== 'bedrock-responses') break
+          const { id, encryptedContent } = decodeOpaque<ResponsesReasoning>(block.opaque)
           out.push({
             type: 'reasoning',
             id,

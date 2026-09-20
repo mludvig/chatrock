@@ -5,7 +5,7 @@
 // OpenAI-shaped — every provider's adapter translates to/from this at its own
 // boundary. See backend/CLAUDE.md's "LLM providers" section for the design.
 
-export type ProviderId = 'bedrock-converse' | 'bedrock-mantle'
+export type ProviderId = 'bedrock-converse' | 'bedrock-responses'
 
 /** Where binary content lives. `s3Uri` is the at-rest form; `bytes` is the
  *  hydrated/live form used only in-memory right before a provider call. */
@@ -46,7 +46,7 @@ export interface Opaque {
 export interface ThinkingBlock {
   kind: 'thinking'
   /** Human-visible reasoning. Bedrock Converse: the thinking text. Bedrock
-   *  Mantle: the reasoning summary (may be empty even when opaque is present —
+   *  Responses: the reasoning summary (may be empty even when opaque is present —
    *  reasoning continuity does not depend on a visible summary existing). */
   text: string
   redacted?: boolean
