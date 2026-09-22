@@ -24,6 +24,8 @@ import {
 interface ResponsesReasoning {
   id: string
   encryptedContent?: string
+  // The model that produced this reasoning — the only one that can decrypt it.
+  model?: string
 }
 
 // ── media helpers ────────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ const INLINE_TEXT_DOCUMENT_FORMATS: DocumentFormat[] = ['txt', 'md', 'csv']
 
 // ── output items (one round's result) -> neutral ────────────────────────────
 
-export function toNeutral(items: ResponseOutputItem[]): Block[] {
+export function toNeutral(items: ResponseOutputItem[], modelId: string): Block[] {
   const out: Block[] = []
   for (const item of items) {
     if (item.type === 'message') {
@@ -68,6 +70,7 @@ export function toNeutral(items: ResponseOutputItem[]): Block[] {
         opaque: encodeOpaque('bedrock-responses', {
           id: item.id,
           ...(item.encrypted_content ? { encryptedContent: item.encrypted_content } : {}),
+          model: modelId,
         } satisfies ResponsesReasoning),
       })
     } else if (item.type === 'function_call') {
@@ -97,7 +100,7 @@ function toolResultOutput(entries: NeutralToolResultEntry[]): string | Array<{ t
     : { type: 'input_image' as const, detail: 'auto' as const, image_url: mediaSourceToDataUrl(e.image.source, `image/${e.image.format}`) })
 }
 
-export function fromNeutralMessages(messages: NeutralMessage[]): ResponseInputItem[] {
+export function fromNeutralMessages(messages: NeutralMessage[], modelId: string): ResponseInputItem[] {
   const out: ResponseInputItem[] = []
 
   for (const msg of messages) {
@@ -135,7 +138,10 @@ export function fromNeutralMessages(messages: NeutralMessage[]): ResponseInputIt
           // Foreign/absent opaque -> drop (defense in depth; sanitizeHistory in
           // bedrockResponses.ts is the primary filter run before this).
           if (!block.opaque || block.opaque.provider !== 'bedrock-responses') break
-          const { id, encryptedContent } = decodeOpaque<ResponsesReasoning>(block.opaque)
+          const { id, encryptedContent, model } = decodeOpaque<ResponsesReasoning>(block.opaque)
+          // Reasoning replays only to the model that produced it; any other model rejects it
+          // (see docs/adr/0052-encrypted-reasoning-replays-only-to-its-own-model.md).
+          if (model !== modelId) break
           out.push({
             type: 'reasoning',
             id,
