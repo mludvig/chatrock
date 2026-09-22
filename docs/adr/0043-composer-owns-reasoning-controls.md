@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-09-16)
+Accepted (2026-09-16). The session-only scope of the composer overrides is superseded by
+[0049](0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md).
 
 ## Context
 

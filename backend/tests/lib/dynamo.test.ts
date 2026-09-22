@@ -4,7 +4,7 @@ import {
   buildChatKey, buildMsgKey, buildConnKey, buildTurnKey, ddb, listMessages,
   buildUserPrefKey, getUserPrefs, putUserPrefs,
   buildUserMemKey, listUserMemories, putUserMemory, deleteUserMemory,
-  updateChatSummary, updateProjectMemory, migrateChatModel,
+  updateChatSummary, updateProjectMemory, recordChatSend,
 } from '../../src/lib/dynamo'
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb'
 
@@ -256,17 +256,19 @@ test('updateChatSummary is a no-op (no ddb call) when neither field is provided'
   expect(mockSend).not.toHaveBeenCalled()
 })
 
-// ── migrateChatModel ─────────────────────────────────────────────────────────
+// ── recordChatSend ───────────────────────────────────────────────────────────
 
-test('migrateChatModel swaps the model without touching updatedAt', async () => {
+test('recordChatSend sets lastMessageAt, model and modelSettings', async () => {
   mockSend.mockResolvedValueOnce({})
-  await migrateChatModel('sub1', 'chat1', 'global.anthropic.claude-sonnet-5')
+  await recordChatSend('sub1', 'chat1', 'global.openai.gpt-6-astra', { thinkingEffort: 'medium' })
 
   const call = mockSend.mock.calls[0][0]
   expect(call).toBeInstanceOf(UpdateCommand)
   expect(call.input.Key).toEqual({ PK: 'USER#sub1', SK: 'CHAT#chat1' })
-  expect(call.input.UpdateExpression).toBe('SET #m = :m')
-  expect(call.input.ExpressionAttributeValues).toEqual({ ':m': 'global.anthropic.claude-sonnet-5' })
+  expect(call.input.UpdateExpression).toBe('SET lastMessageAt = :t, #m = :m, modelSettings = :ms')
+  expect(call.input.ExpressionAttributeValues[':m']).toBe('global.openai.gpt-6-astra')
+  expect(call.input.ExpressionAttributeValues[':ms']).toEqual({ thinkingEffort: 'medium' })
+  expect(() => new Date(call.input.ExpressionAttributeValues[':t']).toISOString()).not.toThrow()
 })
 
 // ── updateProjectMemory ──────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, uploadToS3, type ModelSettings, type ProjectFile, type ProjectMemory } from '../api/http'
 import { useChatStore } from '../store/chatStore'
-import { sortByRecent } from '../lib/sort'
+import { lastActivity, sortByRecent } from '../lib/sort'
 import { useSaveStatus } from '../lib/useSaveStatus'
 import Dialog from './Dialog'
 import ProjectDetailsDialog from './ProjectDetailsDialog'
@@ -162,7 +162,7 @@ export default function ProjectView({ onOpenSidebar }: { onOpenSidebar: () => vo
       {tab === 'chats' ? <section className="project-section">
         <div className="section-toolbar"><input className="search-field" aria-label="Filter project chats" placeholder="Filter chats…" value={query} onChange={e => setQuery(e.target.value)} /><button className="btn-action" onClick={() => setAddChats(true)}>Add existing chats</button><PrivateChatToggle visible={showPrivate} onToggle={() => setShowPrivate(v => !v)} /></div>
         {!loading && !matchingChats.length && <p className="panel-empty">No chats here yet. Start a conversation or add an existing chat.</p>}
-        {matchingChats.map(c => <div key={c.chatId} className="chat-item project-chat-row"><Link className="chat-item-content" to={`/c/${c.chatId}`}><strong>{c.sensitive ? 'Private chat' : c.title}</strong>{!c.sensitive && c.summary && <span className="chat-summary">{c.summary}</span>}<small>{new Date(c.updatedAt).toLocaleDateString()}</small></Link><ItemMenu label={`Actions for ${c.title}`}><button onClick={() => action(async () => { await api.moveChatToProject(c.chatId, null); updateChatProjectId(c.chatId, null) })}>Remove from project</button><button onClick={() => navigate(`/c/${c.chatId}`)}>Open chat</button></ItemMenu></div>)}
+        {matchingChats.map(c => <div key={c.chatId} className="chat-item project-chat-row"><Link className="chat-item-content" to={`/c/${c.chatId}`}><strong>{c.sensitive ? 'Private chat' : c.title}</strong>{!c.sensitive && c.summary && <span className="chat-summary">{c.summary}</span>}<small>{new Date(lastActivity(c)).toLocaleDateString()}</small></Link><ItemMenu label={`Actions for ${c.title}`}><button onClick={() => action(async () => { await api.moveChatToProject(c.chatId, null); updateChatProjectId(c.chatId, null) })}>Remove from project</button><button onClick={() => navigate(`/c/${c.chatId}`)}>Open chat</button></ItemMenu></div>)}
       </section> : <div className="knowledge-sections">
         <section className="project-section"><div className="project-section-header">Instructions<button className="btn-action" onClick={() => setDetails(true)}>Edit</button></div><p className="knowledge-instructions">{project?.instructions || 'Tell the assistant how to work in this project. Instructions apply to every chat.'}</p></section>
         <section className="project-section" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); Array.from(e.dataTransfer.files).forEach(f => void upload(f)) }}>

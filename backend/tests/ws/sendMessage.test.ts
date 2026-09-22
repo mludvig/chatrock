@@ -30,6 +30,7 @@ jest.mock('../../src/lib/dynamo', () => ({
   putMessagePair: jest.fn(),
   updateChatTitle: jest.fn(),
   updateChatActiveLeaf: jest.fn(),
+  recordChatSend: jest.fn().mockResolvedValue(undefined),
   isStreamCancelled: jest.fn().mockResolvedValue(false),
   clearStreamCancel: jest.fn().mockResolvedValue(undefined),
   getUserPrefs: jest.fn().mockResolvedValue({}),
@@ -406,6 +407,38 @@ test('sends error event for COMPLETELY_FAKE_EXPENSIVE_MODEL', async () => {
 
   const errEvent = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>).find(d => d.type === 'error')
   expect(errEvent).toMatchObject({ type: 'error', message: 'Invalid model' })
+})
+
+// ── Submit is what persists the chat's model/effort/depth and its sort key ─────
+// See docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md.
+
+test('send records lastMessageAt, the model, and the composer effort/depth on the chat', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-sonnet-5', systemPrompt: '', title: 'T', activeLeafId: null, modelSettings: { webSearchEnabled: false, thinkingEffort: 'low' } })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'ok' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-opus-5', systemPrompt: '',
+    modelSettings: { thinkingEffort: 'medium', researchDepth: 'extended', webSearchEnabled: true, memoryEnabled: true },
+  }))
+
+  // Only effort/depth are merged into the stored overrides — the other sent values are
+  // resolved prefs/project defaults, and must not be baked into the chat as overrides.
+  expect(mockDynamo.recordChatSend).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-opus-5',
+    { webSearchEnabled: false, thinkingEffort: 'medium', researchDepth: 'extended' })
+})
+
+test('an invalid model is rejected without recording anything on the chat', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'openai.gpt-6-astra', systemPrompt: '' }))
+  expect(mockDynamo.recordChatSend).not.toHaveBeenCalled()
 })
 
 // ── Slice 2 (Inc 2): tree data model — msgId / parentId / activeLeafId ────────
@@ -1697,6 +1730,19 @@ test('cont1: continue does NOT persist a new user turn', async () => {
     .map(c => c[0] as Record<string, unknown>)
     .filter(r => r.role === 'user')
   expect(userPuts).toHaveLength(0)
+})
+
+test('cont: a "Go deeper" continue records effort but not its one-off research depth', async () => {
+  continueBase()
+  async function* fakeStream() {
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'deeper' }], turnIndex: 0 }
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(continueEvent({ modelSettings: { thinkingEffort: 'high', researchDepth: 'deep' } }))
+
+  expect(mockDynamo.recordChatSend).toHaveBeenCalledWith('user-1', 'c1', MODEL, { thinkingEffort: 'high' })
 })
 
 test('cont2: continue new assistant turn parentId === the leaf msgId (child, not sibling)', async () => {

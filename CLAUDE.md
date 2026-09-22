@@ -84,7 +84,7 @@ Browser → CloudFront (single distribution, custom domain)
 ### DynamoDB single-table
 
 Why one table instead of one per entity: `docs/adr/0003-single-dynamodb-table.md`. Table `chatrock-prod` with PK/SK:
-- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **activeLeafId**, projectId?, summary?, topics?, streamingSince?, streamingResponseId?, cancelRequested?
+- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **lastMessageAt** (stamped only on send; orders the chat list — `docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md`), **activeLeafId**, projectId?, summary?, topics?, streamingSince?, streamingResponseId?, cancelRequested?
 - Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearchEnabled?
 - WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL
 - User prefs: `PK=USER#<sub>` / `SK=PREF#USER` — `prefs` attribute (`UserPreferences` JSON blob), updatedAt

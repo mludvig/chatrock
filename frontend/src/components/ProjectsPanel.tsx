@@ -3,6 +3,7 @@ import { Link, useMatch, useNavigate } from 'react-router-dom'
 import { api } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import ItemMenu from './ItemMenu'
+import { lastActivity } from '../lib/sort'
 
 export default function ProjectsPanel() {
   const navigate = useNavigate()
@@ -40,7 +41,7 @@ export default function ProjectsPanel() {
     } catch (err) { pushToast({ kind: 'error', text: String(err) }) }
   }
   const recent = [...projects].sort((a, b) => {
-    const activity = (id: string, date: string) => Math.max(Date.parse(date), ...chats.filter(c => c.projectId === id).map(c => Date.parse(c.updatedAt)))
+    const activity = (id: string, date: string) => Math.max(Date.parse(date), ...chats.filter(c => c.projectId === id).map(c => Date.parse(lastActivity(c))))
     return activity(b.projectId, b.updatedAt) - activity(a.projectId, a.updatedAt)
   })
   return <section className="projects-panel" aria-label="Projects">
