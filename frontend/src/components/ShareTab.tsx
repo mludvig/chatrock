@@ -152,6 +152,9 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
                   <a href={shareUrl(s.shareId)} target="_blank" rel="noopener noreferrer" className="published-links-url">
                     /s/{s.shareId}
                   </a>
+                  <a href={`${shareUrl(s.shareId)}.md`} target="_blank" rel="noopener noreferrer" className="published-links-url" title="Open the Markdown version of this link">
+                    Markdown
+                  </a>
                   <span className="topic-chip">{s.mode}</span>
                   <span className="topic-chip">
                     {s.includeThinking && s.includeTools ? '+thinking +tools'

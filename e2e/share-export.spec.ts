@@ -45,6 +45,15 @@ test('create a share link, open it unauthenticated, then revoke it', async ({ pa
   const res = await publicPage.goto(shareUrl!)
   expect(res?.status()).toBe(200)
   await expect(publicPage.locator('body')).toContainText('Share test answer', { timeout: 10_000 })
+  const mdUrl = await page.locator('.published-links-item a', { hasText: 'Markdown' }).getAttribute('href')
+  expect(mdUrl).toBe(`${shareUrl}.md`)
+  // fetch() rather than goto(): a text/markdown navigation may start a download instead.
+  const md = await publicPage.evaluate(async url => {
+    const r = await fetch(url)
+    return { type: r.headers.get('content-type'), body: await r.text() }
+  }, mdUrl!)
+  expect(md.type).toContain('text/markdown')
+  expect(md.body).toContain('Share test answer')
   await publicContext.close()
 
   // Revoke, then confirm the link is dead. The confirm() dialog fires synchronously as part of
