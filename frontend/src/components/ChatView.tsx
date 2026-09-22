@@ -426,10 +426,6 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       const staleSending = useChatStore.getState().sendingByChat[id] && !r.streaming && ackTimersRef.current[id] == null
       if (useChatStore.getState().sendingByChat[id] && !opts?.force && !staleSending) return
       const enriched = enrichMessages(r.bubbles)
-      setMessages(enriched)
-      setConversationUsage(r.conversationUsage)
-      setHasMoreOlder(r.hasMore)
-      setOldestMsgId(r.oldestMsgId)
       useChatStore.getState().setMessagesCache(id, {
         messages: enriched, conversationUsage: r.conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
       })
@@ -437,6 +433,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         clearStream(id)
         setSending(id, false)
       }
+      // The user may have moved to another chat or a new-chat draft while this was in flight:
+      // keep the result in that chat's cache, but don't paint it over what's now on screen.
+      if (id !== chatIdRef.current) return
+      setMessages(enriched)
+      setConversationUsage(r.conversationUsage)
+      setHasMoreOlder(r.hasMore)
+      setOldestMsgId(r.oldestMsgId)
     }).catch(() => {})
   }, [setMessages, clearStream, setSending])
 
@@ -450,6 +453,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     const prevScrollHeight = container?.scrollHeight ?? 0
     const prevScrollTop = container?.scrollTop ?? 0
     api.listMessages(chatId, { before: oldestMsgId }).then(r => {
+      // Merging into `messages` is only right while this chat is still the one on screen.
+      if (chatId !== chatIdRef.current) return
       const enrichedOlder = enrichMessages(r.bubbles)
       const merged = [...enrichedOlder, ...useChatStore.getState().messages]
       setMessages(merged)
@@ -482,6 +487,18 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
 
   // Sync newModel when defaultModel resolves (models loaded async)
 
+
+  // "+" while already on /c/new changes neither chatId nor isNew, so the load effect below
+  // doesn't re-run; clear here so "+" always gives an empty draft. Declared before the
+  // pendingSearch effect so it can't wipe the optimistic bubble that effect's send paints.
+  useEffect(() => {
+    if (!isNew) return
+    setMessages([])
+    setConversationUsage(null)
+    setHasMoreOlder(false)
+    setOldestMsgId(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newChatTick])
 
   // A Search submitted from the global header (App.tsx) lands here as a single-use pendingSearch —
   // fire the same new-chat-send flow handleSend() uses for a normal first message, but with the
