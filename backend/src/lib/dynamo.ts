@@ -131,6 +131,18 @@ export async function updateChatModel(sub: string, chatId: string, model: string
   }))
 }
 
+// System-initiated model swap (a retired model id self-healing on read) — intentionally omits
+// updatedAt so it doesn't reorder the chat list; that's for user activity only.
+export async function migrateChatModel(sub: string, chatId: string, model: string) {
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: buildChatKey(sub, chatId),
+    UpdateExpression: 'SET #m = :m',
+    ExpressionAttributeNames: { '#m': 'model' },
+    ExpressionAttributeValues: { ':m': model },
+  }))
+}
+
 export async function updateChatModelSettings(sub: string, chatId: string, modelSettings: Record<string, unknown>) {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
