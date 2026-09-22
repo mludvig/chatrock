@@ -256,9 +256,9 @@ describe('bedrockResponses.streamTurn', () => {
     expect(result.stopReason).toBe('max_tokens')
   })
 
-  describe('encrypted reasoning from another region', () => {
+  describe('encrypted reasoning the API cannot decrypt', () => {
     const response = { status: 'completed', output_text: 'ok', output: [{ type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'ok', annotations: [] }] }], usage: undefined }
-    const opaque = encodeOpaque('bedrock-responses', { id: 'rs_1', encryptedContent: 'ENC' })
+    const opaque = encodeOpaque('bedrock-responses', { id: 'rs_1', encryptedContent: 'ENC', model: 'global.openai.gpt-6-sol' })
     const messages: NeutralMessage[] = [
       { role: 'user', content: [{ kind: 'text', text: 'q1' }] },
       { role: 'assistant', content: [{ kind: 'thinking', text: 'thought', opaque }, { kind: 'text', text: 'a1' }] },
@@ -269,9 +269,12 @@ describe('bedrockResponses.streamTurn', () => {
     })
     const hasReasoning = (input: Array<{ type?: string }>) => input.some(i => i.type === 'reasoning')
 
-    test('retries once without reasoning items when the API rejects it as cross-region', async () => {
+    test.each([
+      '400 Encrypted content cannot be used in a different region from the one that created it.',
+      '400 encrypted reasoning was created for a different model',
+    ])('retries once without reasoning items when the API rejects it: %s', async (message) => {
       mockCreate
-        .mockRejectedValueOnce(Object.assign(new Error('400 Encrypted content cannot be used in a different region from the one that created it.'), { status: 400 }))
+        .mockRejectedValueOnce(Object.assign(new Error(message), { status: 400 }))
         .mockResolvedValueOnce(fakeStream([{ type: 'response.completed', response }]))
 
       const { result } = await drain(turn())

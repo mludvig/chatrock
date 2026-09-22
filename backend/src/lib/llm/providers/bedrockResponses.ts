@@ -141,16 +141,16 @@ function buildReasoningParams(caps: ReturnType<typeof getCapabilities>, settings
   }
 }
 
-function isCrossRegionReasoningError(err: unknown): boolean {
+function isUndecryptableReasoningError(err: unknown): boolean {
   return (err as { status?: number }).status === 400
-    && /encrypted content cannot be used in a different region/i.test((err as Error).message)
+    && /encrypted content cannot be used in a different region|encrypted reasoning was created for a different model/i.test((err as Error).message)
 }
 
 async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult> {
   const caps = getCapabilities(req.modelId)
   const client = await getClient()
 
-  const input: ResponseInputItem[] = fromNeutralMessages(req.messages)
+  const input: ResponseInputItem[] = fromNeutralMessages(req.messages, req.modelId)
   const tools = req.tools.map(toResponsesTool)
 
   const create = (input: ResponseInputItem[]) => client.responses.create({
@@ -168,9 +168,9 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   try {
     stream = await create(input)
   } catch (err) {
-    if (!isCrossRegionReasoningError(err)) throw err
-    // Encrypted reasoning only decrypts in the region that produced it, and a global.* profile
-    // may route this call elsewhere — retry without it. See docs/adr/0052-cross-region-encrypted-reasoning.md.
+    if (!isUndecryptableReasoningError(err)) throw err
+    // A safety net behind fromNeutralMessages' same-model rule: the API's decryption rules are
+    // undocumented, so retry without reasoning. See docs/adr/0052-encrypted-reasoning-replays-only-to-its-own-model.md.
     stream = await create(input.filter(item => item.type !== 'reasoning'))
   }
 
@@ -202,7 +202,7 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
 
   if (!finalResponse) throw new Error('bedrockResponses.streamTurn: no completed response from the stream')
 
-  const content = toNeutral(finalResponse.output)
+  const content = toNeutral(finalResponse.output, req.modelId)
   return {
     stopReason: normalizeStopReason(finalResponse),
     textContent: finalResponse.output_text ?? '',
@@ -220,7 +220,7 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
 async function once(req: OnceRequest): Promise<OnceResult> {
   const caps = getCapabilities(req.modelId)
   const client = await getClient()
-  const input: ResponseInputItem[] = fromNeutralMessages(req.messages)
+  const input: ResponseInputItem[] = fromNeutralMessages(req.messages, req.modelId)
   const response = await client.responses.create({
     model: req.modelId,
     input,
