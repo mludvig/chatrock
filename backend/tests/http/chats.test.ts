@@ -1055,14 +1055,14 @@ test('GET /api/chats migrates a stale model to the default and reports modelMigr
   mockDynamo.listChats.mockResolvedValue([
     { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'Old', model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', createdAt: '', updatedAt: '' },
   ])
-  mockDynamo.updateChatModel.mockResolvedValue(undefined)
+  mockDynamo.migrateChatModel.mockResolvedValue(undefined)
 
   const res = result(await handler(makeEvent('GET', '/api/chats') as any))
   const body = JSON.parse(res.body ?? '{}')
 
   expect(body.chats[0].model).toBe('global.anthropic.claude-sonnet-5')
   expect(body.chats[0].modelMigratedFrom).toBe('global.anthropic.claude-sonnet-4-6')
-  expect(mockDynamo.updateChatModel).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-sonnet-5')
+  expect(mockDynamo.migrateChatModel).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-sonnet-5')
 })
 
 test('GET /api/chats does not migrate or report modelMigratedFrom for a still-valid model', async () => {
@@ -1075,14 +1075,14 @@ test('GET /api/chats does not migrate or report modelMigratedFrom for a still-va
 
   expect(body.chats[0].model).toBe('global.anthropic.claude-sonnet-5')
   expect(body.chats[0].modelMigratedFrom).toBeUndefined()
-  expect(mockDynamo.updateChatModel).not.toHaveBeenCalled()
+  expect(mockDynamo.migrateChatModel).not.toHaveBeenCalled()
 })
 
 test('GET /api/chats/{chatId} migrates a stale model the same way', async () => {
   mockDynamo.getChat.mockResolvedValue({
     PK: 'USER#user-1', SK: 'CHAT#c1', title: 'Old', model: 'global.anthropic.claude-sonnet-4-6', systemPrompt: '', createdAt: '', updatedAt: '',
   })
-  mockDynamo.updateChatModel.mockResolvedValue(undefined)
+  mockDynamo.migrateChatModel.mockResolvedValue(undefined)
 
   const res = result(await handler(makeEvent('GET', '/api/chats/{chatId}', undefined, { chatId: 'c1' }) as any))
   const body = JSON.parse(res.body ?? '{}')
@@ -1104,11 +1104,11 @@ test('fork resolves a stale source model onto the new chat and self-heals the so
   ])
   mockDynamo.putChat.mockResolvedValue(undefined)
   mockDynamo.batchPutMessages.mockResolvedValue(undefined)
-  mockDynamo.updateChatModel.mockResolvedValue(undefined)
+  mockDynamo.migrateChatModel.mockResolvedValue(undefined)
 
   await handler(makeEvent('POST', '/api/chats/{chatId}/fork', { fromMsgId: 'a1' }, { chatId: 'c1' }) as any)
 
-  expect(mockDynamo.updateChatModel).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-sonnet-5')
+  expect(mockDynamo.migrateChatModel).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-sonnet-5')
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
     expect.objectContaining({ model: 'global.anthropic.claude-sonnet-5' })
   )

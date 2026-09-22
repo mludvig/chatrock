@@ -1,4 +1,4 @@
-import { updateChatModel } from './dynamo'
+import { migrateChatModel } from './dynamo'
 import { DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 
 // A chat's stored `model` can go stale when that model id is later retired from
@@ -10,7 +10,7 @@ import { DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 export async function resolveChatModel(sub: string, chatId: string, chat: Record<string, unknown>): Promise<{ model: string; modelMigratedFrom?: string }> {
   const model = chat.model as string
   if (isValidModelId(model)) return { model }
-  await updateChatModel(sub, chatId, DEFAULT_CHAT_MODEL)
+  await migrateChatModel(sub, chatId, DEFAULT_CHAT_MODEL)
   console.log(JSON.stringify({ event: 'chat_model_migrated', sub, chatId, from: model, to: DEFAULT_CHAT_MODEL }))
   return { model: DEFAULT_CHAT_MODEL, modelMigratedFrom: model }
 }

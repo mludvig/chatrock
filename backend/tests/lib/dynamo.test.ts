@@ -4,7 +4,7 @@ import {
   buildChatKey, buildMsgKey, buildConnKey, buildTurnKey, ddb, listMessages,
   buildUserPrefKey, getUserPrefs, putUserPrefs,
   buildUserMemKey, listUserMemories, putUserMemory, deleteUserMemory,
-  updateChatSummary, updateProjectMemory,
+  updateChatSummary, updateProjectMemory, migrateChatModel,
 } from '../../src/lib/dynamo'
 import { UpdateCommand } from '@aws-sdk/lib-dynamodb'
 
@@ -254,6 +254,19 @@ test('updateChatSummary writes only the provided field when the other is omitted
 test('updateChatSummary is a no-op (no ddb call) when neither field is provided', async () => {
   await updateChatSummary('sub1', 'chat1', {})
   expect(mockSend).not.toHaveBeenCalled()
+})
+
+// ── migrateChatModel ─────────────────────────────────────────────────────────
+
+test('migrateChatModel swaps the model without touching updatedAt', async () => {
+  mockSend.mockResolvedValueOnce({})
+  await migrateChatModel('sub1', 'chat1', 'global.anthropic.claude-sonnet-5')
+
+  const call = mockSend.mock.calls[0][0]
+  expect(call).toBeInstanceOf(UpdateCommand)
+  expect(call.input.Key).toEqual({ PK: 'USER#sub1', SK: 'CHAT#chat1' })
+  expect(call.input.UpdateExpression).toBe('SET #m = :m')
+  expect(call.input.ExpressionAttributeValues).toEqual({ ':m': 'global.anthropic.claude-sonnet-5' })
 })
 
 // ── updateProjectMemory ──────────────────────────────────────────────────────
