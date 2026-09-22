@@ -131,15 +131,16 @@ export async function updateChatModel(sub: string, chatId: string, model: string
   }))
 }
 
-// System-initiated model swap (a retired model id self-healing on read) — intentionally omits
-// updatedAt so it doesn't reorder the chat list; that's for user activity only.
-export async function migrateChatModel(sub: string, chatId: string, model: string) {
+// A message was submitted: stamp the chat's sort key and persist the model and composer
+// choices it was sent with. lastMessageAt (not updatedAt) orders the chat list, so metadata
+// edits never reorder it. See docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md.
+export async function recordChatSend(sub: string, chatId: string, model: string, modelSettings: Record<string, unknown>) {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,
     Key: buildChatKey(sub, chatId),
-    UpdateExpression: 'SET #m = :m',
+    UpdateExpression: 'SET lastMessageAt = :t, #m = :m, modelSettings = :ms',
     ExpressionAttributeNames: { '#m': 'model' },
-    ExpressionAttributeValues: { ':m': model },
+    ExpressionAttributeValues: { ':t': new Date().toISOString(), ':m': model, ':ms': modelSettings },
   }))
 }
 

@@ -12,6 +12,7 @@ import Sidebar from './components/Sidebar'
 import ChatView from './components/ChatView'
 import ProjectView from './components/ProjectView'
 import Toaster from './components/Toaster'
+import { sortByRecent } from './lib/sort'
 import './app.scss'
 
 // Renew this far ahead of expiry rather than at it: a token that dies mid-handshake looks
@@ -85,8 +86,7 @@ function AuthedApp() {
     Promise.allSettled([api.listChats(), api.getPreferences(), api.listProjects()])
       .then(([chatsRes, prefsRes, projectsRes]) => {
         if (cancelled) return
-        if (chatsRes.status === 'fulfilled') setChats(chatsRes.value.chats.sort(
-          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()))
+        if (chatsRes.status === 'fulfilled') setChats(sortByRecent(chatsRes.value.chats))
         if (prefsRes.status === 'fulfilled') setUserPreferences(prefsRes.value.preferences)
         if (projectsRes.status === 'fulfilled') setProjects(projectsRes.value.projects)
         const failed = [chatsRes, prefsRes, projectsRes].flatMap((result, index) =>

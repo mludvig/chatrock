@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBars, faPaperPlane, faPlus, faSpinner, faStop, faXmark, faChevronUp, faChevronDown, faPaperclip, faFile, faToggleOn, faToggleOff, faFolderOpen, faEyeSlash, faTriangleExclamation, faGear, faRotate } from '@fortawesome/free-solid-svg-icons'
-import { api, defaultSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS, THINKING_EFFORTS } from '../api/http'
+import { api, defaultSettings, requestUpload, uploadToS3, RESEARCH_DEPTHS, THINKING_EFFORTS, carryThinkingEffort } from '../api/http'
 import type { Model, ModelCapabilities, ModelSettings, TokenUsage, Message, Step, Chat, ResearchDepth, ThinkingEffort } from '../api/http'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 import { newId } from '../lib/ids'
@@ -250,9 +250,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // always recorded either way — this only gates whether it's rendered.
   const effectiveShowTokenStats = effectiveSettings.showTokenStats ?? false
 
-  // Effective reasoning settings for the *next* send. Composer overrides win when set and
-  // are merged at send-time only — never written back via handleChatSettingsChange, so a
-  // one-off escalation never becomes the chat's permanent default. See docs/adr/0043.
+  // Effective reasoning settings for the *next* send. Composer overrides win when set; they
+  // become the chat's saved values only when a message is sent with them (recordSendLocally),
+  // never on selection. See docs/adr/0043 and docs/adr/0049.
   const effectiveResearchDepth = composerResearchDepth ?? effectiveSettings.researchDepth ?? 'brief'
   const effectiveThinkingEffort = currentCaps.thinking === 'none'
     ? undefined
@@ -1008,12 +1008,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         modelSettings: modelSettingsForSend,
         parentId,
       })
+      recordSendLocally(chatId!, activeChat.model, modelSettingsForSend)
       armAckWatchdog(chatId!)
     } catch (err) {
       setSending(chatId!, false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, messages, chatId, modelSettingsForSend, startStream, setSending])
+  }, [activeChat, creatingChat, messages, chatId, modelSettingsForSend, startStream, setSending, patchChat])
 
   const handleContinue = useCallback(async (msgId: string, researchDepthOverride?: ResearchDepth) => {
     if (!activeChat || useChatStore.getState().sendingByChat[chatId!] || creatingChat) return
@@ -1038,12 +1039,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         parentId: msgId,
         continue: true,
       })
+      recordSendLocally(chatId!, activeChat.model, modelSettingsForSend, false)
       armAckWatchdog(chatId!)
     } catch (err) {
       setSending(chatId!, false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
-  }, [activeChat, creatingChat, chatId, modelSettingsForSend, startStream, setSending])
+  }, [activeChat, creatingChat, chatId, modelSettingsForSend, startStream, setSending, patchChat])
 
   // "Go deeper" on a shallow answer — uniformly brief → extended → deep, all via the same
   // continue path: deep is just a bigger round budget now, not a different code path.
@@ -1270,6 +1272,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           chatId: res.chatId, content, model, systemPrompt, modelSettings: modelSettingsForSend, attachments: attachmentsPayload,
           ...(search ? { search } : {}),
         })
+        recordSendLocally(res.chatId, model, modelSettingsForSend)
         armAckWatchdog(newChatId)
         justCreatedChatIdRef.current = res.chatId
         navigate(`/c/${res.chatId}`, { replace: true })
@@ -1309,6 +1312,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
           parentId: editPid,
           attachments: attachmentsPayload,
         })
+        recordSendLocally(chatId!, activeChat.model, modelSettingsForSend)
         armAckWatchdog(chatId!)
       } catch (err) {
         setSending(chatId!, false)
@@ -1334,11 +1338,29 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         modelSettings: modelSettingsForSend,
         attachments: attachmentsPayload,
       })
+      recordSendLocally(chatId!, activeChat.model, modelSettingsForSend)
       armAckWatchdog(chatId!)
     } catch (err) {
       setSending(chatId!, false)
       setErrorMsg(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  // Mirror what the server's recordChatSend persists, so the chat moves to the top of the list
+  // and keeps the model and composer choices it was just sent with. A continue's depth is a
+  // one-off escalation and isn't kept. See docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md.
+  function recordSendLocally(targetChatId: string, model: string, sent: ModelSettings, keepDepth = true) {
+    const prev = useChatStore.getState().chats.find(c => c.chatId === targetChatId)?.modelSettings ?? {}
+    patchChat(targetChatId, {
+      lastMessageAt: new Date().toISOString(),
+      model,
+      modelMigratedFrom: undefined,
+      modelSettings: {
+        ...prev,
+        ...(sent.thinkingEffort ? { thinkingEffort: sent.thinkingEffort } : {}),
+        ...(keepDepth && sent.researchDepth ? { researchDepth: sent.researchDepth } : {}),
+      },
+    })
   }
 
   function handleModelChange(modelId: string) {
@@ -1349,17 +1371,15 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       delete rest.thinkingEffort
       setDraftModelSettings(rest)
     }
-    setComposerThinkingEffort(null)
+    // Keep the chosen effort across a model switch when the new model supports it.
+    setComposerThinkingEffort(prev => newCaps ? carryThinkingEffort(prev ?? effectiveThinkingEffort ?? null, newCaps) : null)
 
     if (isNew) {
       setNewModel(modelId)
       return
     }
     if (!chatId) return
-    api.updateModel(chatId, modelId).catch(err => {
-      setErrorMsg(`Model was not saved: ${String(err)}`)
-      useChatStore.setState(s => ({ chats: s.chats.map(c => c.chatId === chatId ? { ...c, model: currentModelId } : c) }))
-    })
+    // Local only: the next send persists it (docs/adr/0049).
     useChatStore.setState(s => ({
       chats: s.chats.map(c => c.chatId === chatId ? { ...c, model: modelId } : c),
     }))

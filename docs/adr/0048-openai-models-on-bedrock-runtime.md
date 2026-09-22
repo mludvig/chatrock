@@ -18,7 +18,7 @@ We verified this with a spike from ap-southeast-2 before building it. All four m
 
 - There are no region pins, and the Lambda role authorizes the GPT models with the same IAM statement as the Anthropic models.
 - We keep the `openai` SDK for a single provider. The AWS JS SDK has no Responses API command, and a hand-rolled SigV4 + SSE client would duplicate the SDK's typed stream parsing.
-- Chats that still reference the old `openai.gpt-*` IDs self-heal to `DEFAULT_CHAT_MODEL` on their next read (`lib/chatDto.ts`); we keep no alias table.
+- A chat that still references a retired model ID is shown with `DEFAULT_CHAT_MODEL` (`lib/chatDto.ts`) and saved with whatever model its next message is sent with ([0049](0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md)); we keep no alias table.
 - Reasoning blocks stored under the old `bedrock-mantle` opaque tag are dropped on replay as foreign thinking. This costs only reasoning continuity on pre-existing GPT turns.
 - Rejected alternatives:
   - Converse for GPT: GPT rejects document blocks and explicit `cachePoint` there.

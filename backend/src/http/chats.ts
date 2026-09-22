@@ -37,7 +37,7 @@ export const handler = async (
     // Sensitive chats ARE returned — the frontend's sidebar eye toggle hides/masks them by
     // default, but the API doesn't filter them out (see "Sensitive & ephemeral chats" in
     // backend/CLAUDE.md).
-    const chats = await Promise.all(items.map(i => chatDto(sub, i)))
+    const chats = items.map(i => chatDto(i))
     return ok({ chats })
   }
 
@@ -138,7 +138,7 @@ export const handler = async (
   if (route === 'GET /api/chats/{chatId}') {
     const chat = await getChat(sub, chatId)
     if (!chat) return err(404, 'Not found')
-    return ok(await chatDto(sub, chat))
+    return ok(chatDto(chat))
   }
 
   if (route === 'PATCH /api/chats/{chatId}') {
@@ -300,7 +300,7 @@ export const handler = async (
     if (!chat) return err(404, 'Not found')
     // A fork must never propagate a stale model id forward — resolve (and self-heal the
     // source chat too, as a side effect) before copying it onto the new chat below.
-    const { model: sourceModel } = await resolveChatModel(sub, chatId, chat)
+    const { model: sourceModel } = resolveChatModel(chat)
 
     const rows = (await listMessages(chatId)) as unknown as TurnRow[]
     const fromRow = rows.find(r => r.msgId === fromMsgId)

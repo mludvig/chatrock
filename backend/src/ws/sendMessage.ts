@@ -3,7 +3,7 @@ import type { APIGatewayProxyResultV2, Context } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import type { Block, NeutralMessage } from '../lib/llm/blocks'
-import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, buildTurnKey, isStreamCancelled, clearStreamCancel, setChatStreaming, clearChatStreaming, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, recordChatSend, buildTurnKey, isStreamCancelled, clearStreamCancel, setChatStreaming, clearChatStreaming, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
@@ -120,6 +120,20 @@ export const buildHandler = (postFn: PostFn) => async (
   // If the ack itself 410'd, the client is already gone — no point starting an
   // expensive Bedrock call. Nothing to persist yet either, so return immediately.
   if (connectionGone) return { statusCode: 200, body: '' }
+
+  // Submit is what persists the chat's model and composer effort/depth, and stamps the sort
+  // key — only those two settings are merged, since the rest of modelSettings arrives already
+  // resolved from prefs/project defaults. A continue's depth is a one-off "Go deeper"
+  // escalation, so it isn't kept. See docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md.
+  try {
+    await recordChatSend(sub, chatId, model, {
+      ...(chat.modelSettings as Record<string, unknown> | undefined ?? {}),
+      ...(modelSettings.thinkingEffort !== undefined ? { thinkingEffort: modelSettings.thinkingEffort } : {}),
+      ...(modelSettings.researchDepth !== undefined && !isContinue ? { researchDepth: modelSettings.researchDepth } : {}),
+    })
+  } catch (e) {
+    console.error(JSON.stringify({ event: 'record_chat_send_error', chatId, error: String(e) }))
+  }
 
   // Advance the chat's activeLeafId to a just-persisted turn. Called after EVERY
   // turn write (user prompt + each assistant/tool turn + partial flush) so that a

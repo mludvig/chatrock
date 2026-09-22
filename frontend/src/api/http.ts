@@ -30,6 +30,8 @@ export interface Chat {
   systemPrompt: string
   createdAt: string
   updatedAt: string
+  // Set when a message is submitted; what the chat list sorts by (see lib/sort.ts).
+  lastMessageAt?: string
   activeLeafId?: string
   modelSettings?: ModelSettings
   projectId?: string
@@ -42,9 +44,9 @@ export interface Chat {
   sensitive?: boolean
   ephemeral?: boolean
   expiresAt?: string
-  // Present exactly once, the first time this chat is read after its stored model was
-  // retired from config/models.ts — the backend already swapped `model` to the current
-  // default and persisted it; this is only here so the UI can show a one-time notice.
+  // Present while the chat's stored model is retired from config/models.ts — the backend
+  // swapped `model` to the current default in the response only; the next send persists
+  // whatever model it used, which clears this.
   modelMigratedFrom?: string
 }
 
@@ -210,6 +212,13 @@ export function defaultSettings(caps: ModelCapabilities): ModelSettings {
   }
 }
 
+// Keep the composer's thinking-effort choice across a model switch when the new model offers
+// that level; otherwise drop it so the picker falls back to the chat's saved value.
+export function carryThinkingEffort(effort: ThinkingEffort | null, caps: ModelCapabilities): ThinkingEffort | null {
+  if (!effort || caps.thinking === 'none') return null
+  return !caps.thinkingLevels || caps.thinkingLevels.includes(effort) ? effort : null
+}
+
 // Carry over settings that are valid for the new model; fill missing with defaults
 export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): ModelSettings {
   const defaults = defaultSettings(caps)
@@ -253,8 +262,6 @@ export const api = {
     req<void>('PATCH', `/api/chats/${chatId}`, { title }),
   updateSystemPrompt: (chatId: string, systemPrompt: string) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { systemPrompt }),
-  updateModel: (chatId: string, model: string) =>
-    req<void>('PATCH', `/api/chats/${chatId}`, { model }),
   updateChatSettings: (chatId: string, settings: ModelSettings) =>
     req<void>('PATCH', `/api/chats/${chatId}`, { modelSettings: settings }),
   updateChatFlags: (chatId: string, flags: { sensitive?: boolean; ephemeral?: boolean }) =>

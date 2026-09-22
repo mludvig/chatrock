@@ -100,7 +100,7 @@ export const handler = async (
 
     const allChats = await listChats(sub)
     const memberChats = allChats.filter(c => c.projectId === projectId)
-    const chats = await Promise.all(memberChats.map(c => chatDto(sub, c)))
+    const chats = memberChats.map(c => chatDto(c))
     return ok({ project: projectDto(project), chats })
   }
 
