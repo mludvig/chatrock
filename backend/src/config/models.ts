@@ -38,6 +38,9 @@ export interface ModelSettings {
 export interface Model {
   id: string
   name: string
+  // Retired model ids this model takes over — a chat stored with one of them continues on this
+  // model. When this model is itself retired, move its id and this whole list to its successor.
+  replaces?: string[]
   capabilities: ModelCapabilities
 }
 
@@ -47,21 +50,28 @@ export const MODELS: Model[] = [
   {
     id: 'global.anthropic.claude-fable-5-1',
     name: 'Claude Fable 5.1',
+    replaces: ['global.anthropic.claude-fable-5'],
     capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
-    id: 'global.anthropic.claude-opus-5',
-    name: 'Claude Opus 5',
+    id: 'global.anthropic.claude-opus-5-5',
+    name: 'Claude Opus 5.5',
+    replaces: [
+      'global.anthropic.claude-opus-5', 'global.anthropic.claude-opus-5-1',
+      'global.anthropic.claude-opus-4-8', 'apac.anthropic.claude-opus-4-8',
+    ],
     capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-sonnet-5',
     name: 'Claude Sonnet 5',
+    replaces: ['global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
     capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
     name: 'Claude Haiku 4.5',
+    replaces: ['apac.anthropic.claude-haiku-4-5-20251001'],
     capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   // OpenAI GPT via the Responses API on bedrock-runtime (docs/adr/0048-openai-models-on-bedrock-runtime.md).
@@ -69,6 +79,7 @@ export const MODELS: Model[] = [
   {
     id: 'global.openai.gpt-6-astra',
     name: 'GPT-6 Astra',
+    replaces: ['openai.gpt-6-astra'],
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
@@ -77,8 +88,9 @@ export const MODELS: Model[] = [
     },
   },
   {
-    id: 'global.openai.gpt-5.6-sol',
-    name: 'GPT-5.6 Sol',
+    id: 'global.openai.gpt-6-sol',
+    name: 'GPT-6 Sol',
+    replaces: ['global.openai.gpt-5.6-sol', 'openai.gpt-5.6-sol'],
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
@@ -89,6 +101,7 @@ export const MODELS: Model[] = [
   {
     id: 'global.openai.gpt-5.6-terra',
     name: 'GPT-5.6 Terra',
+    replaces: ['openai.gpt-5.6-terra'],
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
@@ -97,8 +110,9 @@ export const MODELS: Model[] = [
     },
   },
   {
-    id: 'global.openai.gpt-5.6-luna',
-    name: 'GPT-5.6 Luna',
+    id: 'global.openai.gpt-6-luna',
+    name: 'GPT-6 Luna',
+    replaces: ['global.openai.gpt-5.6-luna', 'openai.gpt-5.6-luna'],
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
@@ -140,6 +154,20 @@ export function getCapabilities(modelId: string): ModelCapabilities {
 
 export function isValidModelId(modelId: string): boolean {
   return MODELS.some(m => m.id === modelId)
+}
+
+// A stored model id -> the live model to use for it: unchanged if live, else the model whose
+// `replaces` lists it, else undefined. See docs/adr/0050-retired-models-hand-off-to-a-successor.md.
+export function currentModelId(modelId: string): string | undefined {
+  if (isValidModelId(modelId)) return modelId
+  return MODELS.find(m => m.replaces?.includes(modelId))?.id
+}
+
+// currentModelId with DEFAULT_CHAT_MODEL as the last resort, for a chat that must have a model.
+// `migratedFrom` is set whenever the id changed.
+export function resolveModelId(modelId: string): { model: string; migratedFrom?: string } {
+  if (isValidModelId(modelId)) return { model: modelId }
+  return { model: currentModelId(modelId) ?? DEFAULT_CHAT_MODEL, migratedFrom: modelId }
 }
 
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {

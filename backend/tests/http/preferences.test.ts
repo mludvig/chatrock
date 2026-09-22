@@ -44,6 +44,17 @@ test('GET /api/preferences with no stored prefs returns {}', async () => {
   expect(body.preferences).toEqual({})
 })
 
+test('GET /api/preferences reads a retired defaultModel as its successor, or drops it when it has none', async () => {
+  mockDynamo.getUserPrefs.mockResolvedValueOnce({ defaultModel: 'global.anthropic.claude-opus-5', persona: 'x' })
+  let body = JSON.parse(result(await handler(makeEvent('GET', '/api/preferences') as any)).body ?? '{}')
+  expect(body.preferences).toEqual({ defaultModel: 'global.anthropic.claude-opus-5-5', persona: 'x' })
+
+  mockDynamo.getUserPrefs.mockResolvedValueOnce({ defaultModel: 'no.such.model', persona: 'x' })
+  body = JSON.parse(result(await handler(makeEvent('GET', '/api/preferences') as any)).body ?? '{}')
+  expect(body.preferences).toEqual({ persona: 'x' })
+  expect(mockDynamo.putUserPrefs).not.toHaveBeenCalled()
+})
+
 // ── PUT /api/preferences ─────────────────────────────────────────────────────
 
 test('PUT /api/preferences calls putUserPrefs with correct sub + body, returns { ok: true }', async () => {

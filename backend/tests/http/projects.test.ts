@@ -54,7 +54,7 @@ beforeEach(() => {
 
 test('project reads retain saved defaults and member privacy flags', async () => {
   const project = {
-    SK: 'PROJECT#proj-1', name: 'Project', defaultModel: 'saved-model',
+    SK: 'PROJECT#proj-1', name: 'Project', defaultModel: 'global.anthropic.claude-sonnet-5',
     modelSettings: { researchDepth: 'deep', browserCoreEnabled: false },
   }
   mockDynamo.listProjects.mockResolvedValue([project])
@@ -64,9 +64,20 @@ test('project reads retain saved defaults and member privacy flags', async () =>
   }])
   const list = JSON.parse(result(await handler(makeEvent('GET', '/api/projects') as any)).body!)
   const detail = JSON.parse(result(await handler(makeEvent('GET', '/api/projects/{projectId}', undefined, { projectId: 'proj-1' }) as any)).body!)
-  expect(list.projects[0]).toMatchObject({ defaultModel: 'saved-model', modelSettings: project.modelSettings })
-  expect(detail.project).toMatchObject({ defaultModel: 'saved-model', modelSettings: project.modelSettings })
+  expect(list.projects[0]).toMatchObject({ defaultModel: 'global.anthropic.claude-sonnet-5', modelSettings: project.modelSettings })
+  expect(detail.project).toMatchObject({ defaultModel: 'global.anthropic.claude-sonnet-5', modelSettings: project.modelSettings })
   expect(detail.chats[0]).toMatchObject({ sensitive: true, ephemeral: true, expiresAt: new Date(1800000000000).toISOString() })
+})
+
+test('a retired project defaultModel reads as its successor, or as unset when it has none', async () => {
+  mockDynamo.listProjects.mockResolvedValue([
+    { SK: 'PROJECT#p1', name: 'A', defaultModel: 'global.openai.gpt-5.6-luna' },
+    { SK: 'PROJECT#p2', name: 'B', defaultModel: 'no.such.model' },
+  ])
+  const list = JSON.parse(result(await handler(makeEvent('GET', '/api/projects') as any)).body!)
+  expect(list.projects[0].defaultModel).toBe('global.openai.gpt-6-luna')
+  expect(list.projects[1].defaultModel).toBeUndefined()
+  expect(mockDynamo.updateProjectFields).not.toHaveBeenCalled()
 })
 
 test('null clears a project model override', async () => {

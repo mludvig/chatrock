@@ -2,6 +2,7 @@ import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 }
 import { getUserPrefs, putUserPrefs } from '../lib/dynamo'
 import { subFromClaims } from '../lib/auth'
 import type { UserPreferences } from '../lib/preferences'
+import { currentModelId } from '../config/models'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -22,8 +23,10 @@ export const handler = async (
   const route = event.routeKey
 
   if (route === 'GET /api/preferences') {
-    const preferences = await getUserPrefs(sub)
-    return ok({ preferences })
+    const { defaultModel, ...rest } = await getUserPrefs(sub) as UserPreferences
+    // A retired default reads as its successor, or as unset (docs/adr/0050-retired-models-hand-off-to-a-successor.md).
+    const model = defaultModel ? currentModelId(defaultModel) : undefined
+    return ok({ preferences: model ? { defaultModel: model, ...rest } : rest })
   }
 
   if (route === 'PUT /api/preferences') {

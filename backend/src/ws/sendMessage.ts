@@ -7,7 +7,7 @@ import { getConnection, getChat, listMessages, putMessage, putMessagePair, updat
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
-import { isValidModelId, type ModelSettings } from '../config/models'
+import { currentModelId, type ModelSettings } from '../config/models'
 import { hydrateBlocks, buildUserBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences, type UserPreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
@@ -53,7 +53,7 @@ export const buildHandler = (postFn: PostFn) => async (
     // 'project' falls back to global behaviour if this chat has no projectId.
     search?: { scope: 'project' | 'global' }
   }
-  const { chatId, content, model, systemPrompt, modelSettings = {}, parentId: rerunParentId, attachments = [], search } = body
+  const { chatId, content, model: requestedModel, systemPrompt, modelSettings = {}, parentId: rerunParentId, attachments = [], search } = body
   // Detect edit/re-run/continue by key presence (not value) so parentId: null (root edit) is handled.
   const hasParentId = 'parentId' in body
   // Continue: parentId key present, no content, and continue:true flag — resume from leaf
@@ -92,7 +92,10 @@ export const buildHandler = (postFn: PostFn) => async (
     }
   }
 
-  if (!isValidModelId(model)) {
+  // A retired id (e.g. from a tab still holding an old model list) runs on its successor.
+  // See docs/adr/0050-retired-models-hand-off-to-a-successor.md.
+  const model = currentModelId(requestedModel)
+  if (!model) {
     await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'Invalid model' }) })
     return { statusCode: 200, body: '' }
   }

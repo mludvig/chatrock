@@ -425,19 +425,35 @@ test('send records lastMessageAt, the model, and the composer effort/depth on th
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
   await buildHandler(mockPost)(makeEvent({
-    chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-opus-5', systemPrompt: '',
+    chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-opus-5-5', systemPrompt: '',
     modelSettings: { thinkingEffort: 'medium', researchDepth: 'extended', webSearchEnabled: true, memoryEnabled: true },
   }))
 
   // Only effort/depth are merged into the stored overrides — the other sent values are
   // resolved prefs/project defaults, and must not be baked into the chat as overrides.
-  expect(mockDynamo.recordChatSend).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-opus-5',
+  expect(mockDynamo.recordChatSend).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-opus-5-5',
     { webSearchEnabled: false, thinkingEffort: 'medium', researchDepth: 'extended' })
+})
+
+test('a retired model id is sent and recorded as its successor', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'T', model: 'global.anthropic.claude-opus-5' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  async function* fakeStream() {
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-opus-5', systemPrompt: '' }))
+
+  expect(mockDynamo.recordChatSend).toHaveBeenCalledWith('user-1', 'c1', 'global.anthropic.claude-opus-5-5', expect.anything())
+  expect(mockBedrock.converseStream.mock.calls[0][0]).toBe('global.anthropic.claude-opus-5-5')
 })
 
 test('an invalid model is rejected without recording anything on the chat', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'openai.gpt-6-astra', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'no.such.model', systemPrompt: '' }))
   expect(mockDynamo.recordChatSend).not.toHaveBeenCalled()
 })
 
