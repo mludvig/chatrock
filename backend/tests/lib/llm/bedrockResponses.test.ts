@@ -65,7 +65,6 @@ describe('bedrockResponses.streamTurn', () => {
     ])
     expect(result).toMatchObject({
       stopReason: 'end_turn',
-      textContent: 'Hello from GPT',
       toolUses: [],
       content: [{ kind: 'text', text: 'Hello from GPT' }],
       usage: { inputTokens: 20, outputTokens: 5 },
@@ -267,7 +266,7 @@ describe('bedrockResponses.streamTurn', () => {
 
       const { result } = await drain(turn())
 
-      expect(result.textContent).toBe('ok')
+      expect(result.content).toEqual([{ kind: 'text', text: 'ok' }])
       expect(mockCreate).toHaveBeenCalledTimes(2)
       expect(hasReasoning(mockCreate.mock.calls[0][0].input)).toBe(true)
       expect(hasReasoning(mockCreate.mock.calls[1][0].input)).toBe(false)
