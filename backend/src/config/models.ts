@@ -120,6 +120,19 @@ export const MODELS: Model[] = [
       maxOutputTokens: 16000,
     },
   },
+  // Moonshot Kimi K3 via the Responses API (docs/adr/0051-kimi-k3-on-the-responses-api.md).
+  // Verified live against ap-southeast-2 Sep 2026: effort accepts none|low|medium|high|xhigh|max
+  // ('off' is sent as 'none'); reasoning streams as reasoning_text, with no encrypted_content;
+  // images, PDF input_file, tools, forced tool_choice and automatic prompt caching all work.
+  {
+    id: 'global.moonshotai.kimi-k3',
+    name: 'Kimi K3',
+    capabilities: {
+      provider: 'bedrock-responses', thinking: 'effort',
+      attachments: true, documents: true, promptCaching: 'explicit',
+      maxOutputTokens: 16000,
+    },
+  },
   // xAI Grok 4.6 via Bedrock Converse. Verified live against ap-southeast-2 Aug 2026:
   // rejects temperature/topP (ValidationException), rejects document blocks outright,
   // and image blocks 500/503 despite the model card listing IMAGE input — not usable yet.

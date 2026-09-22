@@ -130,7 +130,11 @@ function normalizeStopReason(response: OpenAIResponse): string {
 }
 
 function buildReasoningParams(caps: ReturnType<typeof getCapabilities>, settings: ModelSettings) {
-  if (caps.thinking !== 'effort' || !settings.thinkingEffort || settings.thinkingEffort === 'off') return {}
+  if (caps.thinking !== 'effort' || !settings.thinkingEffort) return {}
+  if (settings.thinkingEffort === 'off') {
+    // Only a model that offers 'off' can switch reasoning off; for the rest (GPT) 'off' means the API default.
+    return caps.thinkingLevels?.includes('off') === false ? {} : { reasoning: { effort: 'none' as const } }
+  }
   return {
     reasoning: { effort: settings.thinkingEffort, summary: 'auto' as const },
     include: ['reasoning.encrypted_content' as const],
@@ -162,7 +166,8 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
     if (event.type === 'response.output_text.delta') {
       if (thinkingOpen) { yield { type: 'thinking_done' }; thinkingOpen = false }
       yield { type: 'delta', text: event.delta }
-    } else if (event.type === 'response.reasoning_summary_text.delta') {
+    } else if (event.type === 'response.reasoning_summary_text.delta' || event.type === 'response.reasoning_text.delta') {
+      // GPT streams a reasoning summary; Kimi K3 streams its raw reasoning text instead.
       thinkingOpen = true
       yield { type: 'thinking_delta', text: event.delta }
     } else if (event.type === 'response.output_item.added' && event.item.type === 'function_call') {
