@@ -210,7 +210,7 @@ test('PATCH /api/chats/{chatId} with unknown model returns 400', async () => {
 test('PATCH /api/chats/{chatId} with valid model succeeds', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1' })
   mockDynamo.updateChatModel.mockResolvedValue(undefined)
-  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'global.anthropic.claude-opus-5' }, { chatId: 'c1' }) as any))
+  const res = result(await handler(makeEvent('PATCH', '/api/chats/{chatId}', { model: 'global.anthropic.claude-opus-5-5' }, { chatId: 'c1' }) as any))
   expect(res.statusCode).toBe(200)
 })
 
@@ -1075,6 +1075,18 @@ test('GET /api/chats does not migrate or report modelMigratedFrom for a still-va
   expect(body.chats[0].model).toBe('global.anthropic.claude-sonnet-5')
   expect(body.chats[0].modelMigratedFrom).toBeUndefined()
   expect(mockDynamo.updateChatModel).not.toHaveBeenCalled()
+})
+
+test('GET /api/chats hands a retired model to its same-family successor, not the default', async () => {
+  mockDynamo.listChats.mockResolvedValue([
+    { PK: 'USER#user-1', SK: 'CHAT#c1', title: 'Opus', model: 'global.anthropic.claude-opus-5', systemPrompt: '', createdAt: '', updatedAt: '' },
+    { PK: 'USER#user-1', SK: 'CHAT#c2', title: 'Gone', model: 'no.such.model', systemPrompt: '', createdAt: '', updatedAt: '' },
+  ])
+
+  const body = JSON.parse(result(await handler(makeEvent('GET', '/api/chats') as any)).body ?? '{}')
+
+  expect(body.chats[0]).toMatchObject({ model: 'global.anthropic.claude-opus-5-5', modelMigratedFrom: 'global.anthropic.claude-opus-5' })
+  expect(body.chats[1]).toMatchObject({ model: 'global.anthropic.claude-sonnet-5', modelMigratedFrom: 'no.such.model' })
 })
 
 test('GET /api/chats/{chatId} migrates a stale model the same way', async () => {

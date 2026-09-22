@@ -1,15 +1,15 @@
-import { DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
+import { resolveModelId } from '../config/models'
 
 // A chat's stored `model` can go stale when that model id is later retired from
-// config/models.ts (e.g. a renamed inference profile with no back-compat alias). A read swaps
-// in DEFAULT_CHAT_MODEL in the response only and reports what changed so the client can show
-// a notice; the row is left alone until the next send persists whatever model it used. See
+// config/models.ts. A read swaps in its successor (or DEFAULT_CHAT_MODEL when it has none) in the
+// response only and reports what changed so the client can show a notice; the row is left alone
+// until the next send persists whatever model it used. See
+// docs/adr/0050-retired-models-hand-off-to-a-successor.md and
 // docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md. Message rows
 // keep their own historical `model` field, so past turns still show what generated them.
 export function resolveChatModel(chat: Record<string, unknown>): { model: string; modelMigratedFrom?: string } {
-  const model = chat.model as string
-  if (isValidModelId(model)) return { model }
-  return { model: DEFAULT_CHAT_MODEL, modelMigratedFrom: model }
+  const { model, migratedFrom } = resolveModelId(chat.model as string)
+  return migratedFrom ? { model, modelMigratedFrom: migratedFrom } : { model }
 }
 
 // Chat item -> client DTO. Shared by the list and single-chat GET routes so both expose the

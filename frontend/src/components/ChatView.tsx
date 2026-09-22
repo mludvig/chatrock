@@ -1604,9 +1604,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       {!isNew && activeChat?.modelMigratedFrom && (
         <div className="error-banner warning">
           <span>
-            <FontAwesomeIcon icon={faTriangleExclamation} /> This chat's model ({activeChat.modelMigratedFrom}) is no
-            longer available — it's been switched to {models.find(m => m.id === activeChat.model)?.name ?? activeChat.model}.
-            Please double check the model selection above.
+            <FontAwesomeIcon icon={faTriangleExclamation} /> This chat's model ({activeChat.modelMigratedFrom}) has been
+            retired — it now uses {models.find(m => m.id === activeChat.model)?.name ?? activeChat.model}.
           </span>
           <button onClick={() => clearModelMigrationNotice(activeChat.chatId)} title="Dismiss">
             <FontAwesomeIcon icon={faXmark} />

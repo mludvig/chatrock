@@ -29,13 +29,15 @@ import { QueryCommand } from '@aws-sdk/lib-dynamodb'
 import { summarizeFile } from '../lib/projectFiles'
 import { validateAttachment, signCloudFrontUrl, presignPut, projectFilePrefix, deleteProjectObjects, deleteS3Objects } from '../lib/attachments'
 import { chatDto } from '../lib/chatDto'
-import { isValidModelId } from '../config/models'
+import { isValidModelId, currentModelId } from '../config/models'
 
 const projectDto = (i: Record<string, unknown>) => ({
   projectId: (i.SK as string).replace('PROJECT#', ''),
   name: i.name, description: i.description, instructions: i.instructions,
-  memoryEnabled: i.memoryEnabled, defaultModel: i.defaultModel, modelSettings: i.modelSettings,
+  memoryEnabled: i.memoryEnabled, modelSettings: i.modelSettings,
   createdAt: i.createdAt, updatedAt: i.updatedAt,
+  // A retired default reads as its successor, or as unset (docs/adr/0050-retired-models-hand-off-to-a-successor.md).
+  defaultModel: typeof i.defaultModel === 'string' ? currentModelId(i.defaultModel) : undefined,
 })
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
