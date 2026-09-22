@@ -113,7 +113,6 @@ export interface OnceResult {
 
 export interface TurnResult {
   stopReason: string
-  textContent: string
   toolUses: Array<{ callId: string; name: string; inputJson: string }>
   // The form written to DynamoDB.
   content: Block[]

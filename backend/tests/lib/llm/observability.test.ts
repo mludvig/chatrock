@@ -26,7 +26,7 @@ const stubProvider: ChatProvider = {
 }
 
 function textResult(usage?: TurnResult['usage']): TurnResult {
-  return { stopReason: 'end_turn', textContent: 'hi', toolUses: [], content: [{ kind: 'text', text: 'hi' }], usage }
+  return { stopReason: 'end_turn', toolUses: [], content: [{ kind: 'text', text: 'hi' }], usage }
 }
 
 jest.mock('../../../src/lib/llm/registry', () => ({ getProvider: () => stubProvider }))
@@ -82,7 +82,7 @@ test('a completed stream emits one llm_call with the label, stopReason and usage
 
 test('usage is summed across the invocation, not just the last round', async () => {
   stubResults = [
-    { stopReason: 'tool_use', textContent: '', content: [{ kind: 'text', text: '' }],
+    { stopReason: 'tool_use', content: [{ kind: 'text', text: '' }],
       toolUses: [{ callId: 't1', name: 'web_search', inputJson: '{}' }],
       usage: { inputTokens: 10, outputTokens: 5, cacheWriteInputTokens: 2 } },
     textResult({ inputTokens: 7, outputTokens: 3, cacheWriteInputTokens: 1 }),

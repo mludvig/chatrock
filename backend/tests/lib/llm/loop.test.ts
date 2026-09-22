@@ -21,7 +21,6 @@ const TEST_CALL = { purpose: 'chat' } as const
 function textResult(text: string, stopReason = 'end_turn'): TurnResult {
   return {
     stopReason,
-    textContent: text,
     toolUses: [],
     content: [{ kind: 'text', text }],
   }
@@ -30,7 +29,6 @@ function textResult(text: string, stopReason = 'end_turn'): TurnResult {
 function toolUseResult(): TurnResult {
   return {
     stopReason: 'tool_use',
-    textContent: '',
     toolUses: [{ callId: 'call-1', name: 'web_search', inputJson: '{"query":"x"}' }],
     content: [{ kind: 'tool_call', callId: 'call-1', name: 'web_search', input: { query: 'x' } }],
   }

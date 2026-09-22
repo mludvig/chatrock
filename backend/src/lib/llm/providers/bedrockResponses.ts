@@ -203,7 +203,6 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   const content = toNeutral(finalResponse.output, req.modelId)
   return {
     stopReason: normalizeStopReason(finalResponse),
-    textContent: finalResponse.output_text ?? '',
     toolUses: finalResponse.output
       .filter((item): item is Extract<typeof item, { type: 'function_call' }> => item.type === 'function_call')
       .map(item => ({ callId: item.call_id, name: item.name, inputJson: item.arguments })),

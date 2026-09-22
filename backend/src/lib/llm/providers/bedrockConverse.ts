@@ -110,7 +110,6 @@ function injectCachePointAt(messages: Message[], boundaryIndex: number, cachingE
 // the neutral TurnResult (llm/types.ts) that streamTurn() converts it into below.
 interface RawTurnResult {
   stopReason: string
-  textContent: string
   toolUses: Array<{ toolUseId: string; name: string; inputJson: string }>
   content: ContentBlock[]
   usage?: TokenUsage
@@ -144,7 +143,6 @@ async function* streamOneTurn(
   if (!res.stream) throw new Error('No stream in Bedrock response')
 
   let stopReason = 'end_turn'
-  let textContent = ''
   let usage: RawTurnResult['usage']
 
   // Per-block-index accumulator for verbatim ContentBlock reconstruction
@@ -187,7 +185,6 @@ async function* streamOneTurn(
           yield { type: 'thinking_delta', text: delta.text }
           acc.textParts.push(delta.text)
         } else if (acc.kind === 'text') {
-          textContent += delta.text
           yield { type: 'delta', text: delta.text }
           acc.textParts.push(delta.text)
         }
@@ -280,7 +277,7 @@ async function* streamOneTurn(
     }
   }
 
-  return { stopReason, textContent, toolUses, content, usage }
+  return { stopReason, toolUses, content, usage }
 }
 
 // ── One-shot non-streaming call (used for title generation) ──────────────────
@@ -363,7 +360,6 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
 
   return {
     stopReason: raw.stopReason,
-    textContent: raw.textContent,
     toolUses: raw.toolUses.map(tu => ({ callId: tu.toolUseId, name: tu.name, inputJson: tu.inputJson })),
     content: toNeutral(raw.content),
     usage: raw.usage,
