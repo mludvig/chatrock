@@ -34,8 +34,8 @@ test('create a share link, open it unauthenticated, then revoke it', async ({ pa
 
   // A successful create copies the link to the clipboard and lists it — assert both, since
   // either failing is exactly the "Not found" 404 regression this test guards against.
-  await expect(page.locator('.share-list-item')).toHaveCount(1, { timeout: 10_000 })
-  const shareUrl = await page.locator('.share-list-url').first().getAttribute('href')
+  await expect(page.locator('.published-links-item')).toHaveCount(1, { timeout: 10_000 })
+  const shareUrl = await page.locator('.published-links-url').first().getAttribute('href')
   expect(shareUrl).toBeTruthy()
 
   // Open the share link in a brand-new, unauthenticated browser context (no Cognito session,
@@ -51,8 +51,8 @@ test('create a share link, open it unauthenticated, then revoke it', async ({ pa
   // the click, so the listener must be registered BEFORE clicking — Playwright auto-dismisses
   // any dialog with no listener attached yet, which would silently no-op the revoke.
   page.once('dialog', d => d.accept())
-  await page.locator('.share-list-item .action-btn[title="Revoke"]').click()
-  await expect(page.locator('.share-list-item')).toHaveCount(0, { timeout: 10_000 })
+  await page.locator('.published-links-item .action-btn[title="Revoke"]').click()
+  await expect(page.locator('.published-links-item')).toHaveCount(0, { timeout: 10_000 })
 
   // Browser navigation (not page.request.get — its APIRequestContext hits sporadic ECONNRESETs
   // against this CloudFront distribution, unrelated to the app) confirms the link is dead.

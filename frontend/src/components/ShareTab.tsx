@@ -145,11 +145,11 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
         {shares === null && <div className="prefs-desc">Loading…</div>}
         {shares !== null && shares.length === 0 && <div className="prefs-desc">No share links yet.</div>}
         {shares !== null && shares.length > 0 && (
-          <ul className="share-list">
+          <ul className="published-links">
             {shares.map(s => (
-              <li key={s.shareId} className="share-list-item">
-                <div className="share-list-main">
-                  <a href={shareUrl(s.shareId)} target="_blank" rel="noopener noreferrer" className="share-list-url">
+              <li key={s.shareId} className="published-links-item">
+                <div className="published-links-main">
+                  <a href={shareUrl(s.shareId)} target="_blank" rel="noopener noreferrer" className="published-links-url">
                     /s/{s.shareId}
                   </a>
                   <span className="topic-chip">{s.mode}</span>
@@ -159,7 +159,7 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
                       : s.includeTools ? '+tools' : 'clean'}
                   </span>
                 </div>
-                <div className="share-list-actions">
+                <div className="published-links-actions">
                   <button className="action-btn" title="Copy link" onClick={() => copy(shareUrl(s.shareId), s.shareId)}>
                     <FontAwesomeIcon icon={copiedId === s.shareId ? faCheck : faCopy} />
                   </button>

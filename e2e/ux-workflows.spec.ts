@@ -257,7 +257,7 @@ test('a phone can rerun, fork, export, and share a conversation', async ({ page,
     for await (const chunk of stream) chunks.push(chunk)
     expect(Buffer.concat(chunks).toString()).toContain('GREEN_WIDGET')
     await page.getByRole('button', { name: 'Create share link' }).click()
-    const link = page.locator('.share-list-url').first()
+    const link = page.locator('.published-links-url').first()
     await expect(link).toBeVisible()
     const url = (await link.getAttribute('href'))!
     const publicContext = await browser.newContext()
