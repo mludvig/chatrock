@@ -1056,6 +1056,26 @@ test('leaf-resilience: the user prompt is pinned as activeLeaf before streaming 
 
 // ── Increment F: per-turn metadata + web-search toggle ───────────────────────
 
+test('an effort the model does not offer runs at the model default (GPT has no off)', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.openai.gpt-6-sol', systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+
+  async function* fakeStream() {
+    yield { type: 'stop' as const, stopReason: 'end_turn' }
+  }
+  mockBedrock.converseStream.mockReturnValue(fakeStream())
+
+  await buildHandler(mockPost)(makeEvent({
+    chatId: 'c1', content: 'Q', model: 'global.openai.gpt-6-sol', systemPrompt: '',
+    modelSettings: { thinkingEffort: 'off' },
+  }))
+
+  expect(mockBedrock.converseStream.mock.calls[0][3]?.settings?.thinkingEffort).toBe('low')
+})
+
 test('f1: assistant turn row stores thinkingEffort and webSearchEnabled from modelSettings', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })

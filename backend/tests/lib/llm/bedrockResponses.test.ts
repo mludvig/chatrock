@@ -147,19 +147,7 @@ describe('bedrockResponses.streamTurn', () => {
     expect(result.replayContent[0].opaque).toBeDefined()
   })
 
-  test('thinkingEffort:off omits reasoning params entirely', async () => {
-    mockCreate.mockResolvedValue(fakeStream([
-      { type: 'response.completed', response: { status: 'completed', output_text: 'ok', output: [], usage: undefined } },
-    ]))
-    await drain(bedrockResponsesProvider.streamTurn({
-      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'off' }, cacheBoundaryIndex: -1,
-    }))
-    const params = mockCreate.mock.calls[0][0]
-    expect(params.reasoning).toBeUndefined()
-    expect(params.include).toBeUndefined()
-  })
-
-  test('thinkingEffort:off sends effort none for a model whose levels include off (Kimi K3)', async () => {
+  test('thinkingEffort:off is sent as effort none', async () => {
     mockCreate.mockResolvedValue(fakeStream([
       { type: 'response.completed', response: { status: 'completed', output_text: 'ok', output: [], usage: undefined } },
     ]))
