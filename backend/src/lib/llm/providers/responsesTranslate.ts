@@ -58,7 +58,10 @@ export function toNeutral(items: ResponseOutputItem[]): Block[] {
         }
       }
     } else if (item.type === 'reasoning') {
-      const text = item.summary.map(s => s.text).join('\n\n')
+      // GPT fills `summary`; Kimi K3 leaves it empty and returns raw `reasoning_text` content.
+      const text = item.summary.length > 0
+        ? item.summary.map(s => s.text).join('\n\n')
+        : (item.content ?? []).map(c => c.text).join('\n\n')
       out.push({
         kind: 'thinking',
         text,

@@ -159,6 +159,44 @@ describe('bedrockResponses.streamTurn', () => {
     expect(params.include).toBeUndefined()
   })
 
+  test('thinkingEffort:off sends effort none for a model whose levels include off (Kimi K3)', async () => {
+    mockCreate.mockResolvedValue(fakeStream([
+      { type: 'response.completed', response: { status: 'completed', output_text: 'ok', output: [], usage: undefined } },
+    ]))
+    await drain(bedrockResponsesProvider.streamTurn({
+      modelId: 'global.moonshotai.kimi-k3', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'off' }, cacheBoundaryIndex: -1,
+    }))
+    const params = mockCreate.mock.calls[0][0]
+    expect(params.reasoning).toEqual({ effort: 'none' })
+    expect(params.include).toBeUndefined()
+  })
+
+  test('reasoning_text deltas (Kimi K3) stream as thinking and persist from the item content', async () => {
+    const reasoning = { type: 'reasoning', id: 'rs_1', summary: [], content: [{ type: 'reasoning_text', text: 'think' }] }
+    const response = {
+      status: 'completed', output_text: 'hi',
+      output: [reasoning, { type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'hi', annotations: [] }] }],
+      usage: undefined,
+    }
+    mockCreate.mockResolvedValue(fakeStream([
+      { type: 'response.reasoning_text.delta', delta: 'thi' },
+      { type: 'response.reasoning_text.delta', delta: 'nk' },
+      { type: 'response.output_item.done', item: reasoning },
+      { type: 'response.output_text.delta', delta: 'hi' },
+      { type: 'response.completed', response },
+    ]))
+    const { chunks, result } = await drain(bedrockResponsesProvider.streamTurn({
+      modelId: 'global.moonshotai.kimi-k3', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'low' }, cacheBoundaryIndex: -1,
+    }))
+    expect(chunks).toEqual([
+      { type: 'thinking_delta', text: 'thi' },
+      { type: 'thinking_delta', text: 'nk' },
+      { type: 'thinking_done' },
+      { type: 'delta', text: 'hi' },
+    ])
+    expect(result.content[0]).toMatchObject({ kind: 'thinking', text: 'think' })
+  })
+
   test('function_call output produces tool_call_start/tool_call chunks and a tool_use stopReason', async () => {
     const fcItem = { type: 'function_call', id: 'fc_1', call_id: 'call_abc', name: 'web_search', arguments: '{"query":"x"}', status: 'completed' }
     const response = { status: 'completed', output_text: '', output: [fcItem], usage: undefined }
