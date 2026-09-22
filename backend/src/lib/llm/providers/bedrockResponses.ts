@@ -141,6 +141,11 @@ function buildReasoningParams(caps: ReturnType<typeof getCapabilities>, settings
   }
 }
 
+function isCrossRegionReasoningError(err: unknown): boolean {
+  return (err as { status?: number }).status === 400
+    && /encrypted content cannot be used in a different region/i.test((err as Error).message)
+}
+
 async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult> {
   const caps = getCapabilities(req.modelId)
   const client = await getClient()
@@ -148,7 +153,7 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   const input: ResponseInputItem[] = fromNeutralMessages(req.messages)
   const tools = req.tools.map(toResponsesTool)
 
-  const stream = await client.responses.create({
+  const create = (input: ResponseInputItem[]) => client.responses.create({
     model: req.modelId,
     input,
     instructions: req.systemPrompt || undefined,
@@ -158,6 +163,16 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
     ...(tools.length > 0 ? { tools, ...(req.forceToolName ? { tool_choice: { type: 'function' as const, name: req.forceToolName } } : {}) } : {}),
     ...buildReasoningParams(caps, req.settings),
   }, ...(req.abortSignal ? [{ signal: req.abortSignal }] : []))
+
+  let stream
+  try {
+    stream = await create(input)
+  } catch (err) {
+    if (!isCrossRegionReasoningError(err)) throw err
+    // Encrypted reasoning only decrypts in the region that produced it, and a global.* profile
+    // may route this call elsewhere — retry without it. See docs/adr/0052-cross-region-encrypted-reasoning.md.
+    stream = await create(input.filter(item => item.type !== 'reasoning'))
+  }
 
   let finalResponse: OpenAIResponse | undefined
   let thinkingOpen = false

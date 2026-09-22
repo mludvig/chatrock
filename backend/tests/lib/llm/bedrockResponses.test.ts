@@ -255,6 +255,39 @@ describe('bedrockResponses.streamTurn', () => {
     }))
     expect(result.stopReason).toBe('max_tokens')
   })
+
+  describe('encrypted reasoning from another region', () => {
+    const response = { status: 'completed', output_text: 'ok', output: [{ type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'ok', annotations: [] }] }], usage: undefined }
+    const opaque = encodeOpaque('bedrock-responses', { id: 'rs_1', encryptedContent: 'ENC' })
+    const messages: NeutralMessage[] = [
+      { role: 'user', content: [{ kind: 'text', text: 'q1' }] },
+      { role: 'assistant', content: [{ kind: 'thinking', text: 'thought', opaque }, { kind: 'text', text: 'a1' }] },
+      { role: 'user', content: [{ kind: 'text', text: 'q2' }] },
+    ]
+    const turn = () => bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-6-sol', systemPrompt: '', messages, tools: [], settings: { thinkingEffort: 'low' }, cacheBoundaryIndex: -1,
+    })
+    const hasReasoning = (input: Array<{ type?: string }>) => input.some(i => i.type === 'reasoning')
+
+    test('retries once without reasoning items when the API rejects it as cross-region', async () => {
+      mockCreate
+        .mockRejectedValueOnce(Object.assign(new Error('400 Encrypted content cannot be used in a different region from the one that created it.'), { status: 400 }))
+        .mockResolvedValueOnce(fakeStream([{ type: 'response.completed', response }]))
+
+      const { result } = await drain(turn())
+
+      expect(result.textContent).toBe('ok')
+      expect(mockCreate).toHaveBeenCalledTimes(2)
+      expect(hasReasoning(mockCreate.mock.calls[0][0].input)).toBe(true)
+      expect(hasReasoning(mockCreate.mock.calls[1][0].input)).toBe(false)
+    })
+
+    test('does not retry any other 400', async () => {
+      mockCreate.mockRejectedValueOnce(Object.assign(new Error('400 Invalid input'), { status: 400 }))
+      await expect(drain(turn())).rejects.toThrow('400 Invalid input')
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+  })
 })
 
 describe('bedrockResponses.sanitizeHistory', () => {
