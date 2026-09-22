@@ -9,7 +9,8 @@ export interface ModelCapabilities {
   // 'adaptive' = Bedrock Converse's thinking.type=adaptive + output_config.effort (Anthropic);
   // 'effort' = a plain reasoning.effort dial (e.g. OpenAI via Bedrock Responses); 'none' = unsupported.
   thinking: 'adaptive' | 'effort' | 'none'
-  // Which of ThinkingEffort's five levels this model accepts. Omit -> all five.
+  // Which of ThinkingEffort's five levels this model accepts. Omit -> all five; every
+  // thinking:'effort' model lists them, since those APIs differ on 'off'.
   thinkingLevels?: ThinkingEffort[]
   attachments: boolean                           // images
   documents: boolean                             // pdf/txt/csv/md
@@ -128,7 +129,8 @@ export const MODELS: Model[] = [
     id: 'global.moonshotai.kimi-k3',
     name: 'Kimi K3',
     capabilities: {
-      provider: 'bedrock-responses', thinking: 'effort',
+      provider: 'bedrock-responses',
+      thinking: 'effort', thinkingLevels: ['off', 'low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
@@ -181,6 +183,13 @@ export function currentModelId(modelId: string): string | undefined {
 export function resolveModelId(modelId: string): { model: string; migratedFrom?: string } {
   if (isValidModelId(modelId)) return { model: modelId }
   return { model: currentModelId(modelId) ?? DEFAULT_CHAT_MODEL, migratedFrom: modelId }
+}
+
+// The effort to run a turn at: the requested one if this model offers it, else the model's
+// default — the same rule the composer applies. See docs/adr/0053-thinking-levels-as-model-data.md.
+export function supportedEffort(caps: ModelCapabilities, effort: ThinkingEffort | undefined): ThinkingEffort | undefined {
+  if (effort === undefined || !caps.thinkingLevels || caps.thinkingLevels.includes(effort)) return effort
+  return defaultSettings(caps).thinkingEffort
 }
 
 export function defaultSettings(caps: ModelCapabilities): ModelSettings {

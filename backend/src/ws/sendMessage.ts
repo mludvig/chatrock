@@ -7,7 +7,7 @@ import { getConnection, getChat, listMessages, putMessage, putMessagePair, updat
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
-import { currentModelId, type ModelSettings } from '../config/models'
+import { currentModelId, getCapabilities, supportedEffort, type ModelSettings } from '../config/models'
 import { hydrateBlocks, buildUserBlocks, type AttachmentMeta } from '../lib/attachments'
 import { resolvePreferences, type UserPreferences } from '../lib/preferences'
 import { assembleSystemPrompt, type AssembleInput } from '../lib/promptAssembly'
@@ -188,7 +188,7 @@ export const buildHandler = (postFn: PostFn) => async (
   const projectMemoryEnabled = memoryEnabled && !!projectId && projectItem?.memoryEnabled !== false
 
   const effectiveModelSettings: ModelSettings = {
-    thinkingEffort:         effectivePrefs.thinkingEffort,
+    thinkingEffort:         supportedEffort(getCapabilities(model), effectivePrefs.thinkingEffort),
     webSearchEnabled:       effectivePrefs.webSearchEnabled,
     webSearchProvider:      effectivePrefs.webSearchProvider,
     browserCoreEnabled:     effectivePrefs.browserCoreEnabled,

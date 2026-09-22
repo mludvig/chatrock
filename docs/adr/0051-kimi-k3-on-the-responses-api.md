@@ -17,7 +17,7 @@ Kimi K3 uses the existing `bedrock-responses` provider (`lib/llm/providers/bedro
 Three small generalisations cover how Kimi differs from GPT:
 - `response.reasoning_text.delta` streams as thinking, just like GPT's reasoning-summary deltas.
 - A reasoning item with an empty `summary` takes its text from its `reasoning_text` content.
-- `off` is sent as `effort: 'none'` for a model whose levels include `off`.
+- `off` is sent as `effort: 'none'`. Kimi K3 lists all five levels, so it's the model that can switch reasoning off (`docs/adr/0053-thinking-levels-as-model-data.md`).
 
 ## Consequences
 

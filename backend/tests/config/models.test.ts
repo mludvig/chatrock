@@ -1,4 +1,4 @@
-import { MODELS, DEFAULT_CHAT_MODEL, TITLE_MODEL, MEMORY_EXTRACTION_MODEL, getCapabilities, resolveModelId, currentModelId } from '../../src/config/models'
+import { MODELS, DEFAULT_CHAT_MODEL, TITLE_MODEL, MEMORY_EXTRACTION_MODEL, getCapabilities, resolveModelId, currentModelId, supportedEffort } from '../../src/config/models'
 
 test('MODELS list is non-empty and has required fields', () => {
   expect(MODELS.length).toBeGreaterThan(0)
@@ -72,4 +72,30 @@ test('no replaces entry is a live model id', () => {
 test('no retired id is replaced by two models', () => {
   const all = MODELS.flatMap(m => m.replaces ?? [])
   expect(new Set(all).size).toBe(all.length)
+})
+
+describe('supportedEffort', () => {
+  const gpt = getCapabilities('global.openai.gpt-6-sol')
+
+  test('passes through a level the model offers', () => {
+    expect(supportedEffort(gpt, 'high')).toBe('high')
+  })
+
+  test('falls back to the model default for a level it does not offer', () => {
+    expect(supportedEffort(gpt, 'off')).toBe('low')
+  })
+
+  test('leaves an unset effort unset', () => {
+    expect(supportedEffort(gpt, undefined)).toBeUndefined()
+  })
+
+  test('Kimi K3 offers off', () => {
+    expect(supportedEffort(getCapabilities('global.moonshotai.kimi-k3'), 'off')).toBe('off')
+  })
+
+  test('every thinking model lists its levels explicitly', () => {
+    for (const m of MODELS.filter(m => m.capabilities.thinking === 'effort')) {
+      expect(m.capabilities.thinkingLevels).toBeDefined()
+    }
+  })
 })

@@ -131,10 +131,8 @@ function normalizeStopReason(response: OpenAIResponse): string {
 
 function buildReasoningParams(caps: ReturnType<typeof getCapabilities>, settings: ModelSettings) {
   if (caps.thinking !== 'effort' || !settings.thinkingEffort) return {}
-  if (settings.thinkingEffort === 'off') {
-    // Only a model that offers 'off' can switch reasoning off; for the rest (GPT) 'off' means the API default.
-    return caps.thinkingLevels?.includes('off') === false ? {} : { reasoning: { effort: 'none' as const } }
-  }
+  // The Responses API calls 'off' 'none'. Only a model whose thinkingLevels offer 'off' ever gets it.
+  if (settings.thinkingEffort === 'off') return { reasoning: { effort: 'none' as const } }
   return {
     reasoning: { effort: settings.thinkingEffort, summary: 'auto' as const },
     include: ['reasoning.encrypted_content' as const],
