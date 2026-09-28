@@ -36,6 +36,9 @@ const DRAFT_STORAGE_KEY = 'chatrock:draft'
 // How often to re-ask for a turn that is streaming to somebody else's connection. Each pass is
 // one GET /messages, and only runs while the backend says a turn is actually in flight.
 const STREAM_POLL_MS = 3000
+// Longer than both the 4s tool-call heartbeat and the 12s ack watchdog, so a live stream is
+// never this quiet. See docs/adr/0056-stale-sending-needs-a-quiet-stream.md.
+const STALE_SENDING_QUIET_MS = 15000
 
 interface PersistedDraft {
   chatId: string
@@ -194,6 +197,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // frame) for that chat. If it fires, the send was dropped by a stale WebSocket —
   // recover instead of hanging on "Processing…" forever.
   const ackTimersRef = useRef<Record<string, number | null>>({})
+  // When this chat last sent or received a WS frame — reloadMessages only distrusts a
+  // `sending` flag once the stream has been quiet for STALE_SENDING_QUIET_MS.
+  const lastFrameAtRef = useRef<Record<string, number>>({})
   // msgId of the optimistic user bubble for the in-flight send (removed on ack-timeout).
   const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
@@ -417,13 +423,12 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       // our local sendingByChat flag is still stuck true (e.g. a done/cancelled/error WS
       // frame was missed while this chat wasn't the active one), treat the flag as stale
       // rather than trusting it forever — otherwise this chat is stuck showing a frozen
-      // snapshot until an unrelated WS reconnect happens to clear it. Gated on the ack
-      // watchdog having already fired/cleared (ackTimersRef.current[id] == null) so this
-      // can't race a turn that was JUST started — right after send, the backend hasn't had
-      // a chance to persist the streaming marker yet, and r.streaming would wrongly read as
-      // false for a turn that's actually about to begin (armAckWatchdog's own 12s no-frame
-      // timeout already covers "the send never landed" for that window).
-      const staleSending = useChatStore.getState().sendingByChat[id] && !r.streaming && ackTimersRef.current[id] == null
+      // snapshot until an unrelated WS reconnect happens to clear it. Only once the stream
+      // has been quiet for a while: the backend acks before it persists the question or the
+      // streaming marker, so a fetch landing just after the ack can read "nothing, not
+      // streaming" for a turn that's live. See docs/adr/0056-stale-sending-needs-a-quiet-stream.md.
+      const streamQuiet = Date.now() - (lastFrameAtRef.current[id] ?? 0) > STALE_SENDING_QUIET_MS
+      const staleSending = useChatStore.getState().sendingByChat[id] && !r.streaming && streamQuiet
       if (useChatStore.getState().sendingByChat[id] && !opts?.force && !staleSending) return
       const enriched = enrichMessages(r.bubbles)
       useChatStore.getState().setMessagesCache(id, {
@@ -574,6 +579,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     setWSHandlers((evt: WSEvent) => {
       // Any frame proves the WebSocket is live → disarm that chat's delivery watchdog.
       clearAckTimer(evt.chatId)
+      lastFrameAtRef.current[evt.chatId] = Date.now()
       // Same signal confirms the send that flushed this draft actually landed.
       if (pendingDraftKeyRef.current) {
         clearPersistedDraftIfMatches(pendingDraftKeyRef.current)
@@ -1102,6 +1108,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // first frame of any kind.
   function armAckWatchdog(chatKey: string) {
     clearAckTimer(chatKey)
+    lastFrameAtRef.current[chatKey] = Date.now()
     ackTimersRef.current[chatKey] = window.setTimeout(() => handleAckTimeout(chatKey), 12000)
   }
 
