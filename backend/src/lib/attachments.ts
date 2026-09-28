@@ -2,7 +2,7 @@ import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectsCommand, Cop
 import { getSignedUrl as s3GetSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { getSignedUrl as cfGetSignedUrl } from '@aws-sdk/cloudfront-signer'
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
-import type { Block, DocumentFormat, ImageFormat } from './llm/blocks'
+import type { Block, DocumentFormat, ImageFormat, ToolResultEntry } from './llm/blocks'
 
 // ── Allowlist ─────────────────────────────────────────────────────────────────
 
@@ -220,16 +220,28 @@ export async function hydrateBlocks(
       if (block.kind === 'document') {
         return { ...block, document: { ...block.document, source: await hydrateSource(block.document.source, client) } }
       }
-      // Tool-result blocks: image entries can be nested inside entries[]
-      // (browser screenshots are persisted as s3Uri inside tool_result.entries[]).
-      // Without this branch the raw s3Uri reaches the provider on follow-up sends.
+      // Tool-result blocks: image/document entries can be nested inside entries[]
+      // (browser screenshots and project_read_file PDFs are persisted as s3Uri inside
+      // tool_result.entries[]). Without this branch the raw s3Uri reaches the provider on
+      // follow-up sends.
       if (block.kind === 'tool_result') {
         const hydratedEntries = await Promise.all(
-          block.entries.map(async entry =>
-            entry.kind === 'image'
-              ? { ...entry, image: { ...entry.image, source: await hydrateSource(entry.image.source, client) } }
-              : entry
-          )
+          block.entries.map(async (entry): Promise<ToolResultEntry> => {
+            if (entry.kind === 'image') {
+              return { ...entry, image: { ...entry.image, source: await hydrateSource(entry.image.source, client) } }
+            }
+            if (entry.kind === 'document') {
+              // Points at a project file, which can be deleted after the tool call — see
+              // docs/adr/0055-document-tool-results-persist-as-a-pointer.md.
+              try {
+                return { ...entry, document: { ...entry.document, source: await hydrateSource(entry.document.source, client) } }
+              } catch (e) {
+                if ((e as { name?: string }).name !== 'NoSuchKey') throw e
+                return { kind: 'text', text: `[${entry.document.name} has since been deleted from the project]` }
+              }
+            }
+            return entry
+          })
         )
         return { ...block, entries: hydratedEntries }
       }

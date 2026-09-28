@@ -6,6 +6,7 @@ import type { ToolResult, ToolResultEntry } from './llm/toolSpec'
 import type { ToolContext } from './tools'
 
 const TRANSCRIPT_TURNS_CAP = 40
+const BUCKET = process.env.ATTACHMENTS_BUCKET ?? ''
 
 function textResult(text: string, isError = false): ToolResult {
   return { entries: [{ kind: 'text', text }], isError }
@@ -67,7 +68,7 @@ export async function executeProjectReadFileTool(
       try {
         const bytes = await fetchS3Bytes(s3Key)
         const entries: ToolResultEntry[] = [
-          { kind: 'document', format: 'pdf', name: file.filename as string, bytes },
+          { kind: 'document', format: 'pdf', name: file.filename as string, bytes, s3Uri: `s3://${BUCKET}/${s3Key}` },
           { kind: 'text', text: 'The complete PDF is included above.' },
         ]
         return { entries, isError: false }

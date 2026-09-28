@@ -71,6 +71,21 @@ describe('converseTranslate: toNeutral / fromNeutral round-trip', () => {
     expect(fromNeutral(neutral)).toEqual(bedrock)
   })
 
+  test('tool_result block with nested document entry (project file, s3Location)', () => {
+    const bedrock: ContentBlock[] = [{
+      toolResult: {
+        toolUseId: 'tooluse_3',
+        content: [{ document: { format: 'pdf', name: 'report', source: { s3Location: { uri: 's3://bucket/report.pdf' } } } }, { text: 'here' }],
+        status: 'success',
+      },
+    }]
+    const neutral = toNeutral(bedrock)
+    expect((neutral[0] as Extract<Block, { kind: 'tool_result' }>).entries[0]).toEqual(
+      { kind: 'document', document: { format: 'pdf', name: 'report', source: { s3Uri: 's3://bucket/report.pdf' } } },
+    )
+    expect(fromNeutral(neutral)).toEqual(bedrock)
+  })
+
   test('image block (user attachment, s3Location)', () => {
     const bedrock: ContentBlock[] = [{ image: { format: 'jpeg', source: { s3Location: { uri: 's3://bucket/img.jpg' } } } }]
     const neutral = toNeutral(bedrock)

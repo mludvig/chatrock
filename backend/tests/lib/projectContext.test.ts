@@ -111,7 +111,7 @@ describe('executeProjectReadFileTool', () => {
     const result = await executeProjectReadFileTool({ fileId: 'f2', detail: 'full' }, ctx)
     expect(result.isError).toBe(false)
     // No extracted-text sidecar: the full PDF is sent verbatim as a document block
-    expect(content0(result)).toMatchObject({ kind: 'document', format: 'pdf', name: 'report.pdf', bytes: fakeBytes })
+    expect(content0(result)).toMatchObject({ kind: 'document', format: 'pdf', name: 'report.pdf', bytes: fakeBytes, s3Uri: expect.stringMatching(/^s3:\/\/.*\/k\/report\.pdf$/) })
     expect(result.entries![1]).toMatchObject({ kind: 'text', text: expect.stringContaining('complete PDF') })
   })
 

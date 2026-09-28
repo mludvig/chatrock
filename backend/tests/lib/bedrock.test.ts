@@ -1625,3 +1625,63 @@ describe('round retry on a transient drop', () => {
     expect(getMockSend()).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('project_read_file document tool results: live/persist bifurcation', () => {
+  const CTX = { sub: 'user-1', chatId: 'chat-1' }
+  const PDF_BYTES = Buffer.from('%PDF-fake')
+  const S3_URI = 's3://test-bucket/attachments/user-1/project/p1/f1/Q3 report_v2.pdf'
+
+  function mockReadFileRound() {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-read', name: 'project_read_file' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"fileId":"f1","detail":"full"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+      { metadata: { usage: { inputTokens: 10, outputTokens: 5 } } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({
+      entries: [
+        { kind: 'document', format: 'pdf', name: 'Q3 report_v2.pdf', bytes: PDF_BYTES, s3Uri: S3_URI },
+        { kind: 'text', text: 'The complete PDF is included above.' },
+      ],
+      isError: false,
+    })
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'The report says...' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+      { metadata: { usage: { inputTokens: 20, outputTokens: 5 } } },
+    ]))
+  }
+
+  test('persisted turn stores the document as a pointer to the project file, not inline bytes', async () => {
+    mockReadFileRound()
+
+    const turnChunks: Array<{ role: string; content: unknown[] }> = []
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) {
+      if ((chunk as { type: string }).type === 'turn') turnChunks.push(chunk as { role: string; content: unknown[] })
+    }
+
+    const toolResultTurn = turnChunks.find(t => t.role === 'user')!
+    const block = toolResultTurn.content[0] as { entries: unknown[] }
+    expect(block.entries).toEqual([
+      { kind: 'document', document: { format: 'pdf', name: 'Q3 report_v2.pdf', source: { s3Uri: S3_URI } } },
+      { kind: 'text', text: 'The complete PDF is included above.' },
+    ])
+    expect(mockPutObjectBytes).not.toHaveBeenCalled()
+  })
+
+  test('the next round\'s outgoing Bedrock request carries the PDF bytes with a Converse-safe name', async () => {
+    mockReadFileRound()
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of converseStream('test-model', '', [], { settings: {}, ctx: CTX, call: TEST_CALL })) { /* drain */ }
+
+    const secondCallInput = getMockSend().mock.calls[1][0].input as { messages: Array<{ role: string; content: Array<Record<string, unknown>> }> }
+    const toolResultMsg = secondCallInput.messages.find(m => m.role === 'user' && m.content.some(c => 'toolResult' in c))!
+    const block = toolResultMsg.content[0] as { toolResult: { content: Array<Record<string, unknown>> } }
+    expect(block.toolResult.content[0]).toEqual({ document: { format: 'pdf', name: 'Q3 report v2', source: { bytes: PDF_BYTES } } })
+    expect(block.toolResult.content[1]).toEqual({ text: 'The complete PDF is included above.' })
+  })
+})

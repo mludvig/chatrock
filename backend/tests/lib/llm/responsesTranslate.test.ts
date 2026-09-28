@@ -188,6 +188,30 @@ describe('responsesTranslate: fromNeutralMessages (NeutralMessage[] -> flat inpu
     expect(fromNeutralMessages(messages, M)).toEqual([])
   })
 
+  test('tool_result with document entries: pdf as input_file, text formats inlined', () => {
+    const messages: NeutralMessage[] = [
+      {
+        role: 'user',
+        content: [{
+          kind: 'tool_result',
+          callId: 'call_1',
+          entries: [
+            { kind: 'document', document: { format: 'pdf', name: 'report.pdf', source: { bytes: Buffer.from('PDFDATA') } } },
+            { kind: 'document', document: { format: 'md', name: 'notes.md', source: { bytes: Buffer.from('# Title') } } },
+            { kind: 'text', text: 'The complete PDF is included above.' },
+          ],
+          isError: false,
+        }],
+      },
+    ]
+    const items = fromNeutralMessages(messages, M) as Array<{ type: string; output: unknown }>
+    expect(items[0].output).toEqual([
+      { type: 'input_file', filename: 'report.pdf', file_data: `data:application/pdf;base64,${Buffer.from('PDFDATA').toString('base64')}` },
+      { type: 'input_text', text: '<document name="notes.md">\n# Title\n</document>' },
+      { type: 'input_text', text: 'The complete PDF is included above.' },
+    ])
+  })
+
   test('document block: txt/md/csv inlined as tagged text, pdf as input_file', () => {
     const messages: NeutralMessage[] = [
       { role: 'user', content: [{ kind: 'document', document: { format: 'md', name: 'notes.md', source: { bytes: Buffer.from('# Title') } } }] },

@@ -65,6 +65,7 @@ export interface ToolCallBlock {
 export type ToolResultEntry =
   | { kind: 'text'; text: string }
   | { kind: 'image'; image: ImageRef }
+  | { kind: 'document'; document: DocumentRef }
 
 export interface ToolResultBlock {
   kind: 'tool_result'

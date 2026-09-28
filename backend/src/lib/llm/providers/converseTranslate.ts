@@ -5,7 +5,7 @@
 import type { ContentBlock, ToolResultContentBlock } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
 import {
-  type Block, type NeutralMessage, type ImageFormat, type DocumentFormat, type MediaSource,
+  type Block, type NeutralMessage, type ToolResultEntry, type ImageFormat, type DocumentFormat, type MediaSource,
   encodeOpaque, decodeOpaque,
 } from '../blocks'
 
@@ -35,16 +35,25 @@ function mediaSourceFromNeutral(source: MediaSource): { bytes: Uint8Array } | { 
   return { s3Location: { uri: source.s3Uri } }
 }
 
-function toolResultEntryToNeutral(entry: ToolResultContentBlock): { kind: 'text'; text: string } | { kind: 'image'; image: { format: ImageFormat; source: MediaSource } } | null {
+function toolResultEntryToNeutral(entry: ToolResultContentBlock): ToolResultEntry | null {
   if ('text' in entry && entry.text !== undefined) return { kind: 'text', text: entry.text }
   if ('image' in entry && entry.image) {
     return { kind: 'image', image: { format: (entry.image.format ?? 'png') as ImageFormat, source: mediaSourceToNeutral(entry.image.source) } }
   }
+  if ('document' in entry && entry.document) {
+    return {
+      kind: 'document',
+      document: { format: (entry.document.format ?? 'txt') as DocumentFormat, name: entry.document.name ?? 'attachment', source: mediaSourceToNeutral(entry.document.source) },
+    }
+  }
   return null
 }
 
-function toolResultEntryFromNeutral(entry: { kind: 'text'; text: string } | { kind: 'image'; image: { format: ImageFormat; source: MediaSource } }): ToolResultContentBlock {
+function toolResultEntryFromNeutral(entry: ToolResultEntry): ToolResultContentBlock {
   if (entry.kind === 'text') return { text: entry.text }
+  if (entry.kind === 'document') {
+    return { document: { format: entry.document.format, name: converseDocName(entry.document.name), source: mediaSourceFromNeutral(entry.document.source) } } as ToolResultContentBlock
+  }
   return { image: { format: entry.image.format, source: mediaSourceFromNeutral(entry.image.source) } } as ToolResultContentBlock
 }
 
@@ -83,7 +92,7 @@ export function toNeutral(blocks: ContentBlock[]): Block[] {
       })
     } else if ('toolResult' in block && block.toolResult) {
       const tr = block.toolResult
-      const entries = (tr.content ?? []).map(toolResultEntryToNeutral).filter((e): e is NonNullable<typeof e> => e !== null)
+      const entries = (tr.content ?? []).map(toolResultEntryToNeutral).filter((e): e is ToolResultEntry => e !== null)
       out.push({
         kind: 'tool_result',
         callId: tr.toolUseId ?? '',

@@ -14,9 +14,9 @@
 // See docs/adr/0048-openai-models-on-bedrock-runtime.md for the empirically-confirmed
 // wire shapes this maps onto (SSE event names, call_id round-tripping, reasoning
 // encrypted payload sizes).
-import type { ResponseInputItem, ResponseOutputItem, ResponseInputContent } from 'openai/resources/responses/responses'
+import type { ResponseInputItem, ResponseOutputItem, ResponseInputContent, ResponseFunctionCallOutputItemList } from 'openai/resources/responses/responses'
 import {
-  type Block, type NeutralMessage, type MediaSource, type DocumentFormat,
+  type Block, type NeutralMessage, type MediaSource, type DocumentFormat, type DocumentRef,
   type ToolResultEntry as NeutralToolResultEntry,
   encodeOpaque, decodeOpaque,
 } from '../blocks'
@@ -44,6 +44,13 @@ function mediaSourceToText(source: MediaSource): string {
 }
 
 const INLINE_TEXT_DOCUMENT_FORMATS: DocumentFormat[] = ['txt', 'md', 'csv']
+
+function documentContent(doc: DocumentRef): { type: 'input_text'; text: string } | { type: 'input_file'; filename: string; file_data: string } {
+  if (INLINE_TEXT_DOCUMENT_FORMATS.includes(doc.format)) {
+    return { type: 'input_text', text: `<document name="${doc.name}">\n${mediaSourceToText(doc.source)}\n</document>` }
+  }
+  return { type: 'input_file', filename: doc.name, file_data: mediaSourceToDataUrl(doc.source, 'application/pdf') }
+}
 
 // ── output items (one round's result) -> neutral ────────────────────────────
 
@@ -90,14 +97,15 @@ export function toNeutral(items: ResponseOutputItem[], modelId: string): Block[]
 
 // ── neutral history -> input items (flat; see file header) ─────────────────
 
-function toolResultOutput(entries: NeutralToolResultEntry[]): string | Array<{ type: 'input_text'; text: string } | { type: 'input_image'; detail: 'auto'; image_url: string }> {
-  const hasImage = entries.some(e => e.kind === 'image')
-  if (!hasImage) {
+function toolResultOutput(entries: NeutralToolResultEntry[]): string | ResponseFunctionCallOutputItemList {
+  if (entries.every(e => e.kind === 'text')) {
     return entries.filter((e): e is Extract<NeutralToolResultEntry, { kind: 'text' }> => e.kind === 'text').map(e => e.text).join('\n\n')
   }
   return entries.map(e => e.kind === 'text'
     ? { type: 'input_text' as const, text: e.text }
-    : { type: 'input_image' as const, detail: 'auto' as const, image_url: mediaSourceToDataUrl(e.image.source, `image/${e.image.format}`) })
+    : e.kind === 'document'
+      ? documentContent(e.document)
+      : { type: 'input_image' as const, detail: 'auto' as const, image_url: mediaSourceToDataUrl(e.image.source, `image/${e.image.format}`) })
 }
 
 export function fromNeutralMessages(messages: NeutralMessage[], modelId: string): ResponseInputItem[] {
@@ -126,11 +134,7 @@ export function fromNeutralMessages(messages: NeutralMessage[], modelId: string)
           break
 
         case 'document':
-          if (INLINE_TEXT_DOCUMENT_FORMATS.includes(block.document.format)) {
-            pending.push({ type: 'input_text', text: `<document name="${block.document.name}">\n${mediaSourceToText(block.document.source)}\n</document>` })
-          } else {
-            pending.push({ type: 'input_file', filename: block.document.name, file_data: mediaSourceToDataUrl(block.document.source, 'application/pdf') })
-          }
+          pending.push(documentContent(block.document))
           break
 
         case 'thinking': {

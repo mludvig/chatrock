@@ -14,8 +14,9 @@ export type ToolResultEntry =
   | { kind: 'image'; format: 'png' | 'jpeg'; bytes: Uint8Array }
   // Full-document tool results (e.g. project_read_file returning a raw PDF for the model to
   // read directly) — distinct from the neutral Block's DocumentBlock (which is at-rest/stored
-  // shape) since a tool result's document is always inline bytes, never an s3Uri.
-  | { kind: 'document'; format: 'pdf' | 'txt' | 'md' | 'csv'; name: string; bytes: Uint8Array }
+  // shape) since the live document is always inline bytes. `s3Uri` is where the file already
+  // lives; the persisted tool result points there instead of storing the bytes.
+  | { kind: 'document'; format: 'pdf' | 'txt' | 'md' | 'csv'; name: string; bytes: Uint8Array; s3Uri: string }
 
 export interface ToolResult {
   entries: ToolResultEntry[]

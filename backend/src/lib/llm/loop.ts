@@ -245,6 +245,7 @@ async function* streamRounds(
       const entries = toolResult.entries
       const textEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'text' }> => e.kind === 'text')
       const imageEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'image' }> => e.kind === 'image')
+      const documentEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'document' }> => e.kind === 'document')
       const isError = toolResult.isError
 
       // Emit memoryChanged when manage_memory / manage_project_memory succeeds (triggers WS
@@ -253,7 +254,7 @@ async function* streamRounds(
         ? { type: 'memoryChanged', scope: tu.name === 'manage_project_memory' ? 'project' : 'user', operation: String(input?.operation ?? ''), category: input?.category, text: input?.text }
         : undefined
 
-      if (imageEntries.length === 0) {
+      if (imageEntries.length === 0 && documentEntries.length === 0) {
         // Text-only tool result. Single-call tools (web_search, manage_memory, etc.) return
         // exactly one text entry, but multi-step browser tools with no screenshot (e.g.
         // get_rendered_page's navigate+snapshot, or browse_web with text-only steps) return
@@ -279,6 +280,13 @@ async function* streamRounds(
       const liveEntries: NeutralToolResultEntry[] = []
       const persistEntries: NeutralToolResultEntry[] = []
       const screenshotUrls: string[] = []
+      // Document-bearing result (project_read_file's raw PDF): live carries the bytes, persist
+      // points at the file's own S3 object instead of copying it. See
+      // docs/adr/0055-document-tool-results-persist-as-a-pointer.md.
+      for (const doc of documentEntries) {
+        liveEntries.push({ kind: 'document', document: { format: doc.format, name: doc.name, source: { bytes: doc.bytes } } })
+        persistEntries.push({ kind: 'document', document: { format: doc.format, name: doc.name, source: { s3Uri: doc.s3Uri } } })
+      }
       const joinedText = textEntries.map(t => t.text).join('\n\n')
       const cappedText = capToolResultText(joinedText, perCallCap)
       if (cappedText) {

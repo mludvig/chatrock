@@ -238,6 +238,39 @@ test('hydrateBlocks rehydrates nested image inside tool_result.entries[]', async
   expect(s3Client.send).toHaveBeenCalledTimes(1)
 })
 
+test('hydrateBlocks rehydrates a nested document inside tool_result.entries[]', async () => {
+  const fakeBytes = Buffer.from('%PDF')
+  const s3Client = new S3Client({}) as jest.Mocked<S3Client>
+  s3Client.send = jest.fn().mockResolvedValue({
+    Body: { transformToByteArray: async () => fakeBytes },
+  })
+
+  const blocks = [{
+    kind: 'tool_result' as const,
+    callId: 'tu-3',
+    isError: false,
+    entries: [{ kind: 'document' as const, document: { format: 'pdf' as const, name: 'report.pdf', source: { s3Uri: `s3://${process.env.ATTACHMENTS_BUCKET}/attachments/sub/project/p1/f1/report.pdf` } } }],
+  }]
+  const result = await hydrateBlocks(blocks, s3Client)
+  const tr = result[0] as { entries: unknown[] }
+  expect(tr.entries[0]).toEqual({ kind: 'document', document: { format: 'pdf', name: 'report.pdf', source: { bytes: fakeBytes } } })
+})
+
+test('hydrateBlocks replaces a tool_result document whose project file was deleted with a text note', async () => {
+  const s3Client = new S3Client({}) as jest.Mocked<S3Client>
+  s3Client.send = jest.fn().mockRejectedValue(Object.assign(new Error('The specified key does not exist.'), { name: 'NoSuchKey' }))
+
+  const blocks = [{
+    kind: 'tool_result' as const,
+    callId: 'tu-4',
+    isError: false,
+    entries: [{ kind: 'document' as const, document: { format: 'pdf' as const, name: 'report.pdf', source: { s3Uri: `s3://${process.env.ATTACHMENTS_BUCKET}/attachments/sub/project/p1/f1/report.pdf` } } }],
+  }]
+  const result = await hydrateBlocks(blocks, s3Client)
+  const tr = result[0] as { entries: unknown[] }
+  expect(tr.entries[0]).toEqual({ kind: 'text', text: '[report.pdf has since been deleted from the project]' })
+})
+
 test('hydrateBlocks leaves text-only tool_result unchanged without S3 calls', async () => {
   const s3Client = new S3Client({}) as jest.Mocked<S3Client>
   s3Client.send = jest.fn()
