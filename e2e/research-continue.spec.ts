@@ -18,7 +18,7 @@ test('a truncated Brief research answer shows Continue and completes when clicke
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
   await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
-  await expect(page.locator('select[title^="Research depth"]')).toHaveValue('brief')
+  await expect(page.locator('select[title="Response mode"]')).toHaveValue('brief')
 
   await page.locator('.message-input').fill(
     'Do this as a strictly sequential chain of web_search calls — one search at a time, ' +

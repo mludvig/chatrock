@@ -22,7 +22,7 @@ test('a background chat keeps streaming while a foreground chat sends, and cance
   await page.goto('/c/new')
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
   await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
-  await page.locator('select[title^="Research depth"]').selectOption('deep')
+  await page.locator('select[title="Response mode"]').selectOption('deep')
   await page.locator('.message-input').fill(slowQuestion)
   await page.locator('.btn-send').click()
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
@@ -39,7 +39,7 @@ test('a background chat keeps streaming while a foreground chat sends, and cance
 
   // Chat A is no longer the viewed chat, but its sidebar row still shows the "sending"
   // spinner — proof sendingByChat is keyed per chatId, not one global flag.
-  await expect(page.getByTitle('Generating a response…')).toHaveCount(1)
+  await expect(page.locator('.chat-title', { hasText: /^◌ / })).toHaveCount(1)
 
   // Chat B: an ordinary fast turn, sent while A is still in flight.
   await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
@@ -51,7 +51,7 @@ test('a background chat keeps streaming while a foreground chat sends, and cance
   await expect(page.locator('.btn-stop')).toBeVisible({ timeout: 20_000 })
 
   // Both chats are sending at once — two independent sidebar spinners, not one shared flag.
-  await expect(page.getByTitle('Generating a response…')).toHaveCount(2)
+  await expect(page.locator('.chat-title', { hasText: /^◌ / })).toHaveCount(2)
 
   // Switch back to chat A — browser back, since the composer's post-send navigate() for a
   // new chat replaces the /c/new history entry (ChatView.tsx), so this lands exactly on

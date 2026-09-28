@@ -23,7 +23,7 @@ test('a Deep-depth turn runs run_research_task and lands a final answer', async 
   await expect(page.locator('.chat-view')).toBeVisible({ timeout: 10_000 })
 
   await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
-  await page.locator('select[title^="Research depth"]').selectOption('deep')
+  await page.locator('select[title="Response mode"]').selectOption('deep')
 
   await page.locator('.message-input').fill(question)
   await page.locator('.btn-send').click()

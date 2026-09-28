@@ -6,7 +6,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import * as path from 'path'
 
-const GPT_MODEL_LABELS = ['GPT-5.6 Luna', 'GPT-5.6 Terra', 'GPT-5.6 Sol', 'GPT-6 Astra']
+const GPT_MODEL_LABELS = ['GPT-6 Luna', 'GPT-5.6 Terra', 'GPT-6 Sol', 'GPT-6 Astra']
 // A real icon, not fixtures/test-image.png: GPT silently ignores that 1x1 pixel image.
 const PNG_FIXTURE = path.join(__dirname, '..', 'frontend', 'public', 'icon-192.png')
 const TXT_FIXTURE = path.join(__dirname, 'fixtures', 'hello.txt')

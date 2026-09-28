@@ -16,7 +16,7 @@ test('depth picker defaults to Brief and sticks once changed', async ({ page }) 
 
   await page.locator('.model-picker').selectOption({ label: FAST_MODEL_LABEL })
 
-  const depthPicker = page.locator('select[title^="Research depth"]')
+  const depthPicker = page.locator('select[title="Response mode"]')
   await expect(depthPicker).toBeVisible({ timeout: 5_000 })
   await expect(depthPicker).toHaveValue('brief')
 

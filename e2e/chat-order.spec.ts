@@ -44,7 +44,7 @@ test('picking a model is not saved until a message is sent', async ({ page }) =>
 
 test('switching model keeps the selected thinking effort', async ({ page }) => {
   await openApp(page)
-  await page.locator('.model-picker').selectOption({ label: 'GPT-5.6 Sol' })
+  await page.locator('.model-picker').selectOption({ label: 'GPT-6 Sol' })
   const effort = page.getByLabel('Thinking effort', { exact: true })
   await effort.selectOption('medium')
   await page.locator('.model-picker').selectOption({ label: 'GPT-5.6 Terra' })
