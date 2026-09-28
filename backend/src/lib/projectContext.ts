@@ -66,9 +66,8 @@ export async function executeProjectReadFileTool(
       // No extracted text — send raw PDF bytes as a document entry
       try {
         const bytes = await fetchS3Bytes(s3Key)
-        const docName = (file.filename as string).replace(/\.pdf$/i, '').slice(0, 200) || 'document'
         const entries: ToolResultEntry[] = [
-          { kind: 'document', format: 'pdf', name: docName, bytes },
+          { kind: 'document', format: 'pdf', name: file.filename as string, bytes },
           { kind: 'text', text: 'The complete PDF is included above.' },
         ]
         return { entries, isError: false }

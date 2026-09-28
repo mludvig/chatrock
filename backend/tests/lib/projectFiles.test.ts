@@ -49,7 +49,7 @@ test('PDF file — calls Bedrock with document block', async () => {
   expect(mockBedrock.converseOnce).toHaveBeenCalled()
   const callArgs = mockBedrock.converseOnce.mock.calls[0]
   const msgs = callArgs[2] as Array<{ role: string; content: unknown[] }>
-  expect(msgs[0].content[0]).toHaveProperty('document')
+  expect(msgs[0].content[0]).toMatchObject({ document: { name: 'report.pdf' } })
   expect(result.microLabel).toBe('Test file label')
 })
 

@@ -75,17 +75,6 @@ export function validateAttachment(contentType: string, sizeBytes: number, filen
   return spec
 }
 
-// ── Sanitize document name ────────────────────────────────────────────────────
-
-export function sanitizeDocName(filename: string): string {
-  const base = filename.replace(/\.[^.]+$/, '')
-  return base
-    .replace(/[^a-zA-Z0-9 \-()]/g, ' ')
-    .replace(/ {2,}/g, ' ')
-    .trim()
-    .slice(0, 200) || 'attachment'
-}
-
 // ── S3 key helpers ────────────────────────────────────────────────────────────
 
 const BUCKET = process.env.ATTACHMENTS_BUCKET ?? ''
@@ -202,7 +191,7 @@ export function attachmentBlock(meta: AttachmentMeta): Block {
     kind: 'document',
     document: {
       format: spec.format as DocumentFormat,
-      name: sanitizeDocName(meta.filename),
+      name: meta.filename,
       source: { s3Uri: uri },
       citations: meta.mode === 'rich',
     },

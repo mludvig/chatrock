@@ -12,6 +12,18 @@ import {
 interface AnthropicSignature { signature: string }
 interface AnthropicRedacted { redactedContent: string } // base64
 
+// Converse rejects document names outside [alphanumeric, single spaces, hyphens, parens,
+// brackets], so the stored original filename is reduced here, at the Converse boundary only.
+// See docs/adr/0054-document-names-sanitized-at-the-converse-boundary.md.
+function converseDocName(filename: string): string {
+  return filename
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9 \-()]/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim()
+    .slice(0, 200) || 'attachment'
+}
+
 function mediaSourceToNeutral(source: { bytes?: Uint8Array; s3Location?: { uri?: string } } | undefined): MediaSource {
   if (source?.s3Location) return { s3Uri: source.s3Location.uri ?? '' }
   if (source?.bytes) return { bytes: source.bytes }
@@ -142,7 +154,7 @@ export function fromNeutral(blocks: Block[]): ContentBlock[] {
         out.push({
           document: {
             format: block.document.format,
-            name: block.document.name,
+            name: converseDocName(block.document.name),
             source: mediaSourceFromNeutral(block.document.source),
             citations: { enabled: block.document.citations === true },
           },

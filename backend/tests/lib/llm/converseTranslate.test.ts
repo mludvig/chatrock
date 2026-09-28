@@ -102,6 +102,18 @@ describe('converseTranslate: toNeutral / fromNeutral round-trip', () => {
     expect(fromNeutral(neutral)).toEqual(bedrock)
   })
 
+  test('document name is reduced to the Converse charset (extension dropped, spaces collapsed)', () => {
+    const neutral: Block[] = [{ kind: 'document', document: { format: 'pdf', name: 'my_file  v2.final.pdf', source: { s3Uri: 's3://bucket/f.pdf' } } }]
+    const [block] = fromNeutral(neutral) as Array<{ document: { name: string } }>
+    expect(block.document.name).toBe('my file v2 final')
+  })
+
+  test('document name with nothing Converse-safe falls back to "attachment"', () => {
+    const neutral: Block[] = [{ kind: 'document', document: { format: 'pdf', name: '日本語.pdf', source: { s3Uri: 's3://bucket/f.pdf' } } }]
+    const [block] = fromNeutral(neutral) as Array<{ document: { name: string } }>
+    expect(block.document.name).toBe('attachment')
+  })
+
   test('cachePoint block is dropped', () => {
     const bedrock = [{ text: 'a' }, { cachePoint: { type: 'default' } }] as unknown as ContentBlock[]
     const neutral = toNeutral(bedrock)

@@ -105,7 +105,7 @@ async function summarizeTextFile(s3Key: string, contentType: string, filename: s
         kind: 'document',
         document: {
           format: contentType === 'text/csv' ? 'csv' : 'txt',
-          name: filename.replace(/\.[^.]+$/, '').slice(0, 200) || 'file',
+          name: filename,
           source: { bytes: new TextEncoder().encode(text) },
         },
       },
@@ -144,7 +144,6 @@ async function summarizeImageFile(s3Key: string, contentType: string, filename: 
 
 async function summarizePdfFile(s3Key: string, filename: string, call: LlmCallContext): Promise<FileSummary> {
   const bytes = await fetchS3Bytes(s3Key)
-  const docName = filename.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9 \-()]/g, ' ').trim().slice(0, 200) || 'document'
 
   const result = await callSummaryModel([{
     role: 'user',
@@ -153,7 +152,7 @@ async function summarizePdfFile(s3Key: string, filename: string, call: LlmCallCo
         kind: 'document',
         document: {
           format: 'pdf',
-          name: docName,
+          name: filename,
           source: { bytes },
         },
       },

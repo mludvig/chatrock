@@ -86,9 +86,7 @@ test('validateAttachment caps extension-classified text files at 1 MB', () => {
   expect(() => validateAttachment('application/octet-stream', 2 * 1024 * 1024, 'big.log')).toThrow(/too large/)
 })
 
-// ── sanitizeDocName ───────────────────────────────────────────────────────────
-
-test('attachmentBlock uses sanitized name for document blocks', () => {
+test('attachmentBlock keeps the original filename, extension included, as the document name', () => {
   const block = attachmentBlock({
     s3Key: 'attachments/sub/chat/file-id/Report__2026.pdf',
     contentType: 'application/pdf',
@@ -97,9 +95,7 @@ test('attachmentBlock uses sanitized name for document blocks', () => {
   })
   expect(block.kind).toBe('document')
   const doc = (block as { kind: 'document'; document: { name: string } }).document
-  // consecutive spaces collapsed, trailing extension stripped
-  expect(doc.name).toMatch(/^[a-zA-Z0-9 \-()]+$/)
-  expect(doc.name).not.toMatch(/ {2}/)
+  expect(doc.name).toBe('Report  2026.pdf')
 })
 
 // ── attachmentBlock ───────────────────────────────────────────────────────────
