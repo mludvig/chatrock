@@ -2,7 +2,7 @@
  * End-to-end tests: file attachments — upload via file picker, verify tray,
  * verify attachment blocks in bubbles, and reload persistence.
  *
- * Uses Claude Haiku 4.5 for speed; all models have attachments: true.
+ * Uses Claude Haiku 5.5 for speed; all models have attachments: true.
  * Auth state is provided by the project-level storageState in playwright.config.ts.
  */
 import { test, expect } from '@playwright/test'

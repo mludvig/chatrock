@@ -91,7 +91,7 @@ beforeEach(() => {
 
 test('persists user prompt as a turn record and assistant response as per-turn records', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'New Chat' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'New Chat' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
   mockDynamo.updateChatTitle.mockResolvedValue(undefined)
@@ -108,7 +108,7 @@ test('persists user prompt as a turn record and assistant response as per-turn r
   mockBedrock.converseOnce.mockResolvedValue('Test Title')
 
   const handler = buildHandler(mockPost)
-  await handler(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await handler(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   // User prompt + 1 assistant turn = 2 putMessage calls
   expect(mockDynamo.putMessage).toHaveBeenCalledTimes(2)
@@ -137,7 +137,7 @@ test('persists user prompt as a turn record and assistant response as per-turn r
 
 test('persists multiple turns from a tool-use round (user prompt + 2 assistant + 1 user-toolResult)', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
 
@@ -178,7 +178,7 @@ test('persists multiple turns from a tool-use round (user prompt + 2 assistant +
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   // user prompt + final assistant turn 2 are independent putMessage calls; the
   // tool-use round (assistant turn 0 + its toolResult turn 1) is written atomically
@@ -213,7 +213,7 @@ test('persists multiple turns from a tool-use round (user prompt + 2 assistant +
 
 test('forwards a compact aggregated usage WS event', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
 
@@ -225,7 +225,7 @@ test('forwards a compact aggregated usage WS event', async () => {
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   const payloads = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
   const usageEvent = payloads.find(p => p.type === 'usage')
@@ -235,13 +235,13 @@ test('forwards a compact aggregated usage WS event', async () => {
 
 test('replays history as verbatim blocks (not flat text)', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'Existing' })
 
   // History with format-C records (blocks field + tree fields)
   mockDynamo.listMessages.mockResolvedValue([
     {
       PK: 'CHAT#c1', SK: 'MSG#t1#0000#u1', msgId: 'u1', parentId: null, role: 'user',
-      blocks: [{ kind: 'text' as const, text: 'previous question' }], model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', createdAt: 't1',
+      blocks: [{ kind: 'text' as const, text: 'previous question' }], model: 'global.anthropic.claude-haiku-5-5', createdAt: 't1',
       turnIndex: 0, responseId: 'r0',
     },
     {
@@ -250,12 +250,12 @@ test('replays history as verbatim blocks (not flat text)', async () => {
         { reasoningContent: { reasoningText: { text: 'I thought', signature: 'MOCKED_SIG' } } },
         { text: 'previous answer' },
       ],
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', createdAt: 't1',
+      model: 'global.anthropic.claude-haiku-5-5', createdAt: 't1',
       turnIndex: 1, responseId: 'r0',
     },
   ])
   // getChat must return activeLeafId = last prior row's msgId so the user turn chains correctly
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing', activeLeafId: 'a1' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'Existing', activeLeafId: 'a1' })
   mockDynamo.putMessage.mockResolvedValue(undefined)
 
   async function* fakeStream() {
@@ -265,7 +265,7 @@ test('replays history as verbatim blocks (not flat text)', async () => {
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'follow-up', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'follow-up', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   // converseStream was called with prior history + the new user turn
   const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
@@ -283,7 +283,7 @@ test('replays history as verbatim blocks (not flat text)', async () => {
 
 test('streams UI chunks and persists without persisting them on WS', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
 
@@ -295,7 +295,7 @@ test('streams UI chunks and persists without persisting them on WS', async () =>
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   // delta + done events posted over WS
   const dataPayloads = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
@@ -308,7 +308,7 @@ test('streams UI chunks and persists without persisting them on WS', async () =>
 
 test('forwards sub_agent_progress chunks as WS frames', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
 
@@ -319,7 +319,7 @@ test('forwards sub_agent_progress chunks as WS frames', async () => {
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   const dataPayloads = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
   expect(dataPayloads.find((d) => d.type === 'sub_agent_progress')).toEqual({
@@ -329,7 +329,7 @@ test('forwards sub_agent_progress chunks as WS frames', async () => {
 
 test('sends titleUpdated event on first exchange', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'New Chat' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'New Chat' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
   mockDynamo.updateChatTitle.mockResolvedValue(undefined)
@@ -342,7 +342,7 @@ test('sends titleUpdated event on first exchange', async () => {
   // generateChatTitle is called independently when needTitle=true (first normal send with title='New Chat')
   mockEnrichment.generateChatTitle.mockResolvedValue('My Title')
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   const titleEvent = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>).find((d) => d.type === 'titleUpdated')
   expect(titleEvent).toMatchObject({ type: 'titleUpdated', title: 'My Title', chatId: 'c1' })
@@ -351,7 +351,7 @@ test('sends titleUpdated event on first exchange', async () => {
 
 test('does not re-title when chat already has a title', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '', title: 'Existing Title' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '', title: 'Existing Title' })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
 
@@ -360,7 +360,7 @@ test('does not re-title when chat already has a title', async () => {
     yield { type: 'stop' as const, stopReason: 'end_turn' }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   expect(mockDynamo.updateChatTitle).not.toHaveBeenCalled()
   // generateChatTitle must not even be called when a title already exists
@@ -371,7 +371,7 @@ test('does not re-title when chat already has a title', async () => {
 
 test('returns 410 when connection not found', async () => {
   mockDynamo.getConnection.mockResolvedValue(undefined)
-  const res = await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' })) as Record<string, unknown>
+  const res = await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hi', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' })) as Record<string, unknown>
   expect(res.statusCode).toBe(410)
 })
 
@@ -379,7 +379,7 @@ test('sends error event when chat not found', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue(undefined)
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'missing', content: 'Hi', model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0', systemPrompt: '' }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'missing', content: 'Hi', model: 'global.anthropic.claude-haiku-5-5', systemPrompt: '' }))
 
   const errEvent = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>).find((d) => d.type === 'error')
   expect(errEvent).toBeDefined()
@@ -459,7 +459,7 @@ test('an invalid model is rejected without recording anything on the chat', asyn
 
 // ── Slice 2 (Inc 2): tree data model — msgId / parentId / activeLeafId ────────
 
-const MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+const MODEL = 'global.anthropic.claude-haiku-5-5'
 
 test('inc2: each persisted turn carries a top-level msgId and parentId', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
@@ -1240,7 +1240,7 @@ describe('attachments in WS payload', () => {
     mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
     mockDynamo.getChat.mockResolvedValue({
       PK: 'USER#user-1', SK: 'CHAT#c1',
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      model: 'global.anthropic.claude-haiku-5-5',
       systemPrompt: '', title: 'T',
     })
     mockDynamo.listMessages.mockResolvedValue([])
@@ -1258,7 +1258,7 @@ describe('attachments in WS payload', () => {
     await handler(makeEvent({
       chatId: 'c1',
       content: 'Look at this',
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      model: 'global.anthropic.claude-haiku-5-5',
       systemPrompt: '',
       attachments: [{ s3Key: 'attachments/u/c/f/shot.png', contentType: 'image/png', filename: 'shot.png' }],
     }))
@@ -1279,7 +1279,7 @@ describe('attachments in WS payload', () => {
     mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
     mockDynamo.getChat.mockResolvedValue({
       PK: 'USER#user-1', SK: 'CHAT#c1',
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      model: 'global.anthropic.claude-haiku-5-5',
       systemPrompt: '', title: 'T',
     })
     mockDynamo.listMessages.mockResolvedValue([])
@@ -1297,7 +1297,7 @@ describe('attachments in WS payload', () => {
     await handler(makeEvent({
       chatId: 'c1',
       // No content — attachment-only
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+      model: 'global.anthropic.claude-haiku-5-5',
       systemPrompt: '',
       attachments: [{ s3Key: 'attachments/u/c/f/shot.png', contentType: 'image/png', filename: 'shot.png' }],
     }))

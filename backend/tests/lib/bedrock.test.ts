@@ -1323,10 +1323,27 @@ describe('converseOnce thinking-off field', () => {
     ['global.anthropic.claude-sonnet-5-5', { thinking: { type: 'between_tools' } }],
     ['global.anthropic.claude-opus-5-5', undefined],
     ['global.anthropic.claude-fable-5-1', undefined],
-    ['global.anthropic.claude-haiku-4-5-20251001-v1:0', undefined],
+    ['global.anthropic.claude-haiku-5-5', { thinking: { type: 'disabled' } }],
   ])('%s sends %j', async (modelId, expected) => {
     getMockSend().mockResolvedValueOnce(okOnce())
     await converseOnce(modelId, '', [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }], { call: TEST_CALL })
+    const input = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+    expect(input.additionalModelRequestFields).toEqual(expected)
+  })
+
+  test.each([
+    ['global.anthropic.claude-haiku-5-5', { thinking: { type: 'disabled' } }],
+    ['global.anthropic.claude-sonnet-5-5', { thinking: { type: 'between_tools' } }],
+    ['global.anthropic.claude-opus-5-5', undefined],
+  ])('a chat turn at effort off on %s sends %j', async (modelId, expected) => {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'ok' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+    ]))
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of converseStream(modelId, '', [], { settings: { thinkingEffort: 'off' }, call: TEST_CALL })) { /* drain */ }
     const input = getMockSend().mock.calls[0][0].input as Record<string, unknown>
     expect(input.additionalModelRequestFields).toEqual(expected)
   })

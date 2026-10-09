@@ -3,4 +3,4 @@
 // hunted down individually (see backend/CLAUDE.md's "Retired models" note —
 // this has already happened once, Sonnet 4.6 -> 5).
 export const THINKING_MODEL_LABEL = 'Claude Sonnet 5.5'  // thinking-capable, temperature/topP tunable
-export const FAST_MODEL_LABEL = 'Claude Haiku 4.5'     // no thinking, cheapest/fastest
+export const FAST_MODEL_LABEL = 'Claude Haiku 5.5'     // cheapest/fastest

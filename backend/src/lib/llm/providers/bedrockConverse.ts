@@ -33,6 +33,9 @@ function buildInferenceParams(modelId: string, settings: ModelSettings) {
     // request 'summarized' explicitly or thinking blocks come back text-empty (signature only).
     (additionalFields as Record<string, DocumentType>).thinking = { type: 'adaptive', display: 'summarized' } as DocumentType
     ;(additionalFields as Record<string, DocumentType>).output_config = { effort: settings.thinkingEffort ?? 'low' } as DocumentType
+  } else if (caps.thinkingOff) {
+    // Omitting the field isn't "off" on every model — Haiku 5.5 reasons anyway.
+    (additionalFields as Record<string, DocumentType>).thinking = { type: caps.thinkingOff } as DocumentType
   }
 
   return {

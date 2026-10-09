@@ -136,7 +136,7 @@ test('generateChatTitle — uses the dedicated cheap title model', async () => {
   mockBedrock.converseOnce.mockResolvedValue('Some title')
   await generateChatTitle(TRANSCRIPT)
   const [modelId] = mockBedrock.converseOnce.mock.calls[0]
-  expect(modelId).toBe('global.anthropic.claude-haiku-4-5-20251001-v1:0')
+  expect(modelId).toBe('global.anthropic.claude-haiku-5-5')
 })
 
 test('generateChatTitle — returns undefined and logs when the model throws', async () => {

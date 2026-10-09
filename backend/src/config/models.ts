@@ -12,10 +12,11 @@ export interface ModelCapabilities {
   // Which of ThinkingEffort's five levels this model accepts. Omit -> all five; every
   // thinking:'effort' model lists them, since those APIs differ on 'off'.
   thinkingLevels?: ThinkingEffort[]
-  // The Converse thinking.type a one-shot call (title/summary/extraction) sends to turn
-  // thinking off. Omit -> no thinking field at all: the 5.5-series models reject
-  // {type:'disabled'}, and Opus 5.5/Fable 5.1 accept no off switch whatsoever.
-  thinkingOff?: 'between_tools'
+  // The Converse thinking.type sent to turn thinking off (effort 'off', one-shot calls). Omit ->
+  // no thinking field at all. Each model takes a different one: Sonnet 5.5 rejects 'disabled'
+  // and wants 'between_tools', Haiku 5.5 rejects 'between_tools' and still reasons when the
+  // field is omitted, and Opus 5.5/Fable 5.1 accept no off switch whatsoever.
+  thinkingOff?: 'disabled' | 'between_tools'
   // false -> the model rejects a forced toolChoice; a forced round offers only the forced tool
   // instead. Omit -> supported. See docs/adr/0058-forcing-a-tool-without-toolchoice.md.
   forcedToolChoice?: false
@@ -76,11 +77,14 @@ export const MODELS: Model[] = [
     replaces: ['global.anthropic.claude-sonnet-5', 'global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
     capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'between_tools', forcedToolChoice: false, attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
+  // Verified live against ap-southeast-2 Oct 2026: images, PDF/txt documents, cachePoints,
+  // forced toolChoice (with or without thinking) and adaptive thinking at every effort all
+  // work; temperature/topP are rejected as deprecated.
   {
-    id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
-    name: 'Claude Haiku 4.5',
-    replaces: ['apac.anthropic.claude-haiku-4-5-20251001'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    id: 'global.anthropic.claude-haiku-5-5',
+    name: 'Claude Haiku 5.5',
+    replaces: ['global.anthropic.claude-haiku-4-5-20251001-v1:0', 'apac.anthropic.claude-haiku-4-5-20251001'],
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'disabled', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   // OpenAI GPT via the Responses API on bedrock-runtime (docs/adr/0048-openai-models-on-bedrock-runtime.md).
   // Always reasons (no 'off' level) — thinkingLevels omits it.
@@ -160,7 +164,7 @@ export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-5-5'
 
 // The smallest/cheapest model, for short mechanical calls whose output is a title or a
 // one-word classification rather than anything the user reads as an answer.
-export const TINY_MODEL = 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
+export const TINY_MODEL = 'global.anthropic.claude-haiku-5-5'
 
 // Cheaper model used for auto-title generation only
 export const TITLE_MODEL = TINY_MODEL
