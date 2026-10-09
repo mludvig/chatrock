@@ -12,7 +12,11 @@ export interface ModelCapabilities {
   // Which of ThinkingEffort's five levels this model accepts. Omit -> all five; every
   // thinking:'effort' model lists them, since those APIs differ on 'off'.
   thinkingLevels?: ThinkingEffort[]
-  attachments: boolean                           // images
+  // The Converse thinking.type a one-shot call (title/summary/extraction) sends to turn
+  // thinking off. Omit -> no thinking field at all: the 5.5-series models reject
+  // {type:'disabled'}, and Opus 5.5/Fable 5.1 accept no off switch whatsoever.
+  thinkingOff?: 'between_tools'
+  attachments: boolean                          // images
   documents: boolean                             // pdf/txt/csv/md
   promptCaching: 'auto' | 'explicit' | 'none'
   maxOutputTokens?: number
@@ -67,7 +71,7 @@ export const MODELS: Model[] = [
     id: 'global.anthropic.claude-sonnet-5-5',
     name: 'Claude Sonnet 5.5',
     replaces: ['global.anthropic.claude-sonnet-5', 'global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'between_tools', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',

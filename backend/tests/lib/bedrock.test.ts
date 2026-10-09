@@ -11,7 +11,7 @@
  *  6. All existing UI chunks (thinking_delta, thinking_done, delta,
  *     tool_call_start, tool_call, tool_result, stop) still flow through.
  */
-import { converseStream, coalesceMessages, healDanglingToolUse, bedrockClient, HEARTBEAT_INTERVAL_MS } from '../../src/lib/bedrock'
+import { converseStream, converseOnce, coalesceMessages, healDanglingToolUse, bedrockClient, HEARTBEAT_INTERVAL_MS } from '../../src/lib/bedrock'
 import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/llm/blocks'
 import { DEFAULT_CHAT_MODEL } from '../../src/config/models'
 import * as tools from '../../src/lib/tools'
@@ -1273,6 +1273,24 @@ describe('converseStream forceToolName (forced Search turn)', () => {
 
     const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
     expect((cmdInput.toolConfig as { toolChoice?: unknown } | undefined)?.toolChoice).toBeUndefined()
+  })
+})
+
+// ── converseOnce: turning thinking off per model ──────────────────────────────
+
+describe('converseOnce thinking-off field', () => {
+  const okOnce = () => ({ output: { message: { role: 'assistant', content: [{ text: 'ok' }] } }, usage: { inputTokens: 1, outputTokens: 1 } })
+
+  test.each([
+    ['global.anthropic.claude-sonnet-5-5', { thinking: { type: 'between_tools' } }],
+    ['global.anthropic.claude-opus-5-5', undefined],
+    ['global.anthropic.claude-fable-5-1', undefined],
+    ['global.anthropic.claude-haiku-4-5-20251001-v1:0', undefined],
+  ])('%s sends %j', async (modelId, expected) => {
+    getMockSend().mockResolvedValueOnce(okOnce())
+    await converseOnce(modelId, '', [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }], { call: TEST_CALL })
+    const input = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+    expect(input.additionalModelRequestFields).toEqual(expected)
   })
 })
 
