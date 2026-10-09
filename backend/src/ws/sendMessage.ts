@@ -681,6 +681,12 @@ export const buildHandler = (postFn: PostFn) => async (
           break
       }
     }
+    // A cancel that lands between rounds (e.g. while tools run) ends the loop by returning,
+    // not throwing — it still owes the client its 'cancelled' frame.
+    if (abortController.signal.aborted) {
+      cancelled = true
+      await flushPartial()
+    }
   } catch (err) {
     // Check if abort was requested (either via signal or cancel flag)
     const wasAborted = abortController.signal.aborted || await isStreamCancelled(sub, chatId)

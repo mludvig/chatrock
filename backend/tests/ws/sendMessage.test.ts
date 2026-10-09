@@ -945,6 +945,32 @@ test('d3: cancel between turns — persisted turns survive, cancelled event emit
   expect(cancelledLeaf).toBe(assistantPut.msgId)
 })
 
+test('d3: cancel while tools run — loop returns without throwing, cancelled event still emitted', async () => {
+  mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
+  mockDynamo.listMessages.mockResolvedValue([])
+  mockDynamo.putMessage.mockResolvedValue(undefined)
+  mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
+  mockDynamo.isStreamCancelled.mockResolvedValue(true)
+  mockDynamo.clearStreamCancel.mockResolvedValue(undefined)
+
+  // loop.ts checks abortSignal between rounds and simply returns — no throw, no 'stop' chunk.
+  mockBedrock.converseStream.mockImplementation(((_m: unknown, _s: unknown, _msgs: unknown, opts: { abortSignal?: AbortSignal }) =>
+    (async function* () {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'first answer' }], turnIndex: 0 }
+      await new Promise<void>(resolve => opts.abortSignal?.addEventListener('abort', () => resolve()))
+    })()
+  ) as unknown as typeof mockBedrock.converseStream)
+
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '' }))
+
+  const events = mockPost.mock.calls.map(c => JSON.parse(c[0].Data) as Record<string, unknown>)
+  expect(events.find(e => e.type === 'cancelled')).toBeDefined()
+  expect(events.find(e => e.type === 'done')).toBeUndefined()
+  expect(mockDynamo.clearStreamCancel).toHaveBeenCalledTimes(2)  // at stream start + on cancel
+  expect(mockBedrock.converseOnce).not.toHaveBeenCalled()       // no post-turn enrichment
+})
+
 test('d3: cancel mid-turn — partial text flushed as assistant turn, cancelled event emitted', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
