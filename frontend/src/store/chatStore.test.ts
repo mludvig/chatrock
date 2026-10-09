@@ -149,6 +149,24 @@ describe('StreamingMsg steps assembly', () => {
   })
 })
 
+describe('setStreamLongWait', () => {
+  it('sets and clears the long-wait flag on the live stream only', () => {
+    act(() => {
+      const s = useChatStore.getState()
+      s.setStreamLongWait(TEST_CHAT_ID, true)  // no stream yet: no-op
+    })
+    expect(useChatStore.getState().streamingByChat[TEST_CHAT_ID]).toBeUndefined()
+    act(() => {
+      const s = useChatStore.getState()
+      s.startStream(TEST_CHAT_ID)
+      s.setStreamLongWait(TEST_CHAT_ID, true)
+    })
+    expect(useChatStore.getState().streamingByChat[TEST_CHAT_ID]!.longWait).toBe(true)
+    act(() => { useChatStore.getState().setStreamLongWait(TEST_CHAT_ID, false) })
+    expect(useChatStore.getState().streamingByChat[TEST_CHAT_ID]!.longWait).toBe(false)
+  })
+})
+
 describe('finalizeStream', () => {
   it('moves streamingMsg to messages as a DisplayBubble with the same steps', () => {
     let finalized: Message | undefined

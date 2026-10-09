@@ -217,6 +217,7 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
   const isStreaming = 'streaming' in message && message.streaming
   const waiting = 'waiting' in message && message.waiting
   const idle = isStreaming && 'idle' in message && !!(message as StreamingMsg).idle
+  const longWait = isStreaming && 'longWait' in message && !!(message as StreamingMsg).longWait
   const steps: Step[] = message.steps ?? []
   const [copied, setCopied] = useState(false)
   const { models } = useChatStore()
@@ -315,6 +316,13 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
             <FontAwesomeIcon icon={faSpinner} spin />
             <span>Processing…</span>
           </span>
+        )}
+
+        {/* Server heartbeats say the turn is alive, but nothing visible has arrived for a while */}
+        {longWait && (waiting || idle) && (
+          <div className="long-wait-notice">
+            Still working, this is taking longer than usual. You can leave this page; the answer will be saved here and will appear when you come back.
+          </div>
         )}
 
       </div>

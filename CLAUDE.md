@@ -145,7 +145,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `titleUpdated` | `chatId`, `title` |
 | `memoryUpdated` | `count` — number of new memories extracted this turn |
 | `warning` | `message` — non-fatal post-turn failure (enrichment DB write failed, etc.) |
-| `heartbeat` | — sent every `HEARTBEAT_INTERVAL_MS` (4s) while a single tool call is still in flight |
+| `heartbeat` | — sent every `HEARTBEAT_INTERVAL_MS` (4s) while a tool call is in flight or the model has been silent; 90s of model silence aborts and retries the round (`docs/adr/0057-stall-timeout-and-model-wait-heartbeat.md`) |
 | `error` | `message` |
 
 ## Real-time reliability

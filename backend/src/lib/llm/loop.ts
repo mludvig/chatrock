@@ -5,7 +5,7 @@ import {
 } from './blocks'
 import type { ModelSettings } from '../../config/models'
 import { putObjectBytes, signCloudFrontUrl, s3KeyPrefix } from '../attachments'
-import type { StreamChunk, TurnResult, TokenUsage, LlmCallContext } from './types'
+import type { StreamChunk, TurnResult, TurnRequest, TokenUsage, LlmCallContext } from './types'
 import { getProvider } from './registry'
 import { buildToolList } from './toolGating'
 import { logLlmCall, addUsage } from './observability'
@@ -27,12 +27,16 @@ const TOOL_CONCURRENCY = 5
 // docs/adr/0041-retrying-a-provider-round-that-produced-no-output.md.
 const ROUND_RETRIES = 2
 const ROUND_RETRY_BACKOFF_MS = [500, 1500]
+// A provider request that has produced no event at all for this long is treated as dead and
+// aborted, then handled like a dropped socket. See docs/adr/0057-stall-timeout-and-model-wait-heartbeat.md.
+export const STREAM_STALL_TIMEOUT_MS = 90_000
 
 // A dropped socket mid-SSE (undici's "TypeError: terminated"), a throttle, or a provider
 // 5xx are all worth one more attempt; a 4xx (bad request, auth, model-not-found) never is.
 const TRANSIENT_ERROR_PATTERNS = [
   'terminated', 'econnreset', 'econnaborted', 'epipe', 'etimedout', 'socket hang up',
   'throttling', 'modelstreamerror', 'serviceunavailable', 'internalserver', 'internalfailure',
+  'stream stalled',
 ]
 
 function isTransientStreamError(e: unknown): boolean {
@@ -106,6 +110,49 @@ export async function* converseStream(
   }
 }
 
+// One provider round with a liveness watch: a 'heartbeat' chunk every HEARTBEAT_INTERVAL_MS
+// the provider is silent (so the client knows the turn is alive while a model reasons without
+// streaming), and an abort + 'stream stalled' throw once it has been silent for
+// STREAM_STALL_TIMEOUT_MS. The request gets its own AbortController, chained to the turn's, so
+// a stall abort never looks like the user's Stop.
+// See docs/adr/0057-stall-timeout-and-model-wait-heartbeat.md.
+async function* watchedTurn(
+  streamTurn: (req: TurnRequest) => AsyncGenerator<StreamChunk, TurnResult>,
+  req: TurnRequest,
+): AsyncGenerator<StreamChunk, TurnResult> {
+  const requestAbort = new AbortController()
+  const onOuterAbort = () => requestAbort.abort()
+  req.abortSignal?.addEventListener('abort', onOuterAbort)
+  if (req.abortSignal?.aborted) requestAbort.abort()
+  const gen = streamTurn({ ...req, abortSignal: requestAbort.signal })
+  let lastEventAt = Date.now()
+  try {
+    while (true) {
+      const next = gen.next()
+      while (true) {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const tick = new Promise<'tick'>(resolve => { timer = setTimeout(() => resolve('tick'), HEARTBEAT_INTERVAL_MS) })
+        const outcome = await Promise.race([next, tick])
+        clearTimeout(timer)
+        if (outcome !== 'tick') {
+          if (outcome.done) return outcome.value
+          lastEventAt = Date.now()
+          yield outcome.value
+          break
+        }
+        if (Date.now() - lastEventAt >= STREAM_STALL_TIMEOUT_MS) {
+          next.catch(() => {})  // the abort below rejects it; nobody is waiting any more
+          requestAbort.abort()
+          throw new Error(`Provider stream stalled: no events for ${STREAM_STALL_TIMEOUT_MS / 1000}s`)
+        }
+        yield { type: 'heartbeat' }
+      }
+    }
+  } finally {
+    req.abortSignal?.removeEventListener('abort', onOuterAbort)
+  }
+}
+
 async function* streamRounds(
   modelId: string,
   systemPrompt: string,
@@ -159,7 +206,7 @@ async function* streamRounds(
     // duplicate visible text/thinking, so the error propagates instead.
     // See docs/adr/0041-retrying-a-provider-round-that-produced-no-output.md.
     for (let attempt = 0; ; attempt++) {
-      const gen = provider.streamTurn(turnRequest)
+      const gen = watchedTurn(provider.streamTurn.bind(provider), turnRequest)
       let forwarded = false
       try {
         // Drain the generator, forwarding UI chunks to caller
@@ -171,8 +218,11 @@ async function* streamRounds(
           }
           const chunk = value as StreamChunk
           // Forward all UI chunks except 'usage' (we re-emit usage below, after the
-          // adapter's TurnResult is available, so ordering relative to 'turn' is guaranteed)
-          if (chunk.type !== 'usage') {
+          // adapter's TurnResult is available, so ordering relative to 'turn' is guaranteed).
+          // A heartbeat shows the user nothing, so it doesn't rule out a retry.
+          if (chunk.type === 'heartbeat') {
+            yield chunk
+          } else if (chunk.type !== 'usage') {
             forwarded = true
             yield chunk
           }
@@ -396,7 +446,7 @@ async function* streamRounds(
     content: [{ kind: 'text', text: 'You are out of research budget. Write your best answer now from the findings above, with citations, and state plainly what remains unresolved.' }],
   })
   const builtMessages = [...sanitized, ...newMessages]
-  const finalGen = provider.streamTurn({
+  const finalGen = watchedTurn(provider.streamTurn.bind(provider), {
     modelId,
     systemPrompt,
     messages: builtMessages,
@@ -417,7 +467,7 @@ async function* streamRounds(
     // Only forward text — tool_call_start/tool_call chunks are swallowed: nothing this
     // round ever executes (see below), so showing the client a tool card with no
     // matching result would leave it spinning forever.
-    if (chunk.type === 'delta' || chunk.type === 'thinking_delta') {
+    if (chunk.type === 'delta' || chunk.type === 'thinking_delta' || chunk.type === 'heartbeat') {
       yield chunk
     }
   }

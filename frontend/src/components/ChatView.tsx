@@ -39,6 +39,9 @@ const STREAM_POLL_MS = 3000
 // Longer than both the 4s tool-call heartbeat and the 12s ack watchdog, so a live stream is
 // never this quiet. See docs/adr/0056-stale-sending-needs-a-quiet-stream.md.
 const STALE_SENDING_QUIET_MS = 15000
+// No visible content for this long, while server heartbeats prove the turn is alive, shows the
+// "come back later" notice. See docs/adr/0057-stall-timeout-and-model-wait-heartbeat.md.
+const LONG_WAIT_MS = 45000
 
 interface PersistedDraft {
   chatId: string
@@ -104,7 +107,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const {
     chats, patchChat, clearModelMigrationNotice, messages, streamingByChat,
     setMessages, startStream, appendDelta, appendThinkingDelta, markThinkingDone,
-    addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream,
+    addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, setStreamLongWait, finalizeStream, finalizeStreamErrored, clearStream,
     renameChat, removeChat, sendingByChat, setSending, pushToast,
     userPreferences, triggerMemoryRefresh,
     draftModelSettings, draftSystemPrompt,
@@ -200,6 +203,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // When this chat last sent or received a WS frame — reloadMessages only distrusts a
   // `sending` flag once the stream has been quiet for STALE_SENDING_QUIET_MS.
   const lastFrameAtRef = useRef<Record<string, number>>({})
+  // Per-chat time of the last visible content (or the send), for the long-wait notice.
+  const lastContentAtRef = useRef<Record<string, number>>({})
   // msgId of the optimistic user bubble for the in-flight send (removed on ack-timeout).
   const optimisticMsgIdRef = useRef<string | null>(null)
   const pendingSendRef = useRef<{ content: string; attachments: PendingAttachment[]; wasNew: boolean } | null>(null)
@@ -622,6 +627,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       } else if (evt.type === 'sub_agent_progress') {
         bumpIdleTimer(evt.chatId)
         if (evt.chatId === chatIdRef.current) setSubAgentProgress(prev => ({ ...prev, [evt.toolUseId]: evt.text }))
+      } else if (evt.type === 'heartbeat') {
+        setStreamLongWait(evt.chatId, Date.now() - (lastContentAtRef.current[evt.chatId] ?? Date.now()) >= LONG_WAIT_MS)
       } else if (evt.type === 'usage') {
         setStreamUsage(evt.chatId, evt.usage)
         if (evt.chatId === chatIdRef.current) {
@@ -682,7 +689,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         }
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, pushToast, setMessages])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, setStreamLongWait, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, pushToast, setMessages])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -1096,6 +1103,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   function bumpIdleTimer(chatKey: string) {
     clearIdleTimer(chatKey)
     setStreamIdle(chatKey, false)
+    lastContentAtRef.current[chatKey] = Date.now()
+    setStreamLongWait(chatKey, false)
     idleTimersRef.current[chatKey] = window.setTimeout(() => setStreamIdle(chatKey, true), 2000)
   }
 
@@ -1114,6 +1123,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   function armAckWatchdog(chatKey: string) {
     clearAckTimer(chatKey)
     lastFrameAtRef.current[chatKey] = Date.now()
+    lastContentAtRef.current[chatKey] = Date.now()
     ackTimersRef.current[chatKey] = window.setTimeout(() => handleAckTimeout(chatKey), 12000)
   }
 

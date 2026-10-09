@@ -13,6 +13,7 @@
  */
 import { converseStream, converseOnce, coalesceMessages, healDanglingToolUse, bedrockClient, HEARTBEAT_INTERVAL_MS } from '../../src/lib/bedrock'
 import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/llm/blocks'
+import { STREAM_STALL_TIMEOUT_MS } from '../../src/lib/llm/loop'
 import { DEFAULT_CHAT_MODEL } from '../../src/config/models'
 import * as tools from '../../src/lib/tools'
 import * as attachmentsLib from '../../src/lib/attachments'
@@ -1640,6 +1641,82 @@ describe('round retry on a transient drop', () => {
     getMockSend().mockRejectedValue(validation)
 
     await expect(collectDeltas()).rejects.toThrow('ValidationException')
+    expect(getMockSend()).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ── Stall timeout + model-wait heartbeat ─────────────────────────────────────
+// See docs/adr/0057-stall-timeout-and-model-wait-heartbeat.md.
+
+describe('stall watch on a provider round', () => {
+  const okStream = () => fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Hello' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+  ])
+
+  beforeEach(() => { jest.useFakeTimers() })
+  afterEach(() => { jest.useRealTimers() })
+
+  async function collect(signal?: AbortSignal): Promise<string[]> {
+    const types: string[] = []
+    for await (const chunk of converseStream('test-model', '', [], { settings: {}, call: TEST_CALL, abortSignal: signal })) {
+      types.push(chunk.type === 'delta' ? `delta:${chunk.text}` : chunk.type)
+    }
+    return types
+  }
+
+  // A request that never answers, and rejects only when its abort signal fires.
+  const silentUntilAborted = (_cmd: unknown, opts?: { abortSignal?: AbortSignal }) =>
+    new Promise((_resolve, reject) => opts?.abortSignal?.addEventListener('abort', () => reject(new Error('Request aborted'))))
+
+  it('heartbeats while the provider is silent, then streams normally', async () => {
+    getMockSend().mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(okStream()), 3 * HEARTBEAT_INTERVAL_MS + 100)))
+
+    const done = collect()
+    await jest.advanceTimersByTimeAsync(4 * HEARTBEAT_INTERVAL_MS)
+    const types = await done
+
+    expect(types.filter(t => t === 'heartbeat')).toHaveLength(3)
+    expect(types).toContain('delta:Hello')
+    expect(getMockSend()).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts a request silent for the stall timeout and retries it', async () => {
+    getMockSend().mockImplementationOnce(silentUntilAborted).mockResolvedValueOnce(okStream())
+
+    const done = collect()
+    await jest.advanceTimersByTimeAsync(STREAM_STALL_TIMEOUT_MS + HEARTBEAT_INTERVAL_MS + 1000)
+    const types = await done
+
+    expect(types).toContain('delta:Hello')
+    expect(getMockSend()).toHaveBeenCalledTimes(2)
+    const firstSignal = (getMockSend().mock.calls[0][1] as { abortSignal: AbortSignal }).abortSignal
+    expect(firstSignal.aborted).toBe(true)
+  })
+
+  it('a stall abort does not abort the turn itself', async () => {
+    getMockSend().mockImplementationOnce(silentUntilAborted).mockResolvedValueOnce(okStream())
+    const turn = new AbortController()
+
+    const done = collect(turn.signal)
+    await jest.advanceTimersByTimeAsync(STREAM_STALL_TIMEOUT_MS + HEARTBEAT_INTERVAL_MS + 1000)
+    await done
+
+    expect(turn.signal.aborted).toBe(false)
+  })
+
+  it('the user stopping the turn aborts the in-flight request', async () => {
+    getMockSend().mockImplementationOnce(silentUntilAborted)
+    const turn = new AbortController()
+
+    const done = collect(turn.signal).catch(e => e)
+    await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS + 100)
+    turn.abort()
+    await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+
+    expect(String(await done)).toContain('aborted')
     expect(getMockSend()).toHaveBeenCalledTimes(1)
   })
 })

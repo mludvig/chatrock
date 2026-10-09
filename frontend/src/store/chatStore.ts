@@ -17,6 +17,7 @@ export interface StreamingMsg {
   streaming: true
   waiting?: boolean  // true until first content event arrives
   idle?: boolean     // true after 2s of no content events (inter-turn gap)
+  longWait?: boolean // heartbeats still arriving, but no content for LONG_WAIT_MS
 }
 
 export type ToastKind = 'success' | 'error' | 'info'
@@ -103,6 +104,8 @@ interface ChatState {
   setStreamUsage: (chatId: string, usage: TokenUsage) => void
   /** Toggle idle indicator — churn-free: no-op when value unchanged */
   setStreamIdle: (chatId: string, idle: boolean) => void
+  /** Toggle the long-wait notice — churn-free like setStreamIdle */
+  setStreamLongWait: (chatId: string, longWait: boolean) => void
   /** Pop streamingByChat[chatId] into a finalized Message, or undefined if there was none */
   finalizeStream: (chatId: string) => Message | undefined
   /** Same as finalizeStream but tags the result as errored (partial answer from a stream error) */
@@ -371,6 +374,12 @@ export const useChatStore = create<ChatState>()(
         const sm = s.streamingByChat[chatId]
         if (!sm || (sm.idle ?? false) === idle) return {}
         return { streamingByChat: { ...s.streamingByChat, [chatId]: { ...sm, idle } } }
+      }),
+
+      setStreamLongWait: (chatId, longWait) => set((s) => {
+        const sm = s.streamingByChat[chatId]
+        if (!sm || (sm.longWait ?? false) === longWait) return {}
+        return { streamingByChat: { ...s.streamingByChat, [chatId]: { ...sm, longWait } } }
       }),
 
       finalizeStream: (chatId) => {
