@@ -22,21 +22,14 @@ test('thinking and search results survive page reload', async ({ page }) => {
   const modelSelect = page.locator('.model-picker')
   await modelSelect.selectOption({ label: THINKING_MODEL_LABEL })
 
-  // Open the Chat details dialog (header cog) to enable thinking effort for this chat
-  await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
-  await expect(page.locator('.dialog-title')).toHaveText('Chat details')
-  // Thinking effort is a select in the Model settings block. Pick 'high': thinking is
-  // adaptive, so at 'low' the model routinely answers with no thinking block at all.
-  const effortSelect = page.locator('.dialog .model-setting-row')
-    .filter({ hasText: 'Thinking effort' })
-    .locator('select')
-  await effortSelect.selectOption('high')
-  // Close the dialog so the message input is accessible
-  await page.keyboard.press('Escape')
+  // Thinking effort is a composer select. Pick 'high': thinking is adaptive, so at
+  // 'low' the model routinely answers with no thinking block at all.
+  await page.getByLabel('Thinking effort', { exact: true }).selectOption('high')
 
   // Send a prompt that will trigger a web search
   const input = page.locator('.message-input')
-  await input.fill('Search the web for the current AWS Lambda maximum timeout value and cite your sources.')
+  // Asks for a calculation on top of the lookup: adaptive thinking skips a plain lookup.
+  await input.fill('Search the web for the current AWS Lambda maximum timeout value and cite your sources. Then think carefully: how many back-to-back 7-minute-23-second jobs fit in one maximum-length invocation, and how many seconds are left over?')
   await input.press('Enter')
 
   // Processing indicator appears first
