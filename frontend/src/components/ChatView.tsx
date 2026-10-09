@@ -367,6 +367,11 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       }
     }
 
+    if (kind === 'document' && !currentCaps.documents) {
+      pushToast({ kind: 'error', text: `${currentModelDef?.name ?? 'This model'} can't read documents, only images: ${file.name}` })
+      return
+    }
+
     let uploadFile = file
     if (kind === 'image') {
       uploadFile = await downscaleImage(file)
@@ -1840,7 +1845,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             ref={fileInputRef}
             type="file"
             multiple
-            accept={[...Object.keys(ALLOWED_TYPES), ...[...TEXT_EXTENSIONS].map(ext => `.${ext}`)].join(',')}
+            accept={currentCaps.documents
+              ? [...Object.keys(ALLOWED_TYPES), ...[...TEXT_EXTENSIONS].map(ext => `.${ext}`)].join(',')
+              : Object.keys(ALLOWED_TYPES).filter(ct => ALLOWED_TYPES[ct] === 'image').join(',')}
             style={{ display: 'none' }}
             onChange={e => {
               const files = Array.from(e.target.files ?? [])

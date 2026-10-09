@@ -414,7 +414,7 @@ test('sends error event for COMPLETELY_FAKE_EXPENSIVE_MODEL', async () => {
 
 test('send records lastMessageAt, the model, and the composer effort/depth on the chat', async () => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
-  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-sonnet-5', systemPrompt: '', title: 'T', activeLeafId: null, modelSettings: { webSearchEnabled: false, thinkingEffort: 'low' } })
+  mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: 'global.anthropic.claude-sonnet-5-5', systemPrompt: '', title: 'T', activeLeafId: null, modelSettings: { webSearchEnabled: false, thinkingEffort: 'low' } })
   mockDynamo.listMessages.mockResolvedValue([])
   mockDynamo.putMessage.mockResolvedValue(undefined)
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)

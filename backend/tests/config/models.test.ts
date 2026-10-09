@@ -17,12 +17,8 @@ test('TITLE_MODEL is a non-empty string', () => {
   expect(TITLE_MODEL.length).toBeGreaterThan(0)
 })
 
-test('all current models have attachments capability, except known exceptions', () => {
-  // global.xai.grok-4.6: image blocks 500/503 on Bedrock Converse as of Aug 2026 despite
-  // the model card listing IMAGE input — see the comment in config/models.ts.
-  const KNOWN_EXCEPTIONS = ['global.xai.grok-4.6']
+test('all current models have attachments capability', () => {
   for (const m of MODELS) {
-    if (KNOWN_EXCEPTIONS.includes(m.id)) continue
     expect(m.capabilities.attachments).toBe(true)
   }
 })
@@ -50,7 +46,10 @@ test('resolveModelId hands a retired id to the model that replaces it', () => {
   expect(resolveModelId('global.anthropic.claude-opus-5')).toEqual({
     model: 'global.anthropic.claude-opus-5-5', migratedFrom: 'global.anthropic.claude-opus-5',
   })
-  expect(resolveModelId('global.openai.gpt-5.6-sol').model).toBe('global.openai.gpt-6-sol')
+  expect(resolveModelId('global.openai.gpt-5.6-sol').model).toBe('global.openai.gpt-6.1-sol')
+  expect(resolveModelId('global.openai.gpt-6-sol').model).toBe('global.openai.gpt-6.1-sol')
+  expect(resolveModelId('global.xai.grok-4.6').model).toBe('global.xai.grok-4.7')
+  expect(resolveModelId('global.anthropic.claude-sonnet-5-5').model).toBe('global.anthropic.claude-sonnet-5-5')
   expect(resolveModelId('global.openai.gpt-5.6-luna').model).toBe('global.openai.gpt-6-luna')
 })
 
@@ -75,7 +74,7 @@ test('no retired id is replaced by two models', () => {
 })
 
 describe('supportedEffort', () => {
-  const gpt = getCapabilities('global.openai.gpt-6-sol')
+  const gpt = getCapabilities('global.openai.gpt-6.1-sol')
 
   test('passes through a level the model offers', () => {
     expect(supportedEffort(gpt, 'high')).toBe('high')

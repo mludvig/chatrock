@@ -13,7 +13,7 @@ async function* fakeStream(chunks: unknown[]) {
   for (const c of chunks) yield c as never
 }
 
-const BASE_CTX: ToolContext = { sub: 'user-1', chatId: 'chat-1', modelId: 'global.anthropic.claude-sonnet-5' }
+const BASE_CTX: ToolContext = { sub: 'user-1', chatId: 'chat-1', modelId: 'global.anthropic.claude-sonnet-5-5' }
 
 beforeEach(() => {
   mockConverseStream.mockReset()

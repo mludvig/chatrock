@@ -33,7 +33,7 @@ jest.mock('../../../src/lib/llm/registry', () => ({ getProvider: () => stubProvi
 
 import { converseStream, converseOnce } from '../../../src/lib/llm/loop'
 
-const MODEL = 'global.anthropic.claude-sonnet-5'
+const MODEL = 'global.anthropic.claude-sonnet-5-5'
 const CALL = { purpose: 'chat' as const, sub: 'user-1', chatId: 'c1' }
 
 let logSpy: jest.SpyInstance

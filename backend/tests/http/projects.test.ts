@@ -54,7 +54,7 @@ beforeEach(() => {
 
 test('project reads retain saved defaults and member privacy flags', async () => {
   const project = {
-    SK: 'PROJECT#proj-1', name: 'Project', defaultModel: 'global.anthropic.claude-sonnet-5',
+    SK: 'PROJECT#proj-1', name: 'Project', defaultModel: 'global.anthropic.claude-sonnet-5-5',
     modelSettings: { researchDepth: 'deep', browserCoreEnabled: false },
   }
   mockDynamo.listProjects.mockResolvedValue([project])
@@ -64,8 +64,8 @@ test('project reads retain saved defaults and member privacy flags', async () =>
   }])
   const list = JSON.parse(result(await handler(makeEvent('GET', '/api/projects') as any)).body!)
   const detail = JSON.parse(result(await handler(makeEvent('GET', '/api/projects/{projectId}', undefined, { projectId: 'proj-1' }) as any)).body!)
-  expect(list.projects[0]).toMatchObject({ defaultModel: 'global.anthropic.claude-sonnet-5', modelSettings: project.modelSettings })
-  expect(detail.project).toMatchObject({ defaultModel: 'global.anthropic.claude-sonnet-5', modelSettings: project.modelSettings })
+  expect(list.projects[0]).toMatchObject({ defaultModel: 'global.anthropic.claude-sonnet-5-5', modelSettings: project.modelSettings })
+  expect(detail.project).toMatchObject({ defaultModel: 'global.anthropic.claude-sonnet-5-5', modelSettings: project.modelSettings })
   expect(detail.chats[0]).toMatchObject({ sensitive: true, ephemeral: true, expiresAt: new Date(1800000000000).toISOString() })
 })
 

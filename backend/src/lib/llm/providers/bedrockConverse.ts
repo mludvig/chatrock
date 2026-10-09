@@ -55,7 +55,7 @@ function toBedrockTool(spec: ToolSpec): Tool {
 /** Trailing cachePoint so the tool definitions (stable across all turns) get cached
  *  on first use. Empty input -> empty output (no dangling cachePoint-only list).
  *  `cachingEnabled` gates the cachePoint itself — a model with promptCaching:'none'
- *  (e.g. Grok 4.6) gets an AccessDeniedException if a cachePoint is sent at all. */
+ *  (e.g. Grok) gets an AccessDeniedException if a cachePoint is sent at all. */
 function toBedrockToolsWithCache(tools: ToolSpec[], cachingEnabled: boolean): Tool[] {
   if (tools.length === 0) return []
   return cachingEnabled ? [...tools.map(toBedrockTool), CACHE_POINT_TOOL] : tools.map(toBedrockTool)

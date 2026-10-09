@@ -64,9 +64,9 @@ export const MODELS: Model[] = [
     capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
-    id: 'global.anthropic.claude-sonnet-5',
-    name: 'Claude Sonnet 5',
-    replaces: ['global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
+    id: 'global.anthropic.claude-sonnet-5-5',
+    name: 'Claude Sonnet 5.5',
+    replaces: ['global.anthropic.claude-sonnet-5', 'global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
     capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
@@ -89,9 +89,9 @@ export const MODELS: Model[] = [
     },
   },
   {
-    id: 'global.openai.gpt-6-sol',
-    name: 'GPT-6 Sol',
-    replaces: ['global.openai.gpt-5.6-sol', 'openai.gpt-5.6-sol'],
+    id: 'global.openai.gpt-6.1-sol',
+    name: 'GPT-6.1 Sol',
+    replaces: ['global.openai.gpt-6-sol', 'global.openai.gpt-5.6-sol', 'openai.gpt-5.6-sol'],
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
@@ -135,20 +135,21 @@ export const MODELS: Model[] = [
       maxOutputTokens: 16000,
     },
   },
-  // xAI Grok 4.6 via Bedrock Converse. Verified live against ap-southeast-2 Aug 2026:
-  // rejects temperature/topP (ValidationException), rejects document blocks outright,
-  // and image blocks 500/503 despite the model card listing IMAGE input — not usable yet.
+  // xAI Grok via Bedrock Converse. Verified live against ap-southeast-2 Oct 2026 (Grok 4.7):
+  // image blocks work; document blocks are rejected ("This model doesn't support documents");
+  // temperature/topP are rejected (ValidationException); a cachePoint is an AccessDeniedException.
   // Always emits a reasoningContent/redactedContent block regardless of any thinking
-  // param tried (Anthropic-style thinking.type=adaptive, a plain reasoning_effort) with
+  // param tried (Anthropic-style thinking.type=adaptive, reasoning_effort, reasoning.effort) with
   // no observable effect on output — no confirmed effort dial, so thinking is 'none'.
   {
-    id: 'global.xai.grok-4.6',
-    name: 'Grok 4.6',
-    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: false, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
+    id: 'global.xai.grok-4.7',
+    name: 'Grok 4.7',
+    replaces: ['global.xai.grok-4.6'],
+    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
   },
 ]
 
-export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-5'
+export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-5-5'
 
 // The smallest/cheapest model, for short mechanical calls whose output is a title or a
 // one-word classification rather than anything the user reads as an answer.
