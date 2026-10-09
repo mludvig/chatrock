@@ -13,6 +13,7 @@ import ChatView from './components/ChatView'
 import ProjectView from './components/ProjectView'
 import Toaster from './components/Toaster'
 import { sortByRecent } from './lib/sort'
+import { mergeFetchedChats } from './lib/chatList'
 import './app.scss'
 
 // Renew this far ahead of expiry rather than at it: a token that dies mid-handshake looks
@@ -83,10 +84,15 @@ function AuthedApp() {
     let cancelled = false
     setLoading(true)
     setLoadError('')
+    // A chat created while this is in flight must survive the response — see
+    // docs/adr/0060-reconcile-fetched-chat-list-with-local-changes.md.
+    const knownAtStart = new Set(useChatStore.getState().chats.map(c => c.chatId))
     Promise.allSettled([api.listChats(), api.getPreferences(), api.listProjects()])
       .then(([chatsRes, prefsRes, projectsRes]) => {
         if (cancelled) return
-        if (chatsRes.status === 'fulfilled') setChats(sortByRecent(chatsRes.value.chats))
+        if (chatsRes.status === 'fulfilled') {
+          setChats(sortByRecent(mergeFetchedChats(chatsRes.value.chats, useChatStore.getState().chats, knownAtStart)))
+        }
         if (prefsRes.status === 'fulfilled') setUserPreferences(prefsRes.value.preferences)
         if (projectsRes.status === 'fulfilled') setProjects(projectsRes.value.projects)
         const failed = [chatsRes, prefsRes, projectsRes].flatMap((result, index) =>

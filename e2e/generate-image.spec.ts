@@ -24,6 +24,7 @@ test.describe('generate_image tool', () => {
     // Enable Image generation for this chat (opt-in — off by default)
     await page.locator('.chat-header .btn-icon[title="Chat details"]').click()
     await expect(page.locator('.dialog-title')).toHaveText('Chat details')
+    await page.locator('.dialog .advanced-tools summary').click()
     const imageGenRow = page.locator('.dialog .model-setting-row').filter({ hasText: 'Image generation' })
     await expect(imageGenRow.locator('.toggle-btn')).toHaveText('Off')
     await imageGenRow.locator('.toggle-btn').click()

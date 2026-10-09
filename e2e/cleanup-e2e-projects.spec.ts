@@ -4,9 +4,15 @@
  *
  *   npm run test:e2e -- e2e/cleanup-e2e-projects.spec.ts
  */
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect, type Locator, type Page } from '@playwright/test'
 
 test.use({ storageState: '.auth/state.json' })
+
+// Row actions live in a ••• menu whose content is portalled to <body>.
+async function deleteViaMenu(page: Page, item: Locator) {
+  await item.locator('.item-menu summary').click()
+  await page.locator('.item-menu-content button', { hasText: 'Delete project' }).click()
+}
 
 async function deleteVisibleE2EProjects(page: Page): Promise<number> {
   let deleted = 0
@@ -19,7 +25,7 @@ async function deleteVisibleE2EProjects(page: Page): Promise<number> {
     // Snapshot a stable reference: nth(0) on the live locator still resolves
     // dynamically, so instead capture the count and wait for it to drop.
     const item = items.first()
-    const name = await item.locator('span').first().textContent()
+    const name = await item.locator('.project-title').textContent()
     // Wait for the DELETE API response as the reliable completion signal —
     // checking item visibility is unreliable because `items.first()` resolves
     // to a new element after the deleted one is removed.
@@ -28,8 +34,7 @@ async function deleteVisibleE2EProjects(page: Page): Promise<number> {
       { timeout: 8000 }
     )
     page.once('dialog', d => d.accept())
-    await item.hover()
-    await item.locator('button[title="Delete project"]').click()
+    await deleteViaMenu(page, item)
     await deleteDone
     deleted++
     console.log(`Deleted: ${name?.trim() ?? '(unknown)'}`)
@@ -42,7 +47,6 @@ async function deleteVisibleE2EProjects(page: Page): Promise<number> {
 test('delete all leftover E2E test projects', async ({ page }) => {
   await page.goto('/c/new')
   await page.waitForLoadState('networkidle')
-  await page.click('[data-panel="projects"]')
   await expect(page.locator('.projects-panel')).toBeVisible()
 
   const deleted = await deleteVisibleE2EProjects(page)
@@ -59,8 +63,7 @@ test('delete all leftover E2E test projects', async ({ page }) => {
       { timeout: 8000 }
     )
     page.once('dialog', d => d.accept())
-    await ccit.hover()
-    await ccit.locator('button[title="Delete project"]').click()
+    await deleteViaMenu(page, ccit)
     await deleteDone
     console.log('Deleted: CCIT')
   }
