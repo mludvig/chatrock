@@ -121,6 +121,99 @@ export async function clearChatStreaming(sub: string, chatId: string) {
   }))
 }
 
+// How long a `streamingSince` marker is believed. ws/sendMessage.ts clears it on every exit
+// it can reach, but a Lambda killed at its 900 s ceiling clears nothing — past this window
+// the marker is treated as debris rather than a live turn.
+export const STREAM_STALE_MS = 16 * 60 * 1000
+
+const staleCutoff = () => new Date(Date.now() - STREAM_STALE_MS).toISOString()
+
+const isConditionFailed = (e: unknown) => (e as { name?: string })?.name === 'ConditionalCheckFailedException'
+
+// A user message sent while a turn is running on its chat. Held on the chat row until the
+// running turn injects it at a tool boundary or, failing that, runs it as the next turn.
+// See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+export interface QueuedMessage {
+  content?: string
+  attachments?: Record<string, unknown>[]
+  sentAt: string
+  model: string
+  systemPrompt: string
+  modelSettings: Record<string, unknown>
+  connId: string
+}
+
+// Takes the chat's streaming marker for a new turn. False when another turn holds a fresh one.
+export async function claimChatStreaming(sub: string, chatId: string, responseId: string): Promise<boolean> {
+  try {
+    await ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: buildChatKey(sub, chatId),
+      UpdateExpression: 'SET streamingSince = :s, streamingResponseId = :r',
+      ConditionExpression: 'attribute_not_exists(streamingSince) OR streamingSince < :cutoff',
+      ExpressionAttributeValues: { ':s': new Date().toISOString(), ':r': responseId, ':cutoff': staleCutoff() },
+    }))
+    return true
+  } catch (e) {
+    if (isConditionFailed(e)) return false
+    throw e
+  }
+}
+
+// Appends to the running turn's queue. False when no turn is running any more, so the
+// caller should claim the marker and run the message itself.
+export async function queueChatMessage(sub: string, chatId: string, msg: QueuedMessage): Promise<boolean> {
+  try {
+    await ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: buildChatKey(sub, chatId),
+      UpdateExpression: 'SET pendingMessages = list_append(if_not_exists(pendingMessages, :empty), :m)',
+      ConditionExpression: 'streamingSince >= :cutoff',
+      ExpressionAttributeValues: { ':empty': [], ':m': [msg], ':cutoff': staleCutoff() },
+    }))
+    return true
+  } catch (e) {
+    if (isConditionFailed(e)) return false
+    throw e
+  }
+}
+
+// Removes and returns everything queued, oldest first.
+export async function takePendingMessages(sub: string, chatId: string): Promise<QueuedMessage[]> {
+  try {
+    const res = await ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: buildChatKey(sub, chatId),
+      UpdateExpression: 'REMOVE pendingMessages',
+      ConditionExpression: 'attribute_exists(pendingMessages)',
+      ReturnValues: 'UPDATED_OLD',
+    }))
+    return (res.Attributes?.pendingMessages as QueuedMessage[] | undefined) ?? []
+  } catch (e) {
+    if (isConditionFailed(e)) return []
+    throw e
+  }
+}
+
+// Clears the streaming marker only if nothing is queued. False means messages arrived that
+// the ending turn never reached, and the caller must start a turn for them. The condition
+// makes this atomic with queueChatMessage: a message is either queued before the release
+// (and seen here) or rejected after it (and its sender claims the marker instead).
+export async function releaseChatStreaming(sub: string, chatId: string): Promise<boolean> {
+  try {
+    await ddb.send(new UpdateCommand({
+      TableName: TABLE,
+      Key: buildChatKey(sub, chatId),
+      UpdateExpression: 'REMOVE streamingSince, streamingResponseId, streamingDeadlineAt',
+      ConditionExpression: 'attribute_not_exists(pendingMessages)',
+    }))
+    return true
+  } catch (e) {
+    if (isConditionFailed(e)) return false
+    throw e
+  }
+}
+
 export async function updateChatModel(sub: string, chatId: string, model: string) {
   await ddb.send(new UpdateCommand({
     TableName: TABLE,

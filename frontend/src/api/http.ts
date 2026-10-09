@@ -278,7 +278,8 @@ export const api = {
     // `streaming`: the backend is generating an answer for this chat right now, possibly for
     // a connection that is no longer ours — what ChatView polls on after a dropped socket.
     // `streamingDeadlineAt`: present only while a deep turn is streaming — drives the countdown.
-    return req<{ bubbles: Message[]; conversationUsage: TokenUsage; hasMore: boolean; oldestMsgId: string | null; streaming: boolean; streamingDeadlineAt?: number }>(
+    // `pending`: messages sent during that turn, not yet in the transcript (ADR 0059).
+    return req<{ bubbles: Message[]; conversationUsage: TokenUsage; hasMore: boolean; oldestMsgId: string | null; streaming: boolean; streamingDeadlineAt?: number; pending?: Array<{ content: string; sentAt: string }> }>(
       'GET', `/api/chats/${chatId}/messages${qs ? `?${qs}` : ''}`)
   },
   setActiveLeaf: (chatId: string, activeLeafId: string) => req<void>('PATCH', `/api/chats/${chatId}`, { activeLeafId }),

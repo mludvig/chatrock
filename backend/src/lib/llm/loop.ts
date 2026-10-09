@@ -63,6 +63,11 @@ export interface ConverseStreamOptions {
   // Lambda's own remaining time, minus a reserve for the synthesis call and persistence.
   // See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
   deadlineAt?: number
+  // Called at each tool boundary, after the round's tool-result turn has been yielded (and so
+  // persisted): returns the live blocks of any user messages sent meanwhile, which join that
+  // round's tool results as input to the next model call. ws/sendMessage.ts persists them
+  // itself. See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+  takeUserMessages?: () => Promise<Block[]>
   // Required: what this call is for. The wrapper logs it — no call site logs its own
   // token stats. See docs/adr/0029-llm-observability-in-the-wrapper.md.
   call: LlmCallContext
@@ -157,7 +162,7 @@ async function* streamRounds(
   modelId: string,
   systemPrompt: string,
   messages: NeutralMessage[],
-  { settings = {}, ctx, abortSignal, forceToolName, deadlineAt }: ConverseStreamOptions,
+  { settings = {}, ctx, abortSignal, forceToolName, deadlineAt, takeUserMessages }: ConverseStreamOptions,
 ): AsyncGenerator<StreamChunk> {
   const provider = getProvider(modelId)
   const tools = buildToolList(settings, ctx)
@@ -412,6 +417,8 @@ async function* streamRounds(
     // Yield the user tool-result turn for persistence (s3Uri form, neutral at rest)
     yield { type: 'turn', role: 'user', content: toolResultsPersist, turnIndex }
     turnIndex++
+
+    if (takeUserMessages) toolResultsLive.push(...await takeUserMessages())
 
     // Budget pacing: the model otherwise has no idea how much room it has left and
     // researches at full tilt until cut off. Steer it via the live-only replay —

@@ -1,5 +1,5 @@
 import type { APIGatewayProxyEventV2WithJWTAuthorizer, APIGatewayProxyResultV2 } from 'aws-lambda'
-import { getChat, listMessages } from '../lib/dynamo'
+import { getChat, listMessages, STREAM_STALE_MS, type QueuedMessage } from '../lib/dynamo'
 import { buildActivePath } from '../lib/tree'
 import { subFromClaims } from '../lib/auth'
 import { groupTurnsToBubbles, signBubbleAttachments, type RawBubble, type TurnRow } from '../lib/transcript'
@@ -9,11 +9,6 @@ import { groupTurnsToBubbles, signBubbleAttachments, type RawBubble, type TurnRo
 // ?before=<oldestMsgId> as the user scrolls up. Keeps signing cost bounded to what's on
 // screen instead of growing with total chat length.
 const DEFAULT_PAGE_LIMIT = 40
-
-// How long a `streamingSince` marker is believed. ws/sendMessage.ts clears it on every exit
-// it can reach, but a Lambda killed at its 900 s ceiling clears nothing — past this window
-// the marker is treated as debris rather than a live turn, so the client stops polling.
-const STREAM_STALE_MS = 16 * 60 * 1000
 
 const ok = (body: unknown): APIGatewayProxyResultV2 => ({
   statusCode: 200,
@@ -47,6 +42,9 @@ interface MessagesResponse {
   // Epoch ms — only present while a deep turn is streaming (see dynamo.ts's setChatStreaming).
   // Its presence, not just `streaming`, gates the countdown banner on a reload/second device.
   streamingDeadlineAt?: number
+  // Messages sent while that turn runs and not yet written into the transcript. Shown after
+  // the live answer so a reload doesn't lose them. See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+  pending?: Array<{ content: string; sentAt: string }>
 }
 
 const isStreaming = (since: string | undefined): boolean => {
@@ -120,6 +118,9 @@ export const handler = async (
     oldestMsgId,
     streaming,
     ...(streaming && chat.streamingDeadlineAt !== undefined ? { streamingDeadlineAt: chat.streamingDeadlineAt as number } : {}),
+    ...(streaming && Array.isArray(chat.pendingMessages) && chat.pendingMessages.length > 0
+      ? { pending: (chat.pendingMessages as QueuedMessage[]).map(m => ({ content: m.content ?? '', sentAt: m.sentAt })) }
+      : {}),
   }
   return ok(response)
 }

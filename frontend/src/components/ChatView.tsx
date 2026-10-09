@@ -14,6 +14,7 @@ import MessageBubble, { UsageStats } from './MessageBubble'
 import ChatDetailsDialog from './ChatDetailsDialog'
 import ItemMenu from './ItemMenu'
 import { describeChatPrivacy } from '../lib/privacyDescription'
+import { queuedBubble, takeInjected } from '../lib/queuedMessages'
 
 interface Props {
   models: Model[]
@@ -151,6 +152,17 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   // Latest narration line per run_research_task toolUseId — purely ephemeral UI feedback,
   // dropped on stream end; the finding itself is what's persisted (see StepBlocks.tsx).
   const [subAgentProgress, setSubAgentProgress] = useState<Record<string, string>>({})
+  // Messages sent while a turn runs, per chat, shown after the live answer until the server
+  // injects them. See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+  // The ref is the source of truth so back-to-back frames each see the other's change.
+  const [queuedByChat, setQueuedByChat] = useState<Record<string, Message[]>>({})
+  const queuedByChatRef = useRef<Record<string, Message[]>>({})
+  const setQueue = useCallback((id: string, queue: Message[]) => {
+    queuedByChatRef.current = { ...queuedByChatRef.current, [id]: queue }
+    setQueuedByChat(queuedByChatRef.current)
+  }, [])
+  // Acks still owed to queued sends, which say nothing about the running turn's deadline.
+  const queuedAcksRef = useRef<Record<string, number>>({})
 
   const [input, setInput] = useState('')
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -233,6 +245,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const viewedOrPendingChatId: string | null = !isNew ? (chatId ?? null) : pendingNewChatIdRef.current
   const sending = !!(viewedOrPendingChatId && sendingByChat[viewedOrPendingChatId])
   const streamingMsg = viewedOrPendingChatId ? streamingByChat[viewedOrPendingChatId] : undefined
+  const queuedMessages = viewedOrPendingChatId ? queuedByChat[viewedOrPendingChatId] ?? [] : []
   // Debounce refs for the Chat details dialog's system-prompt/model-settings edits
   // (moved here from the old PreferencesPanel "This chat" tab — same 800ms pattern).
   const { status: systemPromptSaveStatus, track: trackSystemPromptSave } = useSaveStatus()
@@ -440,6 +453,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       const streamQuiet = Date.now() - (lastFrameAtRef.current[id] ?? 0) > STALE_SENDING_QUIET_MS
       const staleSending = useChatStore.getState().sendingByChat[id] && !r.streaming && streamQuiet
       if (useChatStore.getState().sendingByChat[id] && !opts?.force && !staleSending) return
+      setQueue(id, (r.pending ?? []).map(m => queuedBubble(m.content, m.sentAt)))
       const enriched = enrichMessages(r.bubbles)
       useChatStore.getState().setMessagesCache(id, {
         messages: enriched, conversationUsage: r.conversationUsage, hasMoreOlder: r.hasMore, oldestMsgId: r.oldestMsgId,
@@ -456,7 +470,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       setHasMoreOlder(r.hasMore)
       setOldestMsgId(r.oldestMsgId)
     }).catch(() => {})
-  }, [setMessages, clearStream, setSending])
+  }, [setMessages, clearStream, setSending, setQueue])
 
   // Fetch the page immediately before the oldest loaded bubble and prepend it. Preserves
   // scroll position by measuring the height added and adjusting scrollTop by the same
@@ -596,7 +610,54 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         pendingDraftKeyRef.current = null
       }
       if (evt.type === 'ack') {
+        if (queuedAcksRef.current[evt.chatId]) {
+          queuedAcksRef.current[evt.chatId]--
+          return
+        }
         if (evt.chatId === chatIdRef.current) setStreamDeadlineAt(evt.deadlineAt ?? null)
+        return
+      }
+      if (evt.type === 'queued') {
+        // A send this client streamed for, not knowing a turn was already running (another
+        // device's, or one it lost track of): move its bubble into the queue and watch the
+        // running turn by polling instead.
+        const base = streamingBaseByChatRef.current[evt.chatId]
+        const last = base?.[base.length - 1]
+        if (!last || last.msgId !== optimisticMsgIdRef.current) return
+        clearIdleTimer(evt.chatId)
+        clearStream(evt.chatId)
+        setSending(evt.chatId, false)
+        streamingBaseByChatRef.current[evt.chatId] = base.slice(0, -1)
+        setQueue(evt.chatId, [...(queuedByChatRef.current[evt.chatId] ?? []), last])
+        if (evt.chatId === chatIdRef.current) {
+          setMessages(base.slice(0, -1))
+          setServerStreaming(true)
+        }
+        return
+      }
+      if (evt.type === 'user_message_injected') {
+        // The answer so far becomes its own bubble, then the user's message, then the answer
+        // continues in a fresh streaming bubble. Also how a queued turn announces itself, and
+        // it follows a Stop, so it resets the cancelled flag.
+        const id = evt.chatId
+        const viewed = id === chatIdRef.current
+        const store = useChatStore.getState()
+        const base = viewed ? store.messages
+          : store.sendingByChat[id] ? streamingBaseByChatRef.current[id] ?? []
+          : store.getMessagesCache(id)?.messages ?? []
+        const finalized = finalizeStream(id)
+        const { bubble, rest } = takeInjected(queuedByChatRef.current[id] ?? [], evt)
+        const next = [...base, ...(finalized && finalized.steps.some(stepHasContent) ? [finalized] : []), bubble]
+        setQueue(id, rest)
+        streamCancelledByChatRef.current[id] = false
+        streamingBaseByChatRef.current[id] = next
+        setSending(id, true)
+        startStream(id)
+        bumpIdleTimer(id)
+        if (viewed) {
+          setSubAgentProgress({})
+          setMessages(next)
+        }
         return
       }
       // Allow titleUpdated (title gen runs independently of stream cancel) and
@@ -689,7 +750,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         }
       }
     })
-  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, setStreamLongWait, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, pushToast, setMessages])
+  }, [appendDelta, appendThinkingDelta, markThinkingDone, addToolCall, updateToolCallInput, resolveToolCall, setStreamUsage, setStreamIdle, setStreamLongWait, finalizeStream, finalizeStreamErrored, clearStream, renameChat, setSending, reloadMessages, triggerMemoryRefresh, pushToast, setMessages, startStream, setQueue])
 
   // Load messages when chatId changes.
   // Guard against two races:
@@ -1211,7 +1272,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     const effectiveProjectId = projectIdOverride ?? (draftProjectId || undefined)
     const content = (overrideContent ?? input).trim()
     const readyAttachments = attachments.filter(a => a.status === 'ready')
-    if ((!content && readyAttachments.length === 0) || sending || creatingChat) return
+    if ((!content && readyAttachments.length === 0) || (sending && (isNew || editingMsgId)) || creatingChat) return
     // A deep link can render the composer before its chat metadata arrives.
     // Keep the draft intact until we know which model/settings to send with.
     if (!isNew && !activeChat) return
@@ -1328,6 +1389,30 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
 
     // Existing chat
     if (!activeChat) return
+
+    // A turn is already running here: the server queues this message for it, so it waits
+    // after the live answer with no stream of its own. See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+    if (sending) {
+      queuedAcksRef.current[chatId!] = (queuedAcksRef.current[chatId!] ?? 0) + 1
+      setQueue(chatId!, [...(queuedByChatRef.current[chatId!] ?? []), optimisticUser])
+      pendingScrollTopRef.current = true
+      try {
+        await ensureConnected()
+        sendMessage({
+          chatId: chatId!,
+          content,
+          model: activeChat.model,
+          systemPrompt: activeChat.systemPrompt,
+          modelSettings: modelSettingsForSend,
+          attachments: attachmentsPayload,
+        })
+        recordSendLocally(chatId!, activeChat.model, modelSettingsForSend)
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+
     streamCancelledByChatRef.current[chatId!] = false
     setSending(chatId!, true)
 
@@ -1689,6 +1774,12 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
               showTokenStats={effectiveShowTokenStats}
             />
           ))}
+          {queuedMessages.map(m => (
+            <div key={m.msgId} className="message-queued">
+              <MessageBubble message={m} showTokenStats={false} />
+              <div className="message-queued-label">Queued until the current step finishes</div>
+            </div>
+          ))}
           <div ref={bottomRef} />
         </div>
 
@@ -1909,13 +2000,13 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             <button
               className="btn-attach"
               title="Attach file"
-              disabled={sending || creatingChat}
+              disabled={(sending && isNew) || creatingChat}
               onClick={() => fileInputRef.current?.click()}
             >
               <FontAwesomeIcon icon={faPaperclip} />
             </button>
           )}
-          {sending ? (
+          {sending && (
             // sending is derived from sendingByChat[viewedOrPendingChatId], so it's already
             // scoped to the chat currently in view — see docs/adr/0040-concurrent-per-chat-streaming.md.
             <button
@@ -1925,7 +2016,9 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             >
               <FontAwesomeIcon icon={faStop} />
             </button>
-          ) : (
+          )}
+          {/* Send stays available while a turn runs: the message steers it (ADR 0059). */}
+          {(!sending || (!isNew && !editingMsgId)) && (
             <button
               className="btn-send"
               onClick={() => handleSend()}

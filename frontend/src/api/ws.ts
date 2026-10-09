@@ -36,6 +36,11 @@ export type WSEvent = (
   // toolUseId. Purely UI feedback — dropped frames cost nothing, since the finding itself
   // is persisted as the tool result. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
   | { type: 'sub_agent_progress'; toolUseId: string; name: string; text: string }
+  // A send landed while a turn was running: it waits for that turn's next tool boundary.
+  // user_message_injected is a queued message written into the transcript there; the
+  // answer that follows streams as a new bubble. See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+  | { type: 'queued' }
+  | { type: 'user_message_injected'; msgId: string; parentId: string | null; content: string }
 ) & { chatId: string }
 
 type EventHandler = (evt: WSEvent) => void

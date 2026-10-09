@@ -234,6 +234,27 @@ resource "aws_lambda_function" "ws_send_message" {
   tags = { Env = var.env }
 }
 
+# A turn that ends with user messages still queued invokes this function asynchronously to run
+# them. No retries: the queue is taken at the start, so a retry has nothing to run.
+# See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+resource "aws_lambda_function_event_invoke_config" "ws_send_message" {
+  function_name          = aws_lambda_function.ws_send_message.function_name
+  maximum_retry_attempts = 0
+}
+
+resource "aws_iam_role_policy" "ws_send_message_self_invoke" {
+  name = "chatrock-ws-sendMessage-self-invoke-${var.env}"
+  role = aws_iam_role.lambda.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.ws_send_message.arn
+    }]
+  })
+}
+
 resource "aws_lambda_permission" "ws_send_apigw" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.ws_send_message.function_name

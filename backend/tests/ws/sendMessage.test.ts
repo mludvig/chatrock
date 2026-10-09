@@ -44,6 +44,12 @@ jest.mock('../../src/lib/dynamo', () => ({
   updateChatSummary: jest.fn().mockResolvedValue(undefined),
   listProjectFiles: jest.fn().mockResolvedValue([]),
   listChats: jest.fn().mockResolvedValue([]),
+  setChatStreaming: jest.fn().mockResolvedValue(undefined),
+  clearChatStreaming: jest.fn().mockResolvedValue(undefined),
+  claimChatStreaming: jest.fn().mockResolvedValue(true),
+  queueChatMessage: jest.fn().mockResolvedValue(true),
+  takePendingMessages: jest.fn().mockResolvedValue([]),
+  releaseChatStreaming: jest.fn().mockResolvedValue(true),
 }))
 
 jest.mock('../../src/lib/projectFiles', () => ({
@@ -82,6 +88,10 @@ const makeEvent = (body: object) => ({
 beforeEach(() => {
   jest.clearAllMocks()
   mockPost.mockResolvedValue(undefined)
+  mockDynamo.claimChatStreaming.mockResolvedValue(true)
+  mockDynamo.queueChatMessage.mockResolvedValue(true)
+  mockDynamo.takePendingMessages.mockResolvedValue([])
+  mockDynamo.releaseChatStreaming.mockResolvedValue(true)
   mockEnrichment.enrichUserFacts.mockResolvedValue({ memories: [] })
   mockEnrichment.enrichProjectFacts.mockResolvedValue({ memories: [] })
   mockEnrichment.generateChatTitle.mockResolvedValue(undefined)
@@ -2591,5 +2601,134 @@ describe('Search (forced search_history turn)', () => {
     const toolCtxArg = mockBedrock.converseStream.mock.calls[0][3].ctx
     expect(toolCtxArg?.searchScope).toBe('project')
     expect(toolCtxArg?.projectId).toBeUndefined()
+  })
+})
+
+// ── Queued messages: steering a running turn (docs/adr/0059) ───────────────────
+
+describe('queued user messages', () => {
+  const MODEL = 'global.anthropic.claude-haiku-5-5'
+  const frames = () => mockPost.mock.calls.map(c => JSON.parse((c[0] as { Data: string }).Data))
+  const queuedMsg = (content: string, connId = 'conn-2') => ({
+    content, sentAt: '2026-10-09T00:00:00.000Z', model: MODEL, systemPrompt: '', modelSettings: {}, connId,
+  })
+
+  beforeEach(() => {
+    mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
+    mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing', activeLeafId: 'leaf-0' })
+    mockDynamo.listMessages.mockResolvedValue([])
+    mockDynamo.putMessage.mockResolvedValue(undefined)
+    mockDynamo.putMessagePair.mockResolvedValue(undefined)
+  })
+
+  test('a send while a turn runs is queued, not run', async () => {
+    mockDynamo.claimChatStreaming.mockResolvedValue(false)
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Also check Y', model: MODEL, systemPrompt: '' }))
+
+    expect(mockDynamo.queueChatMessage).toHaveBeenCalledWith('user-1', 'c1', expect.objectContaining({ content: 'Also check Y', connId: 'conn-1', model: MODEL }))
+    expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+    expect(mockDynamo.putMessage).not.toHaveBeenCalled()
+    expect(mockDynamo.releaseChatStreaming).not.toHaveBeenCalled()
+    expect(frames().map(f => f.type)).toEqual(['ack', 'queued'])
+  })
+
+  test('a queue append that finds the turn just ended claims the marker and runs normally', async () => {
+    mockDynamo.claimChatStreaming.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    mockDynamo.queueChatMessage.mockResolvedValueOnce(false)
+    async function* fakeStream() {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Hi' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(fakeStream())
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: MODEL, systemPrompt: '' }))
+
+    expect(mockBedrock.converseStream).toHaveBeenCalledTimes(1)
+    expect(mockDynamo.releaseChatStreaming).toHaveBeenCalledTimes(1)
+  })
+
+  test('an edit while a turn runs is refused', async () => {
+    mockDynamo.claimChatStreaming.mockResolvedValue(false)
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', parentId: 'p1', content: 'Edited', model: MODEL, systemPrompt: '' }))
+
+    expect(mockDynamo.queueChatMessage).not.toHaveBeenCalled()
+    expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+    expect(frames().at(-1)).toMatchObject({ type: 'error' })
+  })
+
+  test('messages taken at a tool boundary are persisted after the tool results and announced', async () => {
+    mockDynamo.takePendingMessages.mockResolvedValueOnce([queuedMsg('Focus on X')])
+    let live: unknown[] = []
+    mockBedrock.converseStream.mockImplementation(async function* (_m, _s, _h, opts) {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'tool_call' as const, callId: 't1', name: 'web_search', input: {} }], turnIndex: 0 }
+      yield { type: 'turn' as const, role: 'user' as const, content: [{ kind: 'tool_result' as const, callId: 't1', entries: [], isError: false }], turnIndex: 1 }
+      live = await opts.takeUserMessages!()
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Focused on X.' }], turnIndex: 2 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    })
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Research A', model: MODEL, systemPrompt: '' }))
+
+    const toolResultRow = mockDynamo.putMessagePair.mock.calls[0][1] as Record<string, unknown>
+    const rows = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>)
+    const injected = rows.find(r => r.role === 'user' && (r.blocks as Array<{ text?: string }>)[0]?.text === 'Focus on X')!
+    expect(injected.parentId).toBe(toolResultRow.msgId)
+    const answer = rows.find(r => r.role === 'assistant')!
+    expect(answer.parentId).toBe(injected.msgId)
+    expect(live).toEqual([
+      { kind: 'text', text: 'The user sent this message while you were working:' },
+      { kind: 'text', text: 'Focus on X' },
+    ])
+    expect(frames()).toContainEqual(expect.objectContaining({ type: 'user_message_injected', msgId: injected.msgId, content: 'Focus on X' }))
+  })
+
+  test('a turn that ends with messages still queued starts a queued turn instead of releasing', async () => {
+    mockDynamo.releaseChatStreaming.mockResolvedValue(false)
+    const invokeSelf = jest.fn().mockResolvedValue(undefined)
+    async function* fakeStream() {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Hi' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(fakeStream())
+    await buildHandler(mockPost, invokeSelf)(makeEvent({ chatId: 'c1', content: 'Hello', model: MODEL, systemPrompt: '' }))
+
+    expect(invokeSelf).toHaveBeenCalledTimes(1)
+    expect(invokeSelf.mock.calls[0][0]).toMatchObject({ source: 'chatrock.queuedTurn', sub: 'user-1', chatId: 'c1' })
+    expect(mockDynamo.clearChatStreaming).not.toHaveBeenCalled()
+  })
+
+  test('a queued turn persists each message in order and answers on the last sender\'s connection', async () => {
+    mockDynamo.takePendingMessages.mockResolvedValueOnce([queuedMsg('First', 'conn-2'), queuedMsg('Second', 'conn-3')])
+    async function* fakeStream() {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Both.' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(fakeStream())
+    const event = { ...makeEvent({}), body: undefined, source: 'chatrock.queuedTurn' as const, sub: 'user-1', chatId: 'c1' }
+    await buildHandler(mockPost)(event)
+
+    expect(mockDynamo.getConnection).not.toHaveBeenCalled()
+    expect(mockDynamo.claimChatStreaming).not.toHaveBeenCalled()
+    const users = mockDynamo.putMessage.mock.calls.map(c => c[0] as Record<string, unknown>).filter(r => r.role === 'user')
+    expect(users.map(r => (r.blocks as Array<{ text: string }>)[0].text)).toEqual(['First', 'Second'])
+    expect(users[0].parentId).toBe('leaf-0')
+    expect(users[1].parentId).toBe(users[0].msgId)
+    const history = mockBedrock.converseStream.mock.calls[0][2]
+    expect(history.map(m => m.content[0])).toEqual([{ kind: 'text', text: 'First' }, { kind: 'text', text: 'Second' }])
+    expect(mockPost.mock.calls.every(c => (c[0] as { ConnectionId: string }).ConnectionId === 'conn-3')).toBe(true)
+    expect(frames().filter(f => f.type === 'user_message_injected').map(f => f.content)).toEqual(['First', 'Second'])
+    expect(mockDynamo.releaseChatStreaming).toHaveBeenCalledTimes(1)
+  })
+
+  test('a duplicate queued-turn delivery with nothing queued leaves the marker alone', async () => {
+    const event = { ...makeEvent({}), body: undefined, source: 'chatrock.queuedTurn' as const, sub: 'user-1', chatId: 'c1' }
+    await buildHandler(mockPost)(event)
+
+    expect(mockBedrock.converseStream).not.toHaveBeenCalled()
+    expect(mockDynamo.releaseChatStreaming).not.toHaveBeenCalled()
+  })
+
+  test('a throw after the claim still releases the marker', async () => {
+    mockDynamo.listMessages.mockRejectedValue(new Error('boom'))
+    await expect(buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: MODEL, systemPrompt: '' }))).rejects.toThrow('boom')
+    expect(mockDynamo.releaseChatStreaming).toHaveBeenCalledTimes(1)
   })
 })

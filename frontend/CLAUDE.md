@@ -108,7 +108,9 @@ provider installed by App. Every frame is routed by `chatId`. Zustand
 
 ChatView recovers by refetching messages rather than reattaching a socket. It polls
 while HTTP reports a live stream and exposes reconnect after bounded failures.
-Unsent text is retained until delivery acknowledgment. Do not overwrite a live
+Unsent text is retained until delivery acknowledgment. Send stays enabled while a turn runs:
+the message waits, dimmed, after the live answer until `user_message_injected` turns it into
+a normal user bubble (`lib/queuedMessages.ts`, ADR 0059). Do not overwrite a live
 stream with an unconditional focus refetch. Models are cached for first paint and
 revalidated outside the initial chats/preferences/projects loading gate.
 Those three initial requests settle independently: a failed preferences request

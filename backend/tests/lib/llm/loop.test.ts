@@ -95,3 +95,40 @@ test('sub_agent_progress chunks queued via ctx.onProgress drain out of the tool 
   const progressChunk = chunks.find(c => c.type === 'sub_agent_progress')
   expect(progressChunk).toEqual({ type: 'sub_agent_progress', toolUseId: 'call-1', name: 'web_search', text: 'Searching: something' })
 })
+
+test('user messages taken at a tool boundary join the next round input after the persisted tool results', async () => {
+  const requests: TurnRequest[] = []
+  // eslint-disable-next-line require-yield -- mock has no chunks to stream, only a final result
+  const streamTurn = jest.fn(async function* (req: TurnRequest) {
+    requests.push({ ...req, messages: [...req.messages] })
+    return requests.length === 1 ? toolUseResult() : textResult('Steered.')
+  })
+  const provider: ChatProvider = { id: 'bedrock-converse', sanitizeHistory: m => m, streamTurn, once: jest.fn() }
+  mockGetProvider.mockReturnValue(provider)
+  mockExecuteTool.mockResolvedValue({ entries: [{ kind: 'text', text: 'result' }], isError: false })
+
+  const order: string[] = []
+  const takeUserMessages = jest.fn(async () => {
+    order.push('take')
+    return [{ kind: 'text' as const, text: 'Focus on X instead.' }]
+  })
+
+  for await (const c of converseStream(
+    DEFAULT_CHAT_MODEL,
+    'system',
+    [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }],
+    { settings: { researchDepth: 'extended' }, ctx: { sub: 'u1', chatId: 'c1' }, call: TEST_CALL, takeUserMessages },
+  )) {
+    if (c.type === 'turn' && c.role === 'user') {
+      order.push('tool_result_turn')
+      // The injected text is live-only — never part of the persisted tool-result turn.
+      expect(c.content.every(b => b.kind === 'tool_result')).toBe(true)
+    }
+  }
+
+  expect(order).toEqual(['tool_result_turn', 'take'])
+  const secondRoundInput = requests[1].messages.at(-1)!
+  expect(secondRoundInput.role).toBe('user')
+  expect(secondRoundInput.content.map(b => b.kind)).toEqual(['tool_result', 'text'])
+  expect(secondRoundInput.content[1]).toEqual({ kind: 'text', text: 'Focus on X instead.' })
+})

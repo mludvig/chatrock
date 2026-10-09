@@ -1,9 +1,10 @@
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from '@aws-sdk/client-apigatewaymanagementapi'
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda'
 import type { APIGatewayProxyResultV2, Context } from 'aws-lambda'
 import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import type { Block, NeutralMessage } from '../lib/llm/blocks'
-import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, recordChatSend, buildTurnKey, isStreamCancelled, clearStreamCancel, setChatStreaming, clearChatStreaming, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
+import { getConnection, getChat, listMessages, putMessage, putMessagePair, updateChatTitle, updateChatActiveLeaf, recordChatSend, buildTurnKey, isStreamCancelled, clearStreamCancel, setChatStreaming, clearChatStreaming, claimChatStreaming, queueChatMessage, takePendingMessages, releaseChatStreaming, type QueuedMessage, getUserPrefs, listUserMemories, putUserMemory, deleteUserMemory, buildUserMemKey, getProject, listProjectMemories, putProjectMemory, deleteProjectMemory, buildProjectMemKey, updateChatSummary, listProjectFiles, listChats } from '../lib/dynamo'
 import { converseStream, type TokenUsage } from '../lib/bedrock'
 import type { ToolContext } from '../lib/tools'
 import { buildActivePath, resolveResponseLeaf, type TurnRow } from '../lib/tree'
@@ -22,24 +23,90 @@ interface WSSendEvent {
     stage: string
   }
   body?: string
+  // Set only on this function's own async self-invocation that runs messages queued during a
+  // turn which ended before injecting them. API Gateway never sets top-level fields, so a
+  // client can't forge one — everything it controls is inside `body`.
+  source?: typeof QUEUED_TURN_SOURCE
+  sub?: string
+  chatId?: string
 }
 
 type PostFn = (params: { ConnectionId: string; Data: string }) => Promise<void>
+type InvokeSelfFn = (event: WSSendEvent) => Promise<void>
+
+const QUEUED_TURN_SOURCE = 'chatrock.queuedTurn'
+
+// Ends a turn's hold on its chat. Messages queued after the turn's last tool boundary make the
+// release fail; they then run as a new turn in a fresh invocation, so this one can finish its
+// post-turn enrichment without delaying them. See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+async function endStreaming(event: WSSendEvent, sub: string, chatId: string, invokeSelf: InvokeSelfFn) {
+  try {
+    if (await releaseChatStreaming(sub, chatId)) return
+    await invokeSelf({ requestContext: event.requestContext, source: QUEUED_TURN_SOURCE, sub, chatId })
+    console.log(JSON.stringify({ event: 'queued_turn_invoked', chatId }))
+  } catch (e) {
+    // Never leave the chat marked busy with no turn behind it. Anything still queued is
+    // picked up by the next turn's first tool boundary or its own end.
+    console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
+    try { await clearChatStreaming(sub, chatId) } catch { /* the staleness window covers it */ }
+  }
+}
 
 // Held back from the Lambda's remaining time for the final synthesis call plus persistence
 // and post-turn enrichment, so a deep turn's wall-clock cutoff always leaves room to write
 // up what it has instead of being killed mid-answer. See docs/adr/0039.
 const RESERVE_MS = 120_000
 
-export const buildHandler = (postFn: PostFn) => async (
+// Tracks whether this invocation holds the chat's streaming marker, so the wrapper below can
+// release it on any exit — an early return or a throw must never leave the chat looking busy,
+// or every later message would queue behind a turn that isn't running.
+interface MarkerHold { sub?: string; chatId?: string; held: boolean }
+
+export const buildHandler = (postFn: PostFn, invokeSelf: InvokeSelfFn = async () => {}) => async (
   event: WSSendEvent,
   context?: Context,
 ): Promise<APIGatewayProxyResultV2> => {
-  const connId = event.requestContext.connectionId
+  const hold: MarkerHold = { held: false }
+  try {
+    return await runSend(event, context, postFn, invokeSelf, hold)
+  } finally {
+    if (hold.held) await endStreaming(event, hold.sub!, hold.chatId!, invokeSelf)
+  }
+}
+
+const runSend = async (
+  event: WSSendEvent,
+  context: Context | undefined,
+  postFn: PostFn,
+  invokeSelf: InvokeSelfFn,
+  hold: MarkerHold,
+): Promise<APIGatewayProxyResultV2> => {
+  // A queued turn runs the messages left waiting by a turn that ended before injecting them;
+  // its marker was never released, so it holds it from the start.
+  const isQueuedTurn = event.source === QUEUED_TURN_SOURCE
+  let queued: QueuedMessage[] = []
+  if (isQueuedTurn) {
+    queued = await takePendingMessages(event.sub!, event.chatId!)
+    // Nothing else empties the queue while the marker is withheld, so an empty one means a
+    // duplicate delivery of this event — the marker belongs to whoever ran it first.
+    if (queued.length === 0) return { statusCode: 200, body: '' }
+    hold.sub = event.sub
+    hold.chatId = event.chatId
+    hold.held = true
+  }
+  const lastQueued = queued.at(-1)
+  // Drained messages answer on the connection that sent the last of them.
+  const connId = lastQueued?.connId ?? event.requestContext.connectionId
   // context is only absent in tests exercising buildHandler directly — a real invocation
   // (handler(), below) always supplies it. No context ⇒ no wall-clock cutoff.
   const deadlineAt = context ? Date.now() + context.getRemainingTimeInMillis() - RESERVE_MS : undefined
-  const body = JSON.parse(event.body ?? '{}') as {
+  const body = (lastQueued ? {
+    chatId: event.chatId,
+    content: queued.map(m => m.content).filter(Boolean).join('\n\n'),
+    model: lastQueued.model,
+    systemPrompt: lastQueued.systemPrompt,
+    modelSettings: lastQueued.modelSettings,
+  } : JSON.parse(event.body ?? '{}')) as {
     chatId: string
     content?: string
     model: string
@@ -63,9 +130,14 @@ export const buildHandler = (postFn: PostFn) => async (
   // Edit: parentId key present and content present = new user-turn sibling with edited content
   const isEdit = hasParentId && !!content
 
-  const conn = await getConnection(connId)
-  if (!conn) return { statusCode: 410, body: 'Gone' }
-  const sub = conn.userSub as string
+  let sub: string
+  if (isQueuedTurn) {
+    sub = event.sub!
+  } else {
+    const conn = await getConnection(connId)
+    if (!conn) return { statusCode: 410, body: 'Gone' }
+    sub = conn.userSub as string
+  }
 
   // Wrap postFn to swallow GoneException (HTTP 410) — the client disconnected.
   // When this happens mid-stream we set a flag and keep draining: turns continue to
@@ -121,8 +193,9 @@ export const buildHandler = (postFn: PostFn) => async (
     ...(modelSettings.researchDepth === 'deep' && deadlineAt !== undefined ? { deadlineAt } : {}),
   }) })
   // If the ack itself 410'd, the client is already gone — no point starting an
-  // expensive Bedrock call. Nothing to persist yet either, so return immediately.
-  if (connectionGone) return { statusCode: 200, body: '' }
+  // expensive Bedrock call. Nothing to persist yet either, so return immediately. A queued
+  // turn's messages are already off the queue, so it runs regardless.
+  if (connectionGone && !isQueuedTurn) return { statusCode: 200, body: '' }
 
   // Submit is what persists the chat's model and composer effort/depth, and stamps the sort
   // key — only those two settings are merged, since the rest of modelSettings arrives already
@@ -136,6 +209,41 @@ export const buildHandler = (postFn: PostFn) => async (
     })
   } catch (e) {
     console.error(JSON.stringify({ event: 'record_chat_send_error', chatId, error: String(e) }))
+  }
+
+  // One turn per chat at a time. A message sent while one runs is queued for it to inject at
+  // its next tool boundary (or to run next); an edit, re-run or continue has nothing sensible
+  // to queue into, so it's refused. A queue append fails only if the running turn ended in
+  // between, which frees the marker for another claim. See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+  const responseId = uuidv4()
+  if (!isQueuedTurn) {
+    let outcome: 'claimed' | 'queued' | 'busy' = 'busy'
+    try {
+      for (let attempt = 0; attempt < 3 && outcome === 'busy'; attempt++) {
+        if (await claimChatStreaming(sub, chatId, responseId)) outcome = 'claimed'
+        else if (hasParentId) break
+        else if (await queueChatMessage(sub, chatId, {
+          content, attachments: attachments as unknown as Record<string, unknown>[], sentAt: new Date().toISOString(),
+          model, systemPrompt, modelSettings: modelSettings as Record<string, unknown>, connId,
+        })) outcome = 'queued'
+      }
+    } catch (e) {
+      // The marker table is unreachable: run the turn unguarded, as if nothing else were running.
+      console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
+      outcome = 'claimed'
+    }
+    if (outcome === 'queued') {
+      console.log(JSON.stringify({ event: 'message_queued', chatId, connId }))
+      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'queued' }) })
+      return { statusCode: 200, body: '' }
+    }
+    if (outcome === 'busy') {
+      await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'error', message: 'A reply is still being written in this chat. Wait for it to finish, or stop it first.' }) })
+      return { statusCode: 200, body: '' }
+    }
+    hold.sub = sub
+    hold.chatId = chatId
+    hold.held = true
   }
 
   // Advance the chat's activeLeafId to a just-persisted turn. Called after EVERY
@@ -309,13 +417,12 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Timestamp block: prepended to new user turns when injectCurrentDate is enabled.
   // Stored permanently in DDB; the model reads the actual send time for each turn.
-  const makeTsBlock = (): Block | undefined =>
-    effectivePrefs.injectCurrentDate ? { kind: 'text', text: `Current timestamp: ${new Date().toISOString()}` } : undefined
+  const makeTsBlock = (at = new Date()): Block | undefined =>
+    effectivePrefs.injectCurrentDate ? { kind: 'text', text: `Current timestamp: ${at.toISOString()}` } : undefined
 
   // Capture the response start time once — all turns of this response share it
   // so their SKs (MSG#<ts>#<seq>#<id>) sort together in order.
   const responseStartTs = new Date().toISOString()
-  const responseId = uuidv4()
   let seq = 0
   // For Continue: reuse the failed response's responseId so groupTurnsToBubbles fuses
   // the partial + continuation into one seamless bubble.
@@ -327,6 +434,12 @@ export const buildHandler = (postFn: PostFn) => async (
 
   let lastTurnMsgId: string
   let bedrockMessages: NeutralMessage[]
+
+  // A user message that joined this turn after it started (or a queued turn's prompts): the
+  // client renders it as its own bubble, splitting the answer around it.
+  const postInjected = (row: TurnRow, text: string | undefined) => safePost({ ConnectionId: connId, Data: JSON.stringify({
+    type: 'user_message_injected', msgId: row.msgId, parentId: row.parentId, content: text ?? '',
+  }) })
 
   // Fire-and-forget: title the chat from just the user's message as soon as it's
   // persisted, so it doesn't sit as "New Chat" until the answer lands. The post-answer
@@ -433,21 +546,31 @@ export const buildHandler = (postFn: PostFn) => async (
     // parentId of the new user turn.
     const currentLeafId: string | null = (chat.activeLeafId as string | undefined) ?? null
 
-    // Persist the user prompt as a turn record (format C, tree-aware)
-    const userMsgId = uuidv4()
-    const userTurnRow: TurnRow = {
-      PK: `CHAT#${chatId}`,
-      ...buildTurnKey(chatId, responseStartTs, seq, responseId) as { SK: string },
-      msgId: userMsgId,
-      parentId: currentLeafId,
-      role: 'user',
-      blocks: buildUserBlocks(content, attachments, makeTsBlock()),
-      model,
-      createdAt: responseStartTs,
-      turnIndex: 0,
-      responseId,
+    // Persist the user prompt as a turn record (format C, tree-aware). A queued turn has
+    // several, chained in the order they were sent, each announced to the client as it lands.
+    const prompts = isQueuedTurn
+      ? queued.map(m => ({ content: m.content, attachments: (m.attachments ?? []) as unknown as AttachmentMeta[], at: new Date(m.sentAt) }))
+      : [{ content, attachments, at: new Date() }]
+    const userTurnRows: TurnRow[] = []
+    let userMsgId = ''
+    for (const prompt of prompts) {
+      userMsgId = uuidv4()
+      const userTurnRow: TurnRow = {
+        PK: `CHAT#${chatId}`,
+        ...buildTurnKey(chatId, responseStartTs, seq, responseId) as { SK: string },
+        msgId: userMsgId,
+        parentId: userTurnRows.at(-1)?.msgId ?? currentLeafId,
+        role: 'user',
+        blocks: buildUserBlocks(prompt.content, prompt.attachments, makeTsBlock(prompt.at)),
+        model,
+        createdAt: responseStartTs,
+        turnIndex: 0,
+        responseId,
+      }
+      await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
+      userTurnRows.push(userTurnRow)
+      if (isQueuedTurn) await postInjected(userTurnRow, prompt.content)
     }
-    await putMessage({ ...userTurnRow, ...buildTurnKey(chatId, responseStartTs, seq++, userMsgId) })
     await advanceLeaf(userMsgId)
     fireEarlyTitle()
 
@@ -455,7 +578,7 @@ export const buildHandler = (postFn: PostFn) => async (
     // Combine prior rows with the just-created user turn, then walk the active path
     // so only root→activeLeaf blocks are replayed (for a linear chat, all rows in order).
     // Replay blocks verbatim so reasoning signatures + prompt-caching prefix are preserved.
-    const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], userTurnRow]
+    const allRows: TurnRow[] = [...priorRows as unknown as TurnRow[], ...userTurnRows]
     const activePath = buildActivePath(allRows, userMsgId)
     bedrockMessages = await Promise.all(
       activePath.map(async m => ({
@@ -470,7 +593,8 @@ export const buildHandler = (postFn: PostFn) => async (
 
   // Mark the chat as streaming so a client that reconnects (or reloads on a different
   // device) can tell "the answer is still coming" from "nothing is coming" — the frames
-  // below only ever reach this one connection. Cleared once the loop exits, below.
+  // below only ever reach this one connection. Claimed above; this refreshes its start time
+  // and records the deadline. Released once the loop exits, below.
   // See docs/adr/0037-catching-up-on-a-dropped-stream.md.
   try {
     await setChatStreaming(sub, chatId, continueResponseId ?? responseId, effectiveModelSettings.researchDepth === 'deep' ? deadlineAt : undefined)
@@ -541,6 +665,50 @@ export const buildHandler = (postFn: PostFn) => async (
     await advanceLeaf(turnMsgId)
   }
 
+  // Text of user messages injected mid-turn, for the post-turn enrichment transcript.
+  const injectedText: string[] = []
+
+  // Messages sent while this turn runs, taken at each tool boundary. Each is persisted as its
+  // own user turn chained after the round's tool results — a real message the transcript
+  // shows and replays like any other. The framing line is live-only, like the budget pacing
+  // text, so the stored conversation reads as plain user turns.
+  // See docs/adr/0059-queued-user-messages-steer-a-running-turn.md.
+  const takeUserMessages = async (): Promise<Block[]> => {
+    // A stopped turn leaves them queued, to run once it has wound down.
+    if (abortController.signal.aborted) return []
+    let messages: QueuedMessage[]
+    try {
+      messages = await takePendingMessages(sub, chatId)
+    } catch (e) {
+      console.error(JSON.stringify({ event: 'take_pending_error', chatId, error: String(e) }))
+      return []
+    }
+    const live: Block[] = []
+    for (const m of messages) {
+      const msgId = uuidv4()
+      const blocks = buildUserBlocks(m.content, (m.attachments ?? []) as unknown as AttachmentMeta[], makeTsBlock(new Date(m.sentAt)))
+      const row: TurnRow = {
+        ...buildTurnKey(chatId, responseStartTs, seq++, msgId) as { PK: string; SK: string },
+        msgId,
+        parentId: lastTurnMsgId,
+        role: 'user',
+        blocks,
+        model,
+        createdAt: new Date().toISOString(),
+        turnIndex: partialTurnIndex,
+        responseId: continueResponseId ?? responseId,
+      }
+      await putMessage({ ...row })
+      lastTurnMsgId = msgId
+      await advanceLeaf(msgId)
+      await postInjected(row, m.content)
+      if (m.content) injectedText.push(m.content)
+      console.log(JSON.stringify({ event: 'message_injected', chatId }))
+      live.push({ kind: 'text', text: 'The user sent this message while you were working:' }, ...await hydrateBlocks(blocks))
+    }
+    return live
+  }
+
   let errored = false
   let errorMessage = ''
 
@@ -552,6 +720,7 @@ export const buildHandler = (postFn: PostFn) => async (
       forceToolName: search ? 'search_history' : undefined,
       call: { purpose: 'chat', sub, chatId, projectId: chat?.projectId },
       deadlineAt,
+      takeUserMessages,
     })) {
       switch (chunk.type) {
         case 'thinking_delta':
@@ -709,14 +878,12 @@ export const buildHandler = (postFn: PostFn) => async (
 
   clearTimeout(pollTimer)
 
-  // One clear covers all three exits below (errored, cancelled, normal) and runs before the
-  // slow post-turn enrichment, so a polling client stops as soon as the answer is complete.
-  // A killed Lambda can't reach this — hence the staleness window in http/messages.ts.
-  try {
-    await clearChatStreaming(sub, chatId)
-  } catch (e) {
-    console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
-  }
+  // One release covers all three exits below (errored, cancelled, normal) and runs before the
+  // slow post-turn enrichment, so a polling client stops — or the queued turn starts — as soon
+  // as the answer is complete. A killed Lambda can't reach this — hence the staleness window
+  // (STREAM_STALE_MS in lib/dynamo.ts).
+  hold.held = false
+  await endStreaming(event, sub, chatId, invokeSelf)
 
   if (errored) {
     // Advance activeLeafId to the last persisted turn (partial or prior round) so
@@ -757,7 +924,7 @@ export const buildHandler = (postFn: PostFn) => async (
   {
     // Organization works even when learning new facts is disabled. See docs/adr/0044-project-context-and-memory-policy.md.
     const transcript = [
-      `User: ${content ?? ''}`,
+      `User: ${[content ?? '', ...injectedText].join('\n\n')}`,
       `Assistant: ${assistantTextForMemory}`,
     ].join('\n')
 
@@ -896,5 +1063,16 @@ export const handler = async (
   const apigwClient = new ApiGatewayManagementApiClient({ endpoint })
   const postFn: PostFn = ({ ConnectionId, Data }) =>
     apigwClient.send(new PostToConnectionCommand({ ConnectionId, Data })).then(() => {})
-  return buildHandler(postFn)(event, context)
+  return buildHandler(postFn, invokeSelf)(event, context)
+}
+
+const lambdaClient = new LambdaClient({})
+// Async ('Event') so the ending turn isn't held open by the next one. Retries are off in
+// terraform: the queue is taken at the start, so a retry would have nothing to run.
+const invokeSelf: InvokeSelfFn = async (event) => {
+  await lambdaClient.send(new InvokeCommand({
+    FunctionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+    InvocationType: 'Event',
+    Payload: Buffer.from(JSON.stringify(event)),
+  }))
 }

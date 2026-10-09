@@ -84,7 +84,7 @@ Browser → CloudFront (single distribution, custom domain)
 ### DynamoDB single-table
 
 Why one table instead of one per entity: `docs/adr/0003-single-dynamodb-table.md`. Table `chatrock-prod` with PK/SK:
-- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **lastMessageAt** (stamped only on send; orders the chat list — `docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md`), **activeLeafId**, projectId?, summary?, topics?, streamingSince?, streamingResponseId?, cancelRequested?
+- Chat: `PK=USER#<sub>` / `SK=CHAT#<chatId>` — title, model, systemPrompt, modelSettings?, createdAt, updatedAt, **lastMessageAt** (stamped only on send; orders the chat list — `docs/adr/0049-sort-chats-by-last-message-and-save-composer-choices-on-send.md`), **activeLeafId**, projectId?, summary?, topics?, streamingSince? (the one-turn-per-chat claim), streamingResponseId?, cancelRequested?, pendingMessages? (sends queued behind the running turn — `docs/adr/0059-queued-user-messages-steer-a-running-turn.md`)
 - Message (turn): `PK=CHAT#<chatId>` / `SK=MSG#<iso-timestamp>#<seq>#<msgId>` — role, **blocks**, model, createdAt, **msgId**, **parentId**, **responseId**, turnIndex, usage?, thinkingEffort?, webSearchEnabled?
 - WS connection: `PK=CONN#<connId>` / `SK=CONN#<connId>` — userSub, TTL
 - User prefs: `PK=USER#<sub>` / `SK=PREF#USER` — `prefs` attribute (`UserPreferences` JSON blob), updatedAt
@@ -120,6 +120,8 @@ Key helpers in `backend/src/lib/tree.ts`:
 - Edit: `{ chatId, parentId, content, model, systemPrompt, modelSettings }` — persists new user sibling under `parentId`, streams answer
 - Cancel: `{ chatId }` — see Cancel above.
 
+A normal send that lands while another turn runs in the same chat is queued, not run: the client gets `queued`, and the running turn injects it as an ordinary user turn after its next tool round (`user_message_injected`) or, if it finishes first, runs it as the next turn via an async self-invoke of the sendMessage Lambda. Edits, re-runs and continues are refused while a turn runs. Stop cancels only the running turn. See `docs/adr/0059-queued-user-messages-steer-a-running-turn.md`.
+
 `safePost` (`ws/sendMessage.ts`) stamps `chatId` onto every outgoing frame in one place, so a client with more than one chat in flight on the same connection (`docs/adr/0040-concurrent-per-chat-streaming.md`) can route each frame to the right chat's state. A `researchDepth === 'deep'` turn's `ack` frame also carries `deadlineAt` — the wall-clock time the turn must wrap up by (`docs/adr/0039-deep-research-as-a-sub-agent-tool.md`).
 
 `GET /messages` also returns `streaming` and, for a deep turn, `streamingDeadlineAt`: a turn is being generated for this chat right now, possibly for a connection this client no longer holds. The client polls on it to catch up after a dropped socket — see `docs/adr/0037-catching-up-on-a-dropped-stream.md`.
@@ -146,6 +148,8 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `memoryUpdated` | `count` — number of new memories extracted this turn |
 | `warning` | `message` — non-fatal post-turn failure (enrichment DB write failed, etc.) |
 | `heartbeat` | — sent every `HEARTBEAT_INTERVAL_MS` (4s) while a tool call is in flight or the model has been silent; 90s of model silence aborts and retries the round (`docs/adr/0057-stall-timeout-and-model-wait-heartbeat.md`) |
+| `queued` | — this send waits for the running turn (ADR 0059) |
+| `user_message_injected` | `msgId`, `parentId`, `content` — a queued message written into the transcript; the answer continues in a new bubble |
 | `error` | `message` |
 
 ## Real-time reliability

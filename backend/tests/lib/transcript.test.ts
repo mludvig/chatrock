@@ -1,4 +1,4 @@
-import { filterSteps, renderMarkdown, renderHtml, type RawBubble } from '../../src/lib/transcript'
+import { filterSteps, renderMarkdown, renderHtml, groupTurnsToBubbles, type RawBubble, type TurnRow } from '../../src/lib/transcript'
 
 const bubble = (overrides: Partial<RawBubble>): RawBubble => ({
   msgId: 'm1', parentId: null, role: 'assistant', steps: [], model: 'claude', createdAt: 't',
@@ -127,5 +127,27 @@ describe('renderHtml', () => {
     const out = renderHtml(bubbles, { title: 'T' })
     expect(out).toContain('<details class="thinking">')
     expect(out).toContain('<details class="tool">')
+  })
+})
+
+describe('groupTurnsToBubbles', () => {
+  test('a user message injected mid-response splits the answer around its own bubble', () => {
+    const row = (msgId: string, parentId: string | null, role: 'user' | 'assistant', blocks: unknown[]): TurnRow => ({
+      PK: 'CHAT#c', SK: `MSG#t#${msgId}`, msgId, parentId, role, blocks, model: 'm', createdAt: 't', turnIndex: 0, responseId: 'r1',
+    } as unknown as TurnRow)
+    const rows = [
+      row('u1', null, 'user', [{ kind: 'text', text: 'Research A' }]),
+      row('a1', 'u1', 'assistant', [{ kind: 'tool_call', callId: 't1', name: 'web_search', input: {} }]),
+      row('tr1', 'a1', 'user', [{ kind: 'tool_result', callId: 't1', entries: [{ kind: 'text', text: 'r' }], isError: false }]),
+      row('u2', 'tr1', 'user', [{ kind: 'text', text: 'Focus on X' }]),
+      row('a2', 'u2', 'assistant', [{ kind: 'text', text: 'Focused on X.' }]),
+    ]
+    const { bubbles } = groupTurnsToBubbles(rows)
+    expect(bubbles.map(b => [b.role, b.msgId, b.parentId])).toEqual([
+      ['user', 'u1', null],
+      ['assistant', 'a1', 'u1'],
+      ['user', 'u2', 'tr1'],
+      ['assistant', 'a2', 'u2'],
+    ])
   })
 })

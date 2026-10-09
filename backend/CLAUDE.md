@@ -11,7 +11,7 @@ backend/src/
   lib/bedrock.ts          — thin re-export façade over lib/llm/ (kept for `tests/lib/bedrock.test.ts`'s `jest.mock('../../src/lib/bedrock')` and other call sites) — see "LLM providers" below for where the real implementation lives
   lib/llm/                — provider-neutral chat abstraction — see "LLM providers" below
   lib/blocks.ts           — DELETED; capToolResultText/TOOL_RESULT_CAP/TOOL_RESULTS_ROUND_CAP moved into lib/llm/blocks.ts alongside the neutral Block shape
-  lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, putMessagePair (TransactWriteCommand, atomic 2-item write), batchPutMessages/batchDeleteMessages (retry UnprocessedItems), setStreamCancel/isStreamCancelled; project/file/memory dynamo fns
+  lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, putMessagePair (TransactWriteCommand, atomic 2-item write), batchPutMessages/batchDeleteMessages (retry UnprocessedItems), setStreamCancel/isStreamCancelled, claimChatStreaming/queueChatMessage/takePendingMessages/releaseChatStreaming (one turn per chat, ADR 0059); project/file/memory dynamo fns
   lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, BROWSER_TOOL, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, SEARCH_HISTORY_TOOL, GENERATE_IMAGE_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider; search_history dispatches to lib/search.ts; generate_image dispatches to lib/imageGen/tool.ts); ToolContext type (incl. searchScope)
   lib/imageGen/           — generate_image tool: registry.ts (ImageProvider interface + provider list — the seam for adding OpenAI/Google/BFL later), tool.ts (GENERATE_IMAGE_TOOL spec + executor), providers/bedrockStability.ts (the only provider today, Bedrock InvokeModel against Stability's Stable Image Ultra)
   lib/search.ts           — the "Search" retrieval seam: searchHistory() ranks a corpus of chat/file summaries against a query (Haiku, JSON); buildSearchHistoryCorpus() assembles that corpus (project- or global-scoped, chats + project files); executeSearchHistoryTool() is the search_history tool executor
@@ -27,12 +27,12 @@ backend/src/
   lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
   lib/preferences.ts      — UserPreferences type + resolvePreferences() layering
   http/chats.ts           — chat CRUD, retitle, fork, branch delete, attachment presign; PATCH accepts projectId for project membership
-  http/messages.ts        — GET /messages: tree walk + attachment URL signing + `streaming` flag
+  http/messages.ts        — GET /messages: tree walk + attachment URL signing + `streaming` flag + `pending` queued messages
   http/models.ts          — GET /models
   http/memory.ts          — GET /memory, DELETE /memory/{memId}
   http/preferences.ts     — GET /preferences, PUT /preferences
   http/projects.ts        — project CRUD + project memory + project file routes (single Lambda dispatching on routeKey)
-  ws/sendMessage.ts       — the core streaming handler (the most complex file)
+  ws/sendMessage.ts       — the core streaming handler (the most complex file); also runs a queued turn when invoked by itself with `source: 'chatrock.queuedTurn'`
   ws/cancelMessage.ts     — sets DynamoDB cancel flag; stream loop polls and aborts via AbortController
   ws/authorizer.ts        — WebSocket Lambda authorizer
 ```
@@ -226,6 +226,7 @@ All LLM calls emit single-line `JSON.stringify({event, ...})` records to stdout:
 | `search_history` | `lib/search.ts` per call | scope, corpusSize, resultCount, chatId |
 | `search_history_truncated` | `lib/search.ts` corpus build | total, kept, scope, chatId |
 | `stream_start` / `stream_error` / `stream_cancelled` | `sendMessage.ts` | — |
+| `message_queued` / `queued_turn_invoked` | `sendMessage.ts` | chatId (+ connId) |
 | `enrich_turn_error` | `sendMessage.ts` post-turn | chatId, error |
 | `manifest_truncated` | `sendMessage.ts` manifest build | kind (files/chats), total, kept, projectId, chatId |
 | `forced_files_truncated` | `sendMessage.ts` forced files build | skipped, totalKept, projectId, chatId |
