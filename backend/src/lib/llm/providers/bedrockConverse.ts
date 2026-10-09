@@ -339,16 +339,21 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   const bedrockMessages = req.messages.map(fromNeutralMessage)
   const withCache = injectCachePointAt(bedrockMessages, req.cacheBoundaryIndex, cachingEnabled)
 
-  let tools = toBedrockToolsWithCache(req.tools, cachingEnabled)
+  // A model that rejects forced toolChoice gets the forced tool as its only option instead.
+  // See docs/adr/0058-forcing-a-tool-without-toolchoice.md.
+  const toolChoiceForce = getCapabilities(req.modelId).forcedToolChoice === false ? undefined : req.forceToolName
+  const offeredTools = req.forceToolName && !toolChoiceForce ? req.tools.filter(t => t.name === req.forceToolName) : req.tools
+
+  let tools = toBedrockToolsWithCache(offeredTools, cachingEnabled)
   if (tools.length === 0 && historyHasToolBlocks(bedrockMessages)) {
     tools = buildDefaultToolSet(cachingEnabled)
   }
 
   // Bedrock rejects toolChoice together with adaptive thinking — a forced round
   // always runs with thinking off (a tool-choice round needs none anyway).
-  const roundSettings = req.forceToolName ? { ...req.settings, thinkingEffort: 'off' as const } : req.settings
+  const roundSettings = toolChoiceForce ? { ...req.settings, thinkingEffort: 'off' as const } : req.settings
 
-  const gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, cachingEnabled, req.abortSignal, req.forceToolName)
+  const gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, cachingEnabled, req.abortSignal, toolChoiceForce)
   let raw: RawTurnResult | undefined
   while (true) {
     const { value, done } = await gen.next()

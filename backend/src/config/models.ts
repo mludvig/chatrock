@@ -16,6 +16,9 @@ export interface ModelCapabilities {
   // thinking off. Omit -> no thinking field at all: the 5.5-series models reject
   // {type:'disabled'}, and Opus 5.5/Fable 5.1 accept no off switch whatsoever.
   thinkingOff?: 'between_tools'
+  // false -> the model rejects a forced toolChoice; a forced round offers only the forced tool
+  // instead. Omit -> supported. See docs/adr/0058-forcing-a-tool-without-toolchoice.md.
+  forcedToolChoice?: false
   attachments: boolean                          // images
   documents: boolean                             // pdf/txt/csv/md
   promptCaching: 'auto' | 'explicit' | 'none'
@@ -56,7 +59,7 @@ export const MODELS: Model[] = [
     id: 'global.anthropic.claude-fable-5-1',
     name: 'Claude Fable 5.1',
     replaces: ['global.anthropic.claude-fable-5'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', forcedToolChoice: false, attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-opus-5-5',
@@ -65,13 +68,13 @@ export const MODELS: Model[] = [
       'global.anthropic.claude-opus-5', 'global.anthropic.claude-opus-5-1',
       'global.anthropic.claude-opus-4-8', 'apac.anthropic.claude-opus-4-8',
     ],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', forcedToolChoice: false, attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-sonnet-5-5',
     name: 'Claude Sonnet 5.5',
     replaces: ['global.anthropic.claude-sonnet-5', 'global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'between_tools', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'between_tools', forcedToolChoice: false, attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',

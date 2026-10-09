@@ -1260,6 +1260,43 @@ describe('converseStream forceToolName (forced Search turn)', () => {
     expect((round1Input.toolConfig as { toolChoice?: unknown } | undefined)?.toolChoice).toBeUndefined()
   })
 
+  // See docs/adr/0058-forcing-a-tool-without-toolchoice.md.
+  test('a model without forced toolChoice gets the forced tool as its only option on round 0', async () => {
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: { toolUse: { toolUseId: 'tu-1', name: 'search_history' } } } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { toolUse: { input: '{"query":"athena"}' } } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'tool_use' } },
+    ]))
+    mockExecuteTool.mockResolvedValueOnce({ entries: [{ kind: 'text', text: 'No relevant past chats or files found.' }], isError: false })
+    getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+      { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+      { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'I found nothing.' } } },
+      { contentBlockStop: { contentBlockIndex: 0 } },
+      { messageStop: { stopReason: 'end_turn' } },
+    ]))
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    for await (const _chunk of converseStream('global.anthropic.claude-sonnet-5-5', '', [], {
+      settings: { thinkingEffort: 'low' },
+      ctx: { sub: 'user-1', searchScope: 'global' },
+      forceToolName: 'search_history',
+      call: TEST_CALL,
+    })) { /* drain */ }
+
+    const toolNames = (input: Record<string, unknown>) =>
+      ((input.toolConfig as { tools: { toolSpec?: { name: string } }[] }).tools).filter(t => t.toolSpec).map(t => t.toolSpec!.name)
+
+    const round0Input = getMockSend().mock.calls[0][0].input as Record<string, unknown>
+    expect((round0Input.toolConfig as { toolChoice?: unknown }).toolChoice).toBeUndefined()
+    expect(toolNames(round0Input)).toEqual(['search_history'])
+    // No toolChoice, so nothing stops thinking from running as requested.
+    expect(round0Input.additionalModelRequestFields).toMatchObject({ thinking: { type: 'adaptive' } })
+
+    const round1Input = getMockSend().mock.calls[1][0].input as Record<string, unknown>
+    expect(toolNames(round1Input).length).toBeGreaterThan(1)
+  })
+
   test('without forceToolName, toolConfig never includes toolChoice', async () => {
     getMockSend().mockResolvedValueOnce(fakeStreamResponse([
       { contentBlockStart: { contentBlockIndex: 0, start: {} } },
