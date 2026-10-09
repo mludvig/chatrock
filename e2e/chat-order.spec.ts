@@ -64,7 +64,7 @@ test('sending a message saves the model and effort and moves the chat to the top
     await page.locator('.message-input').fill('Reply with the single word: ok')
     await page.locator('.message-input').press('Enter')
     await expect(recent.locator('a[href^="/c/"]').first()).toHaveAttribute('href', `/c/${chat.chatId}`)
-    await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 120_000 })
+    await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 120_000 })
     const saved = await request<{ model: string; lastMessageAt?: string; modelSettings?: { thinkingEffort?: string } }>(page, 'GET', `/chats/${chat.chatId}`)
     expect(saved.model).toBe('global.openai.gpt-6-luna')
     expect(saved.modelSettings?.thinkingEffort).toBe('medium')

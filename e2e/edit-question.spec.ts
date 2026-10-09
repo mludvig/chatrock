@@ -18,9 +18,9 @@ test('edit question creates sibling branch, sibling nav works, persists after re
   await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
   // The cursor disappears with the last delta, but the turn is only really over once the
-  // composer swaps its Stop button back for Send — sending a second message before that
-  // is a no-op (handleSend bails while `sending` is set).
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
+  // composer drops its Stop button — an edit sent before that is a no-op (handleSend refuses
+  // an edit while `sending` is set; Send itself stays visible during a turn, see ADR 0059).
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 30_000 })
 
   // ── Edit the user question ──
   await page.locator('.message.user').hover()

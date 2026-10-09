@@ -46,7 +46,7 @@ test('thinking and search results survive page reload', async ({ page }) => {
   // button back for Send. (btn-send enabled is no signal either: it's also disabled when
   // the input is empty.)
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 120_000 })
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 120_000 })
 
   // Capture the current chat URL (now has a real chatId)
   const chatUrl = page.url()

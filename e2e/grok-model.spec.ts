@@ -29,7 +29,7 @@ test(`${GROK_LABEL}: image attachment answered, document attachment refused`, as
   await input.press('Enter')
   await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
   await expect(page.locator('.message.assistant')).toHaveCount(1, { timeout: 30_000 })
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 120_000 })
   await expect(page.locator('.error-banner:not(.warning)')).toHaveCount(0)
   await expect(page.locator('.message.assistant').last()).toContainText(/blue/i, { timeout: 60_000 })
 })

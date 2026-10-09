@@ -13,7 +13,7 @@ const TXT_FIXTURE = path.join(__dirname, 'fixtures', 'hello.txt')
 
 async function waitForTurnDone(page: Page, assistantCount: number) {
   await expect(page.locator('.message.assistant')).toHaveCount(assistantCount, { timeout: 30_000 })
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 180_000 })
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 180_000 })
   await expect(page.locator('.error-banner:not(.warning)')).toHaveCount(0)
 }
 

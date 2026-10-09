@@ -36,7 +36,7 @@ test.describe('AgentCore web search provider', () => {
     // The assistant should produce a final answer grounded in those results. The bubble
     // itself appears optimistically, so wait for the composer to swap Stop back for Send.
     await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
-    await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 60000 })
+    await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 60000 })
     await expect(page.locator('.message.assistant .md').first()).toBeVisible({ timeout: 10000 })
   })
 })

@@ -33,7 +33,7 @@ test('fork on assistant bubble creates new chat with cloned thread; original unc
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
   // The composer textarea is never disabled, so toBeEnabled() is not a wait — the turn is
   // only over once the composer swaps its Stop button back for Send.
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 30_000 })
 
   // The post-stream reload must have landed before we click fork.
   await expect(async () => {
@@ -89,14 +89,14 @@ test('fork on user bubble: new chat opens with user text pre-filled as draft', a
   // The composer textarea is never disabled, so toBeEnabled() is not a wait — the turn is
   // only over once the composer swaps its Stop button back for Send. Sending the second
   // message before that is a no-op (handleSend bails while `sending` is set).
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 30_000 })
 
   // Send a second message to create a multi-turn conversation
   await input.fill('What did you just say?')
   await input.press('Enter')
   await expect(page.locator('.message.user')).toHaveCount(2, { timeout: 15_000 })
   await expect(page.locator('.cursor')).toHaveCount(0, { timeout: 60_000 })
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 30_000 })
 
   // Wait for the messages reload that comes after the second stream's done event.
   // We can't distinguish it from other /messages calls, so we use the fact that

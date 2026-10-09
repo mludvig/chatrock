@@ -18,7 +18,7 @@ async function sendOneMessage(page: import('@playwright/test').Page) {
   // The composer textarea is never disabled, so toBeEnabled() is not a wait — the turn is
   // only over once the composer swaps its Stop button back for Send. Opening the details
   // dialog before that races the post-stream re-render, which drops the dialog again.
-  await expect(page.locator('.btn-send:not(.btn-stop)')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 30_000 })
 }
 
 test('create a share link, open it unauthenticated, then revoke it', async ({ page, context }) => {
