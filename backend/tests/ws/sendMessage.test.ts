@@ -2680,6 +2680,19 @@ describe('queued user messages', () => {
     expect(frames()).toContainEqual(expect.objectContaining({ type: 'user_message_injected', msgId: injected.msgId, content: 'Focus on X' }))
   })
 
+  test('the marker is released before done, so an edit sent the moment done lands is not refused as busy', async () => {
+    async function* fakeStream() {
+      yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'Hi' }], turnIndex: 0 }
+      yield { type: 'stop' as const, stopReason: 'end_turn' }
+    }
+    mockBedrock.converseStream.mockReturnValue(fakeStream())
+    await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Hello', model: MODEL, systemPrompt: '' }))
+
+    const doneCall = frames().findIndex(f => f.type === 'done')
+    expect(mockDynamo.releaseChatStreaming).toHaveBeenCalledTimes(1)
+    expect(mockDynamo.releaseChatStreaming.mock.invocationCallOrder[0]).toBeLessThan(mockPost.mock.invocationCallOrder[doneCall])
+  })
+
   test('a turn that ends with messages still queued starts a queued turn instead of releasing', async () => {
     mockDynamo.releaseChatStreaming.mockResolvedValue(false)
     const invokeSelf = jest.fn().mockResolvedValue(undefined)

@@ -711,6 +711,7 @@ const runSend = async (
 
   let errored = false
   let errorMessage = ''
+  let released = false
 
   try {
     for await (const chunk of converseStream(model, effectiveSystemPrompt, bedrockMessages, {
@@ -846,6 +847,14 @@ const runSend = async (
           } catch (e) {
             console.error(JSON.stringify({ event: 'active_leaf_update_error', chatId, error: String(e) }))
           }
+          // Release before 'done' too, or an edit/re-run sent the instant the client sees it is
+          // refused as busy. Messages still queued make this fail; endStreaming below hands them on.
+          try {
+            released = await releaseChatStreaming(sub, chatId)
+            if (released) hold.held = false
+          } catch (e) {
+            console.error(JSON.stringify({ event: 'stream_marker_error', chatId, error: String(e) }))
+          }
           await safePost({ ConnectionId: connId, Data: JSON.stringify({ type: 'done', stopReason: chunk.stopReason }) })
           break
       }
@@ -878,12 +887,13 @@ const runSend = async (
 
   clearTimeout(pollTimer)
 
-  // One release covers all three exits below (errored, cancelled, normal) and runs before the
+  // One release covers all three exits below (errored, cancelled, normal — unless 'stop' already
+  // released) and runs before the
   // slow post-turn enrichment, so a polling client stops — or the queued turn starts — as soon
   // as the answer is complete. A killed Lambda can't reach this — hence the staleness window
   // (STREAM_STALE_MS in lib/dynamo.ts).
   hold.held = false
-  await endStreaming(event, sub, chatId, invokeSelf)
+  if (!released) await endStreaming(event, sub, chatId, invokeSelf)
 
   if (errored) {
     // Advance activeLeafId to the last persisted turn (partial or prior round) so
