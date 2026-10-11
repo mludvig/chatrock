@@ -10,11 +10,10 @@ backend/src/
   config/models.ts        — model registry with capabilities (provider/thinking/thinkingLevels/attachments/documents/promptCaching/region/maxOutputTokens)
   lib/bedrock.ts          — thin re-export façade over lib/llm/ (kept for `tests/lib/bedrock.test.ts`'s `jest.mock('../../src/lib/bedrock')` and other call sites) — see "LLM providers" below for where the real implementation lives
   lib/llm/                — provider-neutral chat abstraction — see "LLM providers" below
-  lib/blocks.ts           — DELETED; capToolResultText/TOOL_RESULT_CAP/TOOL_RESULTS_ROUND_CAP moved into lib/llm/blocks.ts alongside the neutral Block shape
   lib/dynamo.ts           — DynamoDB access layer: buildTurnKey/buildChatKey, putMessagePair (TransactWriteCommand, atomic 2-item write), batchPutMessages/batchDeleteMessages (retry UnprocessedItems), setStreamCancel/isStreamCancelled, claimChatStreaming/queueChatMessage/takePendingMessages/releaseChatStreaming (one turn per chat, ADR 0059); project/file/memory dynamo fns
-  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, BROWSER_TOOL, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, SEARCH_HISTORY_TOOL, GENERATE_IMAGE_TOOL; executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider; search_history dispatches to lib/search.ts; generate_image dispatches to lib/imageGen/tool.ts); ToolContext type (incl. searchScope)
+  lib/tools.ts            — Bedrock tool specs: WEB_TOOLS, TAKE_SCREENSHOT_TOOL, GET_RENDERED_PAGE_TOOL, BROWSER_TOOL, MEMORY_TOOL, MANAGE_PROJECT_MEMORY_TOOL, READ_PROJECT_FILE_TOOL, READ_PROJECT_CHAT_TOOL, SEARCH_HISTORY_TOOL, RUN_RESEARCH_TASK_TOOL (+ re-exports GENERATE_IMAGE_TOOL from lib/imageGen/tool.ts); executeTool dispatcher (web_search routes to Jina or AgentCore per ToolContext.webSearchProvider; search_history dispatches to lib/search.ts; generate_image dispatches to lib/imageGen/tool.ts); ToolContext type (incl. searchScope)
   lib/imageGen/           — generate_image tool: registry.ts (ImageProvider interface + provider list — the seam for adding OpenAI/Google/BFL later), tool.ts (GENERATE_IMAGE_TOOL spec + executor), providers/bedrockStability.ts (the only provider today, Bedrock InvokeModel against Stability's Stable Image Ultra)
-  lib/search.ts           — the "Search" retrieval seam: searchHistory() ranks a corpus of chat/file summaries against a query (Haiku, JSON); buildSearchHistoryCorpus() assembles that corpus (project- or global-scoped, chats + project files); executeSearchHistoryTool() is the search_history tool executor
+  lib/search.ts           — the "Search" retrieval seam: searchHistory() ranks a corpus of chat/file summaries against a query (MEMORY_EXTRACTION_MODEL, JSON); buildSearchHistoryCorpus() assembles that corpus (project- or global-scoped, chats + project files); executeSearchHistoryTool() is the search_history tool executor
   lib/agentcore/gateway.ts — minimal SigV4-signed MCP client for AgentCore Gateway targets (callGatewayTool); backs agentcoreSearch today, a generic seam for future AgentCore primitives (e.g. Code Interpreter)
   lib/agentcore/browser.ts — AgentCore Browser session executor (runBrowserSteps): StartBrowserSession -> SigV4-signed CDP WebSocket -> drives an embedded @playwright/mcp server -> StopBrowserSession, one session per call, no state held across agentic rounds
   lib/tree.ts             — in-memory tree helpers: TurnRow type, buildActivePath, resolveLeaf, resolveResponseLeaf, mostRecentLeaf, resolveSafeLeaf
@@ -26,12 +25,14 @@ backend/src/
   lib/projectContext.ts   — executeProjectReadFileTool / executeProjectReadChatTool: ownership validation, progressive detail (summary vs full), capToolResultText applied
   lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
   lib/preferences.ts      — UserPreferences type + resolvePreferences() layering
-  http/chats.ts           — chat CRUD, retitle, fork, branch delete, attachment presign; PATCH accepts projectId for project membership
+  lib/transcript.ts       — groupTurnsToBubbles/filterSteps + renderMarkdown/renderHtml: the read-only transcript shared by public share pages and Markdown export
+  http/chats.ts           — chat CRUD, retitle, resummarize, fork, branch delete, share create/list/revoke, Markdown export, attachment presign; PATCH accepts projectId for project membership
   http/messages.ts        — GET /messages: tree walk + attachment URL signing + `streaming` flag + `pending` queued messages
   http/models.ts          — GET /models
-  http/memory.ts          — GET /memory, DELETE /memory/{memId}
+  http/memory.ts          — GET /memory, PATCH /memory/{memId}, DELETE /memory/{memId}
   http/preferences.ts     — GET /preferences, PUT /preferences
   http/projects.ts        — project CRUD + project memory + project file routes (single Lambda dispatching on routeKey)
+  http/share.ts           — GET /s/{shareId}: public, unauthenticated share renderer (see "Chat sharing")
   ws/sendMessage.ts       — the core streaming handler (the most complex file); also runs a queued turn when invoked by itself with `source: 'chatrock.queuedTurn'`
   ws/cancelMessage.ts     — sets DynamoDB cancel flag; stream loop polls and aborts via AbortController
   ws/authorizer.ts        — WebSocket Lambda authorizer
@@ -116,7 +117,7 @@ Screenshot images flow through the same live/persist bifurcation `bedrock.ts` us
 
 - **`registry.ts`** — the `ImageProvider` interface (`generate(req): Promise<GeneratedImage>`, plus `promptGuidance`/`supportsNegativePrompt`/`aspectRatios` metadata) and `IMAGE_PROVIDERS`/`getImageProvider()`. This is the extension seam: Bedrock has no frontier image model as of July 2026 (Nova Canvas/Titan Image Generator are Legacy, EOL 2026-09-30; no OpenAI/Google image model is offered on Bedrock at all — confirmed via `aws bedrock list-foundation-models`), so today's only provider is Stability AI via Bedrock. Adding a direct-API provider (OpenAI, Google, Black Forest Labs) later is one new file in `providers/` + one line in `IMAGE_PROVIDERS` — no changes needed to `tool.ts`, `bedrock.ts`'s image-result handling, or the frontend.
 - **`tool.ts`** — `GENERATE_IMAGE_TOOL` spec (its `description` is built from the active provider's `promptGuidance` — see below) and `executeGenerateImageTool()`.
-- **`providers/bedrockStability.ts`** — calls Bedrock `InvokeModel` (not `Converse` — image models don't support the Converse API) against `stability.stable-image-ultra-v1:1`. **Region gotcha**: Stability's Stable Image models exist as an on-demand Bedrock foundation model only in `us-west-2` as of July 2026 — absent from `ap-southeast-2` (where this backend otherwise runs), `us-east-1`, and `eu-west-1` (verified via `aws bedrock list-foundation-models --by-provider stability-ai --region <region>`). This provider therefore uses its own `BedrockRuntimeClient` pinned to `us-west-2`, a plain cross-region `InvokeModel` call — separate from the `ap-southeast-2` client `bedrock.ts` uses for Claude, and *not* a cross-region inference profile (image models don't have those).
+- **`providers/bedrockStability.ts`** — calls Bedrock `InvokeModel` (not `Converse` — image models don't support the Converse API) against `stability.stable-image-ultra-v1:1`. **Region gotcha**: Stability's Stable Image models exist as an on-demand Bedrock foundation model only in `us-west-2` as of July 2026 — absent from `ap-southeast-2` (where this deployment runs), `us-east-1`, and `eu-west-1` (verified via `aws bedrock list-foundation-models --by-provider stability-ai --region <region>`). This provider therefore uses its own `BedrockRuntimeClient` pinned to `us-west-2`, a plain cross-region `InvokeModel` call — separate from the home-region client `bedrock.ts` uses for Claude, and *not* a cross-region inference profile (image models don't have those).
 - **Prompt-authoring guidance is data-driven per provider**, not hardcoded dispatch logic: Stability (like FLUX) takes the prompt literally with no server-side expansion, so its `promptGuidance` string tells the calling model to write a rich, self-contained description itself. A future auto-expanding/conversational provider (e.g. GPT Image, Gemini/Nano Banana) would carry lighter guidance — swapping providers changes what the model reads in the tool description without any code change to how it's invoked.
 
 Generated images reuse `bedrock.ts`'s existing image-bearing-tool-result path unchanged (S3 upload, CloudFront signing, `screenshotUrls`) — the only change that path needed was generalizing its S3 key from a hardcoded `browser-` prefix to the actual tool name (`${tu.name}-${tu.toolUseId}-${i}.${format}`), since it was originally written only for browser screenshots.
@@ -125,11 +126,11 @@ Generated images reuse `bedrock.ts`'s existing image-bearing-tool-result path un
 
 The user-facing feature is called **"Search"** (header search box). Every identifier uses the literal words `search`/`search_history`, never "find". A deliberate **retrieval seam** — today it's LLM ranking of stored summaries; the same `search_history` tool / `searchHistory()` interface is where a future hybrid retriever plugs in.
 
-- **`search_history` tool** (`lib/tools.ts` `SEARCH_HISTORY_TOOL` spec, `lib/search.ts`): input `{ query, scope?: 'project'|'global' }`. `'project'` always resolves to `ctx.projectId` (never a model-supplied id). Gated by `ModelSettings.searchEnabled` (default `true`).
+- **`search_history` tool** (`lib/tools.ts` `SEARCH_HISTORY_TOOL` spec, `lib/search.ts`): input `{ query, scope?: 'project'|'global' }`. `'project'` always resolves to `ctx.projectId` (never a model-supplied id). Gated by `ModelSettings.searchEnabled` (default `true`), and always offered when the turn forces it (`ctx.searchScope` set).
 - **Corpus** (`buildSearchHistoryCorpus`): chats with a non-empty `summary` plus, for project scope, that project's ready files; for global scope, a capped sweep (`SEARCH_HISTORY_PROJECT_SWEEP_CAP`=20 projects) of all user's projects' files. Capped at `SEARCH_HISTORY_CORPUS_CAP`=200 items.
-- **Ranking** (`searchHistory(corpus, query)`): one Haiku call returning `{"results":[{"id":"<kind>:<id>","reason":"..."}]}` — an **object wrapper, not a bare array** (reuses `enrichment.ts`'s `safeParse` which rejects non-objects). Hallucinated ids not in the corpus are dropped.
-- **Explicit Search entry point** (header search box): creates a new chat and issues the first WS send with `search: { scope }` set. `sendMessage.ts` threads this into `ToolContext.searchScope` and into `converseStream`'s `forceToolName` param, setting Bedrock `toolChoice: { tool: { name: 'search_history' } }` on round 0 only. Forcing `toolChoice` requires thinking off for that round.
-- **Cards** (`MessageBubble.tsx` `SearchHistoryResultCard`): a chat result links to `/c/:chatId`, a file result links to `/p/:projectId`. Tool-call pill label is "Search history: …".
+- **Ranking** (`searchHistory(corpus, query)`): one `MEMORY_EXTRACTION_MODEL` call (Sonnet 5.5) returning `{"results":[{"id":"<kind>:<id>","reason":"..."}]}` — an **object wrapper, not a bare array** (reuses `enrichment.ts`'s `safeParse` which rejects non-objects). Hallucinated ids not in the corpus are dropped.
+- **Explicit Search entry point** ("Ask AI to search by meaning" in the Search dialog): sets a single-use `pendingSearch`; the new-chat draft sends it as the first message with `search: { scope }` set. `sendMessage.ts` threads this into `ToolContext.searchScope` and into `converseStream`'s `forceToolName` param, which forces `search_history` on round 0 only — via `toolChoice` with thinking off, or, for `forcedToolChoice: false` models, by offering only that tool (`docs/adr/0058-forcing-a-tool-without-toolchoice.md`).
+- **Cards** (`StepBlocks.tsx` `SearchHistoryResultCard`): a chat result links to `/c/:chatId`, a file result links to `/p/:projectId`. Tool-call pill label is "Search history: …".
 
 ## Memory
 
@@ -142,11 +143,11 @@ Two writers, two stores (user and project):
 
 `assembleSystemPrompt` (`lib/promptAssembly.ts`) injects user memory as `- [memId] text` lines, project memory in a separate "About this project:" block, and a project manifest (files + sibling chats) for project chats.
 
-`lib/llm/toolGating.ts`'s `buildToolList(settings, ctx?)` builds the neutral tool list (shared across providers): web tools when `webSearchEnabled !== false`; Core browser tools when `browserCoreEnabled !== false`; `browse_web` when `browserExtendedEnabled === true`; memory tool when `memoryEnabled !== false`; project memory tool + two read tools when `ctx?.projectId`. Each adapter lowers this to its own wire format and appends its own cache marker (Converse: trailing `cachePoint` on the tool list).
+`lib/llm/toolGating.ts`'s `buildToolList(settings, ctx?)` builds the neutral tool list (shared across providers): web tools when `webSearchEnabled !== false`; Core browser tools when `browserCoreEnabled !== false`; `browse_web` when `browserExtendedEnabled === true`; memory tool when `memoryEnabled !== false` and the chat is not sensitive; project memory tool when `ctx?.projectId`, `memoryEnabled !== false`, `ctx.projectMemoryEnabled !== false` and the chat is not sensitive; the two project read tools when `ctx?.projectId`; `search_history` when `searchEnabled !== false` or `ctx.searchScope` is set; `generate_image` when `imageGenerationEnabled === true`; `run_research_task` when `researchDepth === 'deep'` and the caller is not itself a sub-agent (`ctx.subAgentDepth` unset). Each adapter lowers this to its own wire format and appends its own cache marker (Converse: trailing `cachePoint` on the tool list).
 
 ## User preferences
 
-`lib/preferences.ts` defines `UserPreferences`: `persona`, `defaultModel`, `thinkingEffort`, `webSearchEnabled`, `webSearchProvider` (`'jina'|'agentcore'`), `browserCoreEnabled`, `browserExtendedEnabled`, `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat). Stored as a JSON blob in the `PREF#USER` row's `prefs` attribute.
+`lib/preferences.ts` defines `UserPreferences`: `persona`, `defaultModel`, `thinkingEffort`, `webSearchEnabled`, `webSearchProvider` (`'jina'|'agentcore'`), `browserCoreEnabled`, `browserExtendedEnabled`, `memoryEnabled`, `searchEnabled`, `imageGenerationEnabled`, `researchDepth` (`brief|extended|deep`), `answerLength` (`default|short|extensive`), `injectCurrentDate`, `showTokenStats`. `resolvePreferences(prefs)` merges layers (user → project → chat). Stored as a JSON blob in the `PREF#USER` row's `prefs` attribute.
 
 ## Attachments
 
@@ -159,12 +160,12 @@ Two writers, two stores (user and project):
 
 ## Chat deletion & sensitive/ephemeral chats
 
-**Cascade delete** (why streams instead of a synchronous handler cascade: `docs/adr/0006-cascade-delete-via-dynamodb-streams.md`): `DELETE /api/chats/{chatId}` (`http/chats.ts`) only deletes the Chat item (`dynamo.ts`'s `deleteChatItem`). The resulting DynamoDB Stream `REMOVE` event (table has `stream_view_type = KEYS_ONLY`, `terraform/dynamodb.tf`) triggers `stream_chat_cleanup` (`streams/chatTtlCleanup.ts`, bundled as `stream-chatCleanup`), which cascades the delete to that chat's Message items (`dynamo.ts`'s `deleteChatMessages`) and S3 attachments (`attachments.ts`'s `deleteChatObjects`). The event source mapping's `filter_criteria` (`terraform/stream_chat_cleanup.tf`) restricts invocation to `REMOVE` events where `PK` begins with `USER#` and `SK` begins with `CHAT#`, so a Message-item removal can never self-trigger it. Same path drives both manual delete and TTL expiry. On-failure destination is `chat_cleanup_dlq` (SQS).
+**Cascade delete** (why streams instead of a synchronous handler cascade: `docs/adr/0006-cascade-delete-via-dynamodb-streams.md`): `DELETE /api/chats/{chatId}` (`http/chats.ts`) only deletes the Chat item (`dynamo.ts`'s `deleteChatItem`). The resulting DynamoDB Stream `REMOVE` event (table has `stream_view_type = KEYS_ONLY`, `terraform/dynamodb.tf`) triggers `stream_chat_cleanup` (`streams/chatTtlCleanup.ts`, bundled as `stream-chatCleanup`), which cascades the delete to that chat's Message items (`dynamo.ts`'s `deleteChatMessages`), share items (`deleteChatShares`) and S3 attachments (`attachments.ts`'s `deleteChatObjects`). The event source mapping's `filter_criteria` (`terraform/stream_chat_cleanup.tf`) restricts invocation to `REMOVE` events where `PK` begins with `USER#` and `SK` begins with `CHAT#`, so a Message-item removal can never self-trigger it. Same path drives both manual delete and TTL expiry. On-failure destination is `chat_cleanup_dlq` (SQS).
 
 **Sensitive & ephemeral chats** (why two independent flags instead of one "private" flag: `docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md`):
 
 - **`sensitive`** — excluded from everything that could resurface this chat's content *outside itself*: user-fact memory, project-fact memory, and the `summarize`d text that `search_history` indexes. Auto-title (and manual retitle) is **allowed** — the title is a frontend display-filter concern (masked in the LHS unless revealed), not a content-leak concern.
-- **`ephemeral`** (+ `ttl`) — auto-deletes via the cascade-delete path above. `ttl` is fixed at creation (or whenever `ephemeral` is turned on), not sliding: `now + EPHEMERAL_CHAT_TTL_SECONDS` (`ephemeral_chat_ttl_seconds` tfvar, default 7 days in `variables.tf`).
+- **`ephemeral`** (+ `ttl`) — auto-deletes via the cascade-delete path above. `ttl` is fixed at creation (or whenever `ephemeral` is turned on), not sliding: `now + EPHEMERAL_CHAT_TTL_SECONDS` (`ephemeral_chat_ttl_seconds` tfvar, default 86400 s = 1 day in `variables.tf`).
 
 Both flags combine freely, including inside a project — a sensitive chat still reads project instructions/files/memory in, it just never writes facts back out.
 
@@ -175,7 +176,18 @@ Call sites that must check `sensitive` (miss one of these and content leaks outs
 
 Other mechanics: `GET /api/chats` returns sensitive chats like any other (visibility is a frontend concern, not an API-level exclusion — `chatDto()` includes `sensitive`/`ephemeral`/`expiresAt` only when set). Forking inherits both flags from the source; `ephemeral` gets a **fresh** `ttl`. `updateChatSensitive`/`updateChatEphemeral` (`dynamo.ts`) fully `REMOVE` the attribute when turning a flag off, not just set `false`. Table's `ttl` attribute was already enabled for `CONN#` rows — ephemeral chats are the second user of it.
 
-**Frontend**: see "Sensitive & ephemeral chats" in `frontend/CLAUDE.md`.
+**Frontend**: see "Chat controls and settings" in `frontend/CLAUDE.md`.
+
+## Chat sharing
+
+A share is a read-only public link to one chat: `https://<domain>/s/<shareId>`. The unguessable ULID `shareId` is the capability — `GET /s/{shareId}` (`http/share.ts`) has `authorization_type = NONE` and must never call `subFromClaims`.
+
+- **Storage**: two items written and deleted together in one transaction (`putSharePair`/`deleteSharePair`) — the public lookup `SHARE#<shareId>` (carries `sub` + `chatId`, the only key the unauthenticated renderer has) and the owner index `CHAT#<chatId>`/`SHARE#<shareId>` (list/revoke without a scan). Chat deletion removes both via `deleteChatShares`.
+- **Ownership gate**: the renderer calls `getChat(sub, chatId)` from the lookup item, so a deleted chat 404s with no content leak.
+- **Modes**: `snapshot` freezes the active path's msgIds at creation (`snapshotMsgIds`) — later turns never appear, deleted ones drop out; `live` renders the chat's current active branch on every request.
+- **Options**: `includeThinking` and `includeTools` (both default `false`) filter steps out of the rendered bubbles (`lib/transcript.ts` `filterSteps`).
+- **Rendering**: server-rendered and self-contained, no client-side API calls. Markdown when the path ends in `.md`, `?format=md`, or `Accept: text/markdown`; HTML otherwise. CloudFront's `/s/*` behaviour forwards `Accept` and does not cache.
+- **Export**: `GET /api/chats/{chatId}/export` (authenticated) renders the active branch through the same `renderMarkdown` as a file download, with the same `includeThinking`/`includeTools` query flags.
 
 ## HTTP API routes
 
@@ -187,12 +199,19 @@ Other mechanics: `GET /api/chats` returns sensitive chats like any other (visibi
 | `PATCH /api/chats/{chatId}` | update title / systemPrompt / model / activeLeafId / modelSettings / projectId / summary / topics / sensitive / ephemeral |
 | `DELETE /api/chats/{chatId}` | delete the Chat item; cascade to messages/S3 runs via the stream_chat_cleanup Lambda (see below) |
 | `POST /api/chats/{chatId}/retitle` | AI-generated title |
+| `POST /api/chats/{chatId}/resummarize` | regenerate summary + topics (400 for a sensitive chat) |
 | `POST /api/chats/{chatId}/fork` | clone active-path into new chat |
 | `DELETE /api/chats/{chatId}/messages/{msgId}` | delete message subtree |
 | `GET /api/chats/{chatId}/messages` | full tree walk + attachment URL signing + `streaming`/`streamingDeadlineAt` |
+| `POST /api/chats/{chatId}/shares` | create a share link (see "Chat sharing") |
+| `GET /api/chats/{chatId}/shares` | list a chat's share links |
+| `DELETE /api/chats/{chatId}/shares/{shareId}` | revoke a share link |
+| `GET /api/chats/{chatId}/export` | active branch as a Markdown download |
+| `GET /s/{shareId}` | public share page, no auth (`http/share.ts`) |
 | `POST /api/attachments` | presign S3 PUT → `{s3Key, uploadUrl}` |
 | `GET /api/models` | list models |
 | `GET /api/memory` | list user memories |
+| `PATCH /api/memory/{memId}` | edit a memory's text/category |
 | `DELETE /api/memory/{memId}` | delete a memory |
 | `GET /api/preferences` | get UserPreferences |
 | `PUT /api/preferences` | save UserPreferences |
@@ -202,6 +221,7 @@ Other mechanics: `GET /api/chats` returns sensitive chats like any other (visibi
 | `PATCH /api/projects/{projectId}` | update project fields |
 | `DELETE /api/projects/{projectId}` | delete project (un-assigns chats, removes memory/files/S3) |
 | `GET /api/projects/{projectId}/memory` | list project memories |
+| `POST /api/projects/{projectId}/memory` | add a project memory |
 | `PATCH /api/projects/{projectId}/memory/{memId}` | edit a project memory's text/category |
 | `DELETE /api/projects/{projectId}/memory/{memId}` | delete a project memory |
 | `GET /api/projects/{projectId}/files` | list project files |

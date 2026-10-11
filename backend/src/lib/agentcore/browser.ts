@@ -29,7 +29,7 @@ const BROWSER_IDENTIFIER = 'aws.browser.v1'
 const SESSION_TIMEOUT_SECONDS = 120
 
 function getRegion(): string {
-  return process.env.AWS_REGION ?? 'ap-southeast-2'
+  return process.env.AWS_REGION!
 }
 
 const agentCoreClient = new BedrockAgentCoreClient({ region: getRegion() })

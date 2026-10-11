@@ -1,7 +1,6 @@
 import { executeProjectReadFileTool, executeProjectReadChatTool } from '../../src/lib/projectContext'
 import * as dynamo from '../../src/lib/dynamo'
 import * as projectFilesLib from '../../src/lib/projectFiles'
-import * as blocksLib from '../../src/lib/blocks'
 import * as treeLib from '../../src/lib/tree'
 
 jest.mock('../../src/lib/dynamo', () => ({
@@ -16,11 +15,6 @@ jest.mock('../../src/lib/projectFiles', () => ({
   fetchS3Bytes: jest.fn(),
 }))
 
-jest.mock('../../src/lib/blocks', () => ({
-  capToolResultText: (t: string) => t,
-  TOOL_RESULT_CAP: 30000,
-}))
-
 jest.mock('../../src/lib/tree', () => ({
   buildActivePath: jest.fn(),
 }))
@@ -31,9 +25,6 @@ const mockListMessages = dynamo.listMessages as jest.MockedFunction<typeof dynam
 const mockFetchS3Text = projectFilesLib.fetchS3Text as jest.MockedFunction<typeof projectFilesLib.fetchS3Text>
 const mockFetchS3Bytes = projectFilesLib.fetchS3Bytes as jest.MockedFunction<typeof projectFilesLib.fetchS3Bytes>
 const mockBuildActivePath = treeLib.buildActivePath as jest.MockedFunction<typeof treeLib.buildActivePath>
-
-// Silence unused import warning for blocksLib
-void blocksLib
 
 const ctx = { sub: 'user1', projectId: 'proj1', chatId: 'chat-current' }
 

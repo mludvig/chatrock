@@ -3,10 +3,10 @@ import type { GeneratedImage, ImageGenRequest, ImageProvider } from '../registry
 import { ensureBedrockAuth } from '../../bedrockAuth'
 
 // Stability's Stable Image models are only offered as an on-demand Bedrock foundation model
-// in us-west-2 as of July 2026 — confirmed absent from ap-southeast-2 (where this backend
-// otherwise runs), us-east-1, and eu-west-1 via `aws bedrock list-foundation-models
+// in us-west-2 as of July 2026 — confirmed absent from ap-southeast-2 (where this deployment
+// runs), us-east-1, and eu-west-1 via `aws bedrock list-foundation-models
 // --by-provider stability-ai --region <region>`. This client is deliberately pinned to
-// us-west-2, separate from the ap-southeast-2 client bedrock.ts uses for Claude. It's a plain
+// us-west-2, separate from the home-region client bedrock.ts uses for Claude. It's a plain
 // cross-region InvokeModel call, not a cross-region inference profile — image models don't
 // have those (see model-lifecycle/global.* gotcha in root CLAUDE.md, which is Claude-specific).
 const REGION = 'us-west-2'

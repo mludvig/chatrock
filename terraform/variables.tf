@@ -1,8 +1,3 @@
-variable "aws_region" {
-  description = "Primary AWS region"
-  default     = "ap-southeast-2"
-}
-
 variable "domain_name" {
   description = "Full domain for the app, e.g. chat.example.com"
   type        = string
@@ -18,11 +13,6 @@ variable "env" {
   default     = "prod"
 }
 
-variable "default_model" {
-  description = "Default Bedrock model ID for chat"
-  default     = "apac.anthropic.claude-sonnet-4-6"
-}
-
 variable "jina_api_key" {
   description = "Jina AI API key for web search (optional — search disabled if empty)"
   default     = ""
@@ -30,7 +20,7 @@ variable "jina_api_key" {
 }
 
 variable "bedrock_region" {
-  description = "AWS region for Bedrock calls only (ConverseStream/Converse), independent of aws_region. Useful when bedrock_bearer_token (see ssm.tf) points at an account whose Bedrock access lives in a different region. Empty (default) falls back to aws_region."
+  description = "AWS region for Bedrock calls only (ConverseStream/Converse), independent of the primary region. Useful when bedrock_bearer_token (see ssm.tf) points at an account whose Bedrock access lives in a different region. Empty (default) falls back to the primary region."
   type        = string
   default     = ""
 }

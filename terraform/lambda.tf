@@ -3,7 +3,6 @@ locals {
   lambda_env_base = {
     APP_ENV                             = var.env
     DOMAIN_NAME                         = var.domain_name
-    DEFAULT_MODEL                       = var.default_model
     DYNAMO_TABLE                        = aws_dynamodb_table.chatrock.name
     COGNITO_USER_POOL_ID                = aws_cognito_user_pool.chatrock.id
     COGNITO_CLIENT_ID                   = aws_cognito_user_pool_client.spa.id
@@ -17,7 +16,7 @@ locals {
     CLOUDFRONT_PRIVATE_KEY_SSM          = aws_ssm_parameter.cloudfront_attachments_private_key.name
     EPHEMERAL_CHAT_TTL_SECONDS          = tostring(var.ephemeral_chat_ttl_seconds)
     BEDROCK_BEARER_TOKEN_SSM            = aws_ssm_parameter.bedrock_bearer_token.name
-    BEDROCK_REGION                      = var.bedrock_region != "" ? var.bedrock_region : var.aws_region
+    BEDROCK_REGION                      = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.region
   }
 }
 

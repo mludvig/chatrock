@@ -3,6 +3,8 @@
 // fake is structurally the same trick tests/lib/bedrock.test.ts uses for Converse events.
 import { encodeOpaque, type NeutralMessage } from '../../../src/lib/llm/blocks'
 
+process.env.AWS_REGION = 'ap-southeast-2'
+
 const mockCreate = jest.fn()
 
 jest.mock('openai', () => ({

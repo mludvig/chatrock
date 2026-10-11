@@ -16,7 +16,7 @@ per-chat stream identity fix). This is the reasoning they share.
 **The connection is a transport optimisation, not the source of truth.** A WebSocket makes
 an answer arrive token by token instead of in one lump. Nothing else about the system may
 depend on it existing. Every question a client can answer from a live socket — is a turn
-running, did it finish, what did it produce, is a research run waiting on me — it must also
+running, did it finish, what did it produce, is my message still queued — it must also
 be able to answer by asking the server over HTTP, because sooner or later the socket is
 gone at exactly the moment the answer matters.
 

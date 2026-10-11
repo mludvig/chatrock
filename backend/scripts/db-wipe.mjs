@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Wipe all items from the chatrock DynamoDB table.
-// Usage: npm run db:wipe [-- --table chatrock-prod --region ap-southeast-2]
+// Usage: npm run db:wipe [-- --table chatrock-prod --region <region>]  (region defaults to AWS_REGION)
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import { DynamoDBDocumentClient, ScanCommand, BatchWriteCommand } from '@aws-sdk/lib-dynamodb'
@@ -10,7 +10,7 @@ const args = process.argv.slice(2)
 const get = (flag) => { const i = args.indexOf(flag); return i !== -1 ? args[i + 1] : undefined }
 
 const TABLE  = get('--table')  ?? 'chatrock-prod'
-const REGION = get('--region') ?? 'ap-southeast-2'
+const REGION = get('--region') ?? process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }))
 

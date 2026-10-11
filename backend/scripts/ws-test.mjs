@@ -2,6 +2,8 @@
 // Test WebSocket connectivity against both CloudFront and direct API GW endpoints.
 // Honors https_proxy / HTTPS_PROXY env vars (Node ignores them natively).
 // Usage: node scripts/ws-test.mjs <access-token>
+// Reads E2E_BASE_URL (CloudFront) and optionally WS_DIRECT_URL (the API Gateway wss:// stage URL)
+// from the environment — e.g. `set -a; source ../.env; set +a` first.
 
 import https from 'https'
 import http from 'http'
@@ -15,9 +17,14 @@ if (!token) {
   process.exit(1)
 }
 
+const BASE_URL = process.env.E2E_BASE_URL
+if (!BASE_URL) {
+  console.error('Set E2E_BASE_URL (e.g. https://chat.example.com)')
+  process.exit(1)
+}
 const WS_ENDPOINTS = [
-  { label: 'CloudFront  ', url: `wss://chat.example.com/ws?token=${token}` },
-  { label: 'Direct APIGW', url: `wss://3xv0bte7j2.execute-api.ap-southeast-2.amazonaws.com/ws?token=${token}` },
+  { label: 'CloudFront  ', url: `${BASE_URL.replace(/^http/, 'ws')}/ws?token=${token}` },
+  ...(process.env.WS_DIRECT_URL ? [{ label: 'Direct APIGW', url: `${process.env.WS_DIRECT_URL}?token=${token}` }] : []),
 ]
 
 const PROXY_URL = process.env.https_proxy || process.env.HTTPS_PROXY || ''
@@ -37,7 +44,7 @@ function wsHandshake(socket, label, url, key, resolve) {
       'Connection': 'Upgrade',
       'Sec-WebSocket-Key': key,
       'Sec-WebSocket-Version': '13',
-      'Origin': 'https://chat.example.com',
+      'Origin': BASE_URL,
     },
   }, res => {
     let body = ''

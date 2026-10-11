@@ -1,4 +1,4 @@
-import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from '../../src/lib/blocks'
+import { capToolResultText, TOOL_RESULT_CAP, TOOL_RESULTS_ROUND_CAP } from '../../../src/lib/llm/blocks'
 
 test('capToolResultText returns text unchanged when within limit', () => {
   const short = 'x'.repeat(100)

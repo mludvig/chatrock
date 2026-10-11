@@ -31,7 +31,7 @@ output "cognito_client_id" {
 }
 
 output "cognito_hosted_ui_domain" {
-  value = "https://${aws_cognito_user_pool_domain.chatrock.domain}.auth.${var.aws_region}.amazoncognito.com"
+  value = "https://${aws_cognito_user_pool_domain.chatrock.domain}.auth.${data.aws_region.current.region}.amazoncognito.com"
 }
 
 output "agentcore_gateway_id" {

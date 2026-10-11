@@ -59,19 +59,19 @@ data "aws_iam_policy_document" "lambda_policy" {
   statement {
     actions = ["bedrock:InvokeModelWithResponseStream", "bedrock:InvokeModel"]
     resources = [
-      "arn:aws:bedrock:${var.aws_region}::foundation-model/*",
+      "arn:aws:bedrock:${data.aws_region.current.region}::foundation-model/*",
       "arn:aws:bedrock:*::foundation-model/*",
-      "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+      "arn:aws:bedrock:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:inference-profile/*",
       # OpenAI-compatible endpoints on bedrock-runtime (lib/llm/providers/bedrockResponses.ts)
       # also authorize against the account's default project.
       # See docs/adr/0048-openai-models-on-bedrock-runtime.md.
-      "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:project/default",
+      "arn:aws:bedrock:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:project/default",
     ]
   }
 
   statement {
     actions   = ["execute-api:ManageConnections"]
-    resources = ["arn:aws:execute-api:${var.aws_region}:*:${aws_apigatewayv2_api.ws.id}/*"]
+    resources = ["arn:aws:execute-api:${data.aws_region.current.region}:*:${aws_apigatewayv2_api.ws.id}/*"]
   }
 
   # Bedrock auto-subscribes the account to a foundation model on first invocation; these
@@ -146,7 +146,7 @@ data "aws_iam_policy_document" "lambda_policy" {
       "bedrock-agentcore:StopBrowserSession",
       "bedrock-agentcore:ConnectBrowserAutomationStream",
     ]
-    resources = ["arn:aws:bedrock-agentcore:${var.aws_region}:aws:browser/aws.browser.v1"]
+    resources = ["arn:aws:bedrock-agentcore:${data.aws_region.current.region}:aws:browser/aws.browser.v1"]
   }
 }
 

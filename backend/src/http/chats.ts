@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { newId } from '../lib/ids'
 import { listChats, getChat, putChat, deleteChatItem, updateChatTitle, updateChatSystemPrompt, updateChatModel, updateChatActiveLeaf, updateChatModelSettings, updateChatSensitive, updateChatEphemeral, buildChatKey, buildTurnKey, listMessages, batchPutMessages, batchDeleteMessages, getProject, updateChatProject, updateChatSummary, putSharePair, listChatShares, deleteSharePair, buildShareLookupKey, buildShareIndexKey } from '../lib/dynamo'
 import { converseOnce } from '../lib/bedrock'
-import { TITLE_MODEL, isValidModelId } from '../config/models'
+import { TITLE_MODEL, DEFAULT_CHAT_MODEL, isValidModelId } from '../config/models'
 import { subFromClaims } from '../lib/auth'
 import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, subtreeMsgIds, type TurnRow } from '../lib/tree'
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
@@ -51,7 +51,7 @@ export const handler = async (
     } catch {
       return err(400, 'Invalid JSON body')
     }
-    const model = (body.model as string | undefined) ?? process.env.DEFAULT_MODEL ?? ''
+    const model = (body.model as string | undefined) ?? DEFAULT_CHAT_MODEL
     if (body.model !== undefined && !isValidModelId(model)) return err(400, 'Invalid model')
     const clientId = body.chatId as string | undefined
     // Lowercase-only: chatId becomes the CHAT# sort key, so a client-supplied

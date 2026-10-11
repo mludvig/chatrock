@@ -93,7 +93,7 @@ resource "aws_s3_bucket_policy" "logs" {
 # ── SPA bucket ────────────────────────────────────────────────────────────────
 
 resource "aws_s3_bucket" "spa" {
-  bucket           = "chatrock-spa-${var.env}-${data.aws_caller_identity.current.account_id}-${var.aws_region}-an"
+  bucket           = "chatrock-spa-${var.env}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
   bucket_namespace = "account-regional"
   tags             = { Env = var.env }
 }
@@ -138,7 +138,7 @@ data "aws_iam_policy_document" "spa_bucket" {
 # ── Attachments bucket ────────────────────────────────────────────────────────
 
 resource "aws_s3_bucket" "attachments" {
-  bucket           = "chatrock-attachments-${data.aws_caller_identity.current.account_id}-${var.aws_region}-an"
+  bucket           = "chatrock-attachments-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}-an"
   bucket_namespace = "account-regional"
   tags             = { Env = var.env }
 }

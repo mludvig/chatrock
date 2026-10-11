@@ -10,14 +10,15 @@ terraform {
   # backend "s3" {
   #   bucket = "your-tf-state-bucket"
   #   key    = "chatrock/terraform.tfstate"
-  #   region = "ap-southeast-2"
+  #   region = "<your-region>"
   # }
 }
 
-# Primary provider — ap-southeast-2 (all app resources)
-provider "aws" {
-  region = var.aws_region
-}
+# Primary provider (all app resources). The region comes from the environment
+# (AWS_REGION, set in .env and exported by deploy.sh), never from this repo.
+provider "aws" {}
+
+data "aws_region" "current" {}
 
 # us-east-1 provider — required for CloudFront ACM cert and WAF WebACL (CLOUDFRONT scope)
 provider "aws" {

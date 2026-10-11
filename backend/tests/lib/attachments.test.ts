@@ -21,7 +21,7 @@ jest.mock('@aws-sdk/client-ssm', () => ({
 
 // Set required env vars before loading the module
 process.env.ATTACHMENTS_BUCKET = 'chatrock-attachments-123456789012-ap-southeast-2-an'
-process.env.CLOUDFRONT_DOMAIN   = 'https://chat.example.com'
+process.env.CLOUDFRONT_DOMAIN   = 'https://chatrock.example.com'
 process.env.CLOUDFRONT_KEY_PAIR_ID      = 'KPID123'
 process.env.CLOUDFRONT_PRIVATE_KEY_SSM  = '/chatrock/cloudfront/attachments_private_key'
 
@@ -170,10 +170,10 @@ test('presignPut returns a presigned upload URL', async () => {
 // ── signCloudFrontUrl ─────────────────────────────────────────────────────────
 
 test('signCloudFrontUrl produces a CloudFront signed URL', async () => {
-  ;(cfSignedUrl as jest.Mock).mockReturnValue('https://chat.example.com/attachments/sub/chat/fid/file.png?Signature=x')
+  ;(cfSignedUrl as jest.Mock).mockReturnValue('https://chatrock.example.com/attachments/sub/chat/fid/file.png?Signature=x')
 
   const url = await signCloudFrontUrl('attachments/sub/chat/fid/file.png', 'fakepem')
-  expect(url).toContain('chat.example.com')
+  expect(url).toContain('chatrock.example.com')
   expect(url).toContain('Signature=')
 })
 

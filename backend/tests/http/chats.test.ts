@@ -4,6 +4,7 @@ import * as dynamo from '../../src/lib/dynamo'
 import * as attachmentsMod from '../../src/lib/attachments'
 import * as bedrock from '../../src/lib/bedrock'
 import * as enrichmentLib from '../../src/lib/enrichment'
+import { DEFAULT_CHAT_MODEL } from '../../src/config/models'
 
 jest.mock('../../src/lib/dynamo')
 jest.mock('../../src/lib/bedrock', () => ({
@@ -85,6 +86,15 @@ test('POST /api/chats creates a chat', async () => {
   expect(typeof body.chatId).toBe('string')
   expect(mockDynamo.putChat).toHaveBeenCalledWith(
     expect.objectContaining({ title: 'New Chat', model: 'global.anthropic.claude-sonnet-5-5' }),
+  )
+})
+
+test('POST /api/chats without a model uses DEFAULT_CHAT_MODEL', async () => {
+  mockDynamo.putChat.mockResolvedValue(undefined)
+  const res = result(await handler(makeEvent('POST', '/api/chats', { systemPrompt: '' }) as any))
+  expect(res.statusCode).toBe(201)
+  expect(mockDynamo.putChat).toHaveBeenCalledWith(
+    expect.objectContaining({ model: DEFAULT_CHAT_MODEL }),
   )
 })
 

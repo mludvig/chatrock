@@ -4,7 +4,7 @@ locals {
   http_api_origin_id       = "http-api"
   ws_api_origin_id         = "ws-api"
   http_api_hostname        = replace(aws_apigatewayv2_api.http.api_endpoint, "https://", "")
-  ws_api_hostname          = "${aws_apigatewayv2_api.ws.id}.execute-api.${var.aws_region}.amazonaws.com"
+  ws_api_hostname          = "${aws_apigatewayv2_api.ws.id}.execute-api.${data.aws_region.current.region}.amazonaws.com"
 }
 
 # CloudFront Function: rewrite extensionless paths to /index.html for SPA routing.

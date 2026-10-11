@@ -26,8 +26,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TF_DIR="$ROOT_DIR/terraform"
-export AWS_PROFILE="<local-profile>"
-export AWS_REGION="ap-southeast-2"
+# Local settings (AWS_PROFILE etc.) live in the gitignored .env.
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+# Region comes from .env (AWS_REGION, or AWS_DEFAULT_REGION); terraform's provider reads it too.
+AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+if [[ -z "$AWS_REGION" ]]; then
+  echo "Set AWS_REGION in .env (e.g. AWS_REGION=ap-southeast-2)" >&2
+  exit 1
+fi
+export AWS_REGION
 export AWS_DEFAULT_REGION="$AWS_REGION"
 
 # ── Resolve subcommand or legacy flags ────────────────────────────────────────

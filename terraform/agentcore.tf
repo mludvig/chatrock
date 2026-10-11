@@ -1,6 +1,6 @@
 # Amazon Bedrock AgentCore — Web Search, exposed to chatrock-ws-sendMessage via an MCP
 # Gateway. Web Search is only available in us-east-1 as of June 2026, so the gateway is
-# region-pinned there (cross-region call from the app's home region, ap-southeast-2).
+# region-pinned there (cross-region call from the app's home region).
 #
 # Inbound auth is AWS_IAM (SigV4) rather than CUSTOM_JWT — the Lambda's own execution role
 # signs MCP requests directly, no separate Cognito machine-to-machine OAuth flow needed.

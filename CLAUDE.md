@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Chatrock is a multi-user LLM chat web app on AWS: React SPA + TypeScript Lambda backend + API Gateway WebSocket streaming + Cognito auth + DynamoDB + S3/CloudFront. Live at `https://chat.example.com`.
+Chatrock is a multi-user LLM chat web app on AWS: React SPA + TypeScript Lambda backend + API Gateway WebSocket streaming + Cognito auth + DynamoDB + S3/CloudFront.
 
 See `backend/CLAUDE.md` for backend implementation detail. See `frontend/CLAUDE.md` for frontend detail.
 
@@ -26,6 +26,8 @@ For any non-trivial design decision (a choice between real alternatives, not a s
 ```
 
 Rebuilds are skipped automatically when sources are not newer than artifacts. Use `--force-rebuild` to override.
+
+Local settings live in the gitignored root `.env`, which `deploy.sh` sources: `AWS_PROFILE`, `AWS_REGION` (the deployment's home region — the terraform provider reads it from the environment; nothing in the repo hard-codes it), plus the e2e variables below.
 
 ### Backend
 
@@ -49,12 +51,12 @@ Frontend unit tests run with `npm --prefix frontend test` (Vitest). Type-checkin
 ### E2E tests
 
 ```bash
-npm run test:e2e                              # all Playwright tests against chat.example.com
+npm run test:e2e                              # all Playwright tests against the live deployment
 npm run test:e2e -- e2e/fork-chat.spec.ts     # single spec file
 npm run test:e2e:headed                       # with visible browser
 ```
 
-Requires `COGNITO_USERNAME` / `COGNITO_PASSWORD` in `.env` (root). Auth state is cached in `.auth/state.json` by the setup project. Tests run against the live deployment — deploy before testing UI changes.
+Requires `E2E_BASE_URL`, `COGNITO_USERNAME` and `COGNITO_PASSWORD` in `.env` (root). Auth state is cached in `.auth/state.json` by the setup project. Tests run against the live deployment — deploy before testing UI changes.
 
 ### Terraform
 
@@ -64,7 +66,7 @@ terraform -chdir=terraform plan
 terraform -chdir=terraform apply -auto-approve
 ```
 
-State is local (`terraform/terraform.tfstate`). Secrets go in `terraform/terraform.tfvars` (gitignored).
+State is local (`terraform/terraform.tfstate`). Secrets go in `terraform/terraform.tfvars` (gitignored). Running terraform directly needs `AWS_PROFILE`/`AWS_REGION` from `.env` in the environment (`.envrc` loads it under direnv).
 
 ## Architecture
 
@@ -74,11 +76,13 @@ State is local (`terraform/terraform.tfstate`). Secrets go in `terraform/terrafo
 Browser → CloudFront (single distribution, custom domain)
   /api/*  → API Gateway HTTP API  → Lambda (CRUD handlers)
   /ws     → API Gateway WebSocket → Lambda (streaming handler)
+  /s/*    → API Gateway HTTP API  → Lambda (public share renderer, no auth)
+  /attachments/* → S3 attachments (CloudFront signed URLs only)
   default → S3 (SPA assets)
 ```
 
 - **Auth**: Cognito Hosted UI (OIDC/PKCE). HTTP API uses a Cognito JWT authorizer. WebSocket `$connect` uses a Lambda authorizer that validates the access token from `?token=` query param (browsers can't set WebSocket headers).
-- **Streaming**: client sends `{ action: 'sendMessage', chatId, content?, model, systemPrompt, modelSettings, parentId? }` over WebSocket. `ws/sendMessage.ts` persists the user message (if `content` present), calls Bedrock `ConverseStream` in an agentic loop (3/8/12 rounds by research depth — `docs/adr/0020-research-depth-and-budget-pacing.md`), pushes event frames back via `ApiGatewayManagementApi.postToConnection`. See WS payload contract below.
+- **Streaming**: client sends `{ action: 'sendMessage', chatId, content?, model, systemPrompt, modelSettings, parentId? }` over WebSocket. `ws/sendMessage.ts` persists the user message (if `content` present), calls the model through `lib/llm/` (Bedrock `ConverseStream` or the Responses API, per model) in an agentic loop (3/8/12 rounds by research depth — `docs/adr/0020-research-depth-and-budget-pacing.md`), pushes event frames back via `ApiGatewayManagementApi.postToConnection`. See WS payload contract below.
 - **Cancel**: client sends `{ action: 'cancelMessage', chatId }` over WebSocket. `ws/cancelMessage.ts` sets a DynamoDB cancel flag on the chat row, keyed `(sub, chatId)` so cancelling one chat can never abort a different chat's turn on the same connection (`docs/adr/0040-concurrent-per-chat-streaming.md`); the stream loop polls it every 750ms via `isStreamCancelled`, aborts the Bedrock stream via `AbortController`, flushes any partial text as a turn, then emits `cancelled`.
 
 ### DynamoDB single-table
@@ -92,12 +96,13 @@ Why one table instead of one per entity: `docs/adr/0003-single-dynamodb-table.md
 - Project: `PK=USER#<sub>` / `SK=PROJECT#<projectId>` — name, description?, instructions?, memoryEnabled?, createdAt, updatedAt
 - Project memory: `PK=PROJECT#<projectId>` / `SK=MEM#<memId>` — text, category (`decision|convention|fact|constraint|glossary|other`), createdAt, updatedAt
 - Project file: `PK=PROJECT#<projectId>` / `SK=FILE#<fileId>` — filename, contentType, sizeBytes, s3Key, status (`uploading|processing|ready|error`), microLabel?, summary?, extractedTextKey?, inclusion (`auto|always|never`), createdAt, updatedAt
+- Share (two items, written and deleted together): public lookup `PK=SHARE#<shareId>` / `SK=SHARE#<shareId>` — sub, chatId, mode (`snapshot|live`), includeThinking, includeTools, snapshotMsgIds?, createdAt; owner index `PK=CHAT#<chatId>` / `SK=SHARE#<shareId>` — the same minus sub/chatId/snapshotMsgIds
 
 S3 project files: `attachments/<sub>/project/<projectId>/<fileId>/<filename>`; extracted sidecar: `attachments/<sub>/project/<projectId>/<fileId>/.extracted.txt`.
 
 Every CRUD handler derives `sub` from the JWT claims — never from client input — so users only ever touch their own partition.
 
-`blocks` is the raw `ContentBlock[]` array from the Bedrock `ConverseStream` response, stored verbatim. It is the canonical source for replay — never synthesize from text.
+`blocks` is the turn's content in the provider-neutral `Block[]` format (`backend/src/lib/llm/blocks.ts` — text, thinking, tool calls, tool results, images, documents); each provider adapter converts it to and from its own wire format. It is the canonical source for replay — never synthesize from text.
 
 Attachments are stored in S3 under `attachments/<sub>/<chatId>/<fileId>/<filename>`; blocks reference them as `s3://bucket/key` at rest and are hydrated to bytes before the Bedrock call.
 
@@ -152,6 +157,12 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `user_message_injected` | `msgId`, `parentId`, `content` — a queued message written into the transcript; the answer continues in a new bubble |
 | `error` | `message` |
 
+## Adding or updating a model
+
+1. **Research and live-test it.** Confirm the inference profile exists (`aws bedrock list-inference-profiles --region $AWS_REGION --type-equals SYSTEM_DEFINED`), then exercise every capability flag its `backend/src/config/models.ts` entry claims against the real API — images, documents, cache points, forced `toolChoice` with and without thinking, each thinking level, temperature rejection. Record what was verified, and when, in a comment on the entry, as the existing entries do.
+2. **Update every list.** A model that supersedes another takes the retired ids in its `replaces` (see "Retired models" in `backend/CLAUDE.md`). Update the Models table in `README.md` and its "as of" month, and the model examples in the `CLAUDE.md` files.
+3. **Look for leftovers.** Grep for the old model ids and display names. The only expected hits are `replaces` lists, the migration tests that exercise them, and ADRs (which stay as written).
+
 ## Real-time reliability
 
 Clients are frequently phones that background mid-turn, sleep past a token's expiry, and
@@ -163,14 +174,14 @@ Read it before adding anything that streams, polls, or reconnects; it ends in a 
 
 ## Key gotchas
 
-- **Inference profiles**: models use `global.*` cross-region inference profiles (`global.anthropic.claude-opus-4-8` etc.), not direct model IDs. Verify with `aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED`.
-- **Thinking API**: adaptive thinking (`type=adaptive` + `output_config.effort`) is what Opus 4.8 and Sonnet 4.6 expect — not `type=enabled`/`budget_tokens`. Temperature/topP must be absent when thinking is active. Forced `toolChoice` and thinking are mutually exclusive — `converseStream` disables thinking for the forced-toolChoice round.
+- **Inference profiles**: models use `global.*` cross-region inference profiles (`global.anthropic.claude-opus-5-5` etc.), not direct model IDs. Verify with `aws bedrock list-inference-profiles --region $AWS_REGION --type-equals SYSTEM_DEFINED`.
+- **Thinking API**: adaptive thinking (`type=adaptive` + `output_config.effort`) is what the Claude models expect — not `type=enabled`/`budget_tokens`. Never send temperature/topP; current Claude models reject them. Forced `toolChoice` and thinking are mutually exclusive, so a forced round runs with thinking off — except on models marked `forcedToolChoice: false` (Sonnet 5.5, Opus 5.5, Fable 5.1), which reject a forced `toolChoice` outright and are instead offered only the forced tool, with no `toolChoice` (`docs/adr/0058-forcing-a-tool-without-toolchoice.md`).
 - **WS authorizer**: TTL caching (`authorizer_result_ttl_in_seconds`) is not valid for WebSocket APIs — omit it.
 - **`cd` in Bash**: avoid `cd` in commands; use `--prefix` or absolute paths to keep auto-approval working.
 - **Screenshots**: save to `.screenshots/YYYY-MM-DD-description.jpg`.
 - **AgentCore Gateway target type**: `aws_bedrockagentcore_gateway_target` (AWS provider v6.51.0) doesn't yet support the `connector` target type that Web Search needs — only the *gateway* is a real Terraform resource (`terraform/agentcore.tf`); the target is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step (comment in that file has the exact command). Needs AWS CLI ≥ 2.35.7 — older builds reject the `connector` parameter outright.
 - **AgentCore Browser IAM ARN**: the AWS-managed system browser lives under the literal `aws` pseudo-account, not the caller's own account — the IAM resource must be `arn:aws:bedrock-agentcore:<region>:aws:browser/aws.browser.v1` (same pattern as Web Search's `arn:...:aws:tool/web-search.v1`). Scoping it to the caller's account ID instead produces an opaque `AccessDeniedException` on `StartBrowserSession`.
-- **Stability AI image models are `us-west-2`-only**: as of July 2026, Stability's Stable Image Ultra/Core/SD3.5 Large exist as on-demand Bedrock foundation models only in `us-west-2` — confirmed absent from `ap-southeast-2` (where this backend otherwise runs), `us-east-1`, and `eu-west-1` via `aws bedrock list-foundation-models --by-provider stability-ai --region <region>`. Nova Canvas/Titan Image Generator (the only image models `ap-southeast-2`/`us-east-1`/`eu-west-1` do offer) are Legacy, EOL 2026-09-30 — don't build on them. `backend/src/lib/imageGen/providers/bedrockStability.ts` uses its own `us-west-2`-pinned `BedrockRuntimeClient`, a plain cross-region `InvokeModel` call (image models have no cross-region inference profile equivalent to the `global.*` one above).
+- **Stability AI image models are `us-west-2`-only**: as of July 2026, Stability's Stable Image Ultra/Core/SD3.5 Large exist as on-demand Bedrock foundation models only in `us-west-2` — confirmed absent from `ap-southeast-2` (where this deployment runs), `us-east-1`, and `eu-west-1` via `aws bedrock list-foundation-models --by-provider stability-ai --region <region>`. Nova Canvas/Titan Image Generator (the only image models `ap-southeast-2`/`us-east-1`/`eu-west-1` do offer) are Legacy, EOL 2026-09-30 — don't build on them. `backend/src/lib/imageGen/providers/bedrockStability.ts` uses its own `us-west-2`-pinned `BedrockRuntimeClient`, a plain cross-region `InvokeModel` call (image models have no cross-region inference profile equivalent to the `global.*` one above).
 
 ## graphify
 

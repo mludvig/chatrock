@@ -56,5 +56,5 @@ export function ensureBedrockAuth(): Promise<void> {
 /** Region for Bedrock calls specifically — independent of the Lambda's own AWS_REGION so the
  * bearer-token account's Bedrock calls can target a different region than the rest of the app. */
 export function bedrockRegion(): string {
-  return process.env.BEDROCK_REGION || process.env.AWS_REGION || 'ap-southeast-2'
+  return process.env.BEDROCK_REGION || process.env.AWS_REGION!
 }
