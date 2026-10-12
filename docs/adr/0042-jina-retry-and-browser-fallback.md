@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted. The emptiness check is refined in 0061; researcher browser access changed in 0062.
 
 ## Context
 

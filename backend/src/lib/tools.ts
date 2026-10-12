@@ -328,7 +328,7 @@ export const SEARCH_HISTORY_TOOL: ToolSpec = {
 // docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
 export const RUN_RESEARCH_TASK_TOOL: ToolSpec = {
   name: 'run_research_task',
-  description: "Delegate one focused, self-contained research sub-question to a researcher sub-agent with web_search/web_fetch access. The sub-agent sees ONLY the question text you give it here — no chat history, no memory, no other context — so phrase it completely. Issue several calls in the same round to research independent sub-questions in parallel. Returns a thorough written answer with inline citations.",
+  description: "Delegate one focused, self-contained research sub-question to a researcher sub-agent with web_search/web_fetch access (plus get_rendered_page/take_screenshot when you have them). The sub-agent sees ONLY the question text you give it here — no chat history, no memory, no other context — so phrase it completely. Issue several calls in the same round to research independent sub-questions in parallel. Returns a thorough written answer with inline citations.",
   inputSchema: {
     type: 'object',
     properties: {
@@ -680,19 +680,39 @@ async function agentcoreSearch(query: string): Promise<string> {
   return JSON.stringify({ results, text })
 }
 
+// Jina answers 200 even when the target site refused it; the site's own verdict is in
+// data.httpStatus and data.warning. A bot wall (403/429/5xx, a CAPTCHA challenge) is worth
+// retrying in the real browser; a 404/410 is a real answer the browser can't change.
+// See docs/adr/0061-web-fetch-reads-jinas-upstream-status.md.
+function fetchProblem(d: { httpStatus?: number; warning?: string }, content: string): { note: string; tryBrowser: boolean } | null {
+  const status = d.httpStatus
+  if (status === 404 || status === 410) return { note: `web_fetch: page not found (HTTP ${status}).`, tryBrowser: false }
+  if (status === 401 || status === 403 || status === 429 || (status !== undefined && status >= 500)) {
+    return { note: `web_fetch was blocked by the site (HTTP ${status}) — the text above is likely a block page, not the real content.`, tryBrowser: true }
+  }
+  if (/captcha/i.test(d.warning ?? '')) {
+    return { note: 'web_fetch hit a bot check (CAPTCHA challenge) — the text above is likely a challenge page, not the real content.', tryBrowser: true }
+  }
+  if (content.trim().length < 40) {
+    return { note: 'web_fetch got little or no content — this page may require JavaScript to render.', tryBrowser: true }
+  }
+  return null
+}
+
 async function jinaFetch(url: string, browserAvailable = false): Promise<string> {
   const json = await jinaGetJson(`https://r.jina.ai/${url}`, 'fetch') as {
-    data?: { title?: string; url?: string; description?: string; content?: string }
+    data?: { title?: string; url?: string; description?: string; content?: string; httpStatus?: number; warning?: string }
   }
   const d = json.data ?? {}
   const content = d.content ?? ''
   // Cap the page body at ~8k chars to protect the context window
   let text = content.length > 8000 ? content.slice(0, 8000) + '\n\n[... truncated ...]' : content
-  // Static fetch found little/nothing — likely a JS-rendered page Jina couldn't see past.
-  // Nudge the model toward get_rendered_page rather than silently returning a near-empty
-  // page (relying solely on the tool description is easy to miss once a call is in flight).
-  if (content.trim().length < 40 && browserAvailable) {
-    text += "\n\n[web_fetch got little or no content — this page may require JavaScript to render. Try get_rendered_page for this URL instead.]"
+  // Tell the model at the point the gap appears, rather than relying on the tool description,
+  // and only point at get_rendered_page when it can really call it.
+  const problem = fetchProblem(d, content)
+  if (problem) {
+    const next = problem.tryBrowser && browserAvailable ? ' Try get_rendered_page for this URL instead.' : ''
+    text += `\n\n[${problem.note}${next}]`
   }
   const result = {
     title: d.title ?? d.url ?? url,

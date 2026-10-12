@@ -10,7 +10,8 @@ Accepted. Supersedes `0023-deep-research-step-functions-orchestration.md`,
 `0033-research-runs-see-the-users-memory.md`,
 `0034-research-runs-carry-the-questions-attachments.md`,
 `0035-a-failed-research-run-is-a-terminal-state.md`, and
-`0038-research-runs-see-project-files.md`.
+`0038-research-runs-see-project-files.md`. The researcher's tool set is changed by
+`0062-research-sub-agents-get-the-browser.md`.
 
 ## Context
 

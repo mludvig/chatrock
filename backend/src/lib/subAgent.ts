@@ -7,8 +7,8 @@ import { DEFAULT_CHAT_MODEL } from '../config/models'
 import RESEARCH_TASK_SYSTEM_PROMPT from '../../prompts/research-task.txt'
 
 // A researcher sub-agent has no chat/memory/project context to draw on, just its one
-// sub-question, so every other tool is switched off. Same settings the old Step
-// Functions researcher.ts used. See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
+// sub-question, so it gets the web tools only — plus the core browser tools when the
+// parent turn has them (set per call below). See docs/adr/0039-deep-research-as-a-sub-agent-tool.md.
 const RESEARCHER_SETTINGS: ModelSettings = {
   researchDepth: 'extended',
   webSearchEnabled: true,
@@ -44,7 +44,9 @@ export async function runResearchTask(input: Record<string, unknown>, ctx: ToolC
       RESEARCH_TASK_SYSTEM_PROMPT,
       [{ role: 'user', content: [{ kind: 'text', text: question }] }],
       {
-        settings: RESEARCHER_SETTINGS,
+        // Inherit the parent's browser access, so a chat with the browser off keeps it off for
+        // its researchers too. See docs/adr/0062-research-sub-agents-get-the-browser.md.
+        settings: { ...RESEARCHER_SETTINGS, browserCoreEnabled: ctx.browserAvailable === true },
         ctx: subCtx,
         deadlineAt: ctx.deadlineAt,
         call: { purpose: 'research_task', sub: ctx.sub, chatId: ctx.chatId },

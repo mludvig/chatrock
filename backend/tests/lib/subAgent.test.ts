@@ -40,6 +40,17 @@ test('nested call increments subAgentDepth on the ctx passed to converseStream',
   expect(optsArg.ctx?.subAgentDepth).toBe(2)
 })
 
+// See docs/adr/0062-research-sub-agents-get-the-browser.md.
+test.each([true, false])('researcher gets the core browser tools iff the parent had them (%s)', async (browserAvailable) => {
+  mockConverseStream.mockReturnValue(fakeStream([
+    { type: 'turn', role: 'assistant', content: [{ kind: 'text', text: 'Answer.' }], turnIndex: 0 },
+  ]))
+  await runResearchTask({ question: 'What is the visa fee?' }, { ...BASE_CTX, browserAvailable })
+  const optsArg = mockConverseStream.mock.calls[0][3] as { settings?: { browserCoreEnabled?: boolean; browserExtendedEnabled?: boolean } }
+  expect(optsArg.settings?.browserCoreEnabled).toBe(browserAvailable)
+  expect(optsArg.settings?.browserExtendedEnabled).toBe(false)
+})
+
 test('final assistant turn text is capped at RESEARCH_FINDING_CAP', async () => {
   const longText = 'x'.repeat(RESEARCH_FINDING_CAP + 5000)
   mockConverseStream.mockReturnValue(fakeStream([

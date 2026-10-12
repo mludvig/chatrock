@@ -142,6 +142,81 @@ describe('web_fetch executor', () => {
   })
 })
 
+// Jina answers 200 even when the target site blocked it; the upstream verdict is in
+// data.httpStatus / data.warning. Payloads below are trimmed from real responses.
+// See docs/adr/0061-web-fetch-reads-jinas-upstream-status.md.
+describe('web_fetch blocked-page detection', () => {
+  const realFetch = global.fetch
+  afterEach(() => { global.fetch = realFetch })
+
+  function jinaReturns(data: Record<string, unknown>) {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ code: 200, data }) }) as unknown as typeof fetch
+  }
+  async function fetchText(url: string, browserAvailable = true): Promise<string> {
+    const res = await executeTool('web_fetch', { url }, { ...TEST_CTX, browserAvailable })
+    return JSON.parse((res.entries[0] as { text: string }).text).text
+  }
+
+  const reddit403 = {
+    title: '', url: 'https://www.reddit.com/r/x/comments/1/y/', httpStatus: 403,
+    warning: 'Target URL returned error 403: Forbidden',
+    content: "You've been blocked by network security. If you think you've been blocked by mistake, file a ticket below and we'll look into it. [File a ticket](https://support.reddithelp.com/hc/en-us/requests/new)",
+  }
+
+  it('flags an upstream 403 and points at get_rendered_page', async () => {
+    jinaReturns(reddit403)
+    const text = await fetchText('https://www.reddit.com/r/x/comments/1/y/')
+    expect(text).toContain('HTTP 403')
+    expect(text).toContain('get_rendered_page')
+  })
+
+  it('flags an upstream 429 (Vercel checkpoint)', async () => {
+    jinaReturns({
+      title: 'Vercel Security Checkpoint', url: 'https://www.morphllm.com/ai-coding-agent', httpStatus: 429,
+      warning: 'Target URL returned error 429: Too Many Requests\nThis page maybe not yet fully loaded, consider explicitly specify a timeout.',
+      content: 'Vercel Security Checkpoint\n\n|\n\npdx1::1792106362-6cNiwW3HDXxHvuX3ysyxvevfLDhNI79K',
+    })
+    const text = await fetchText('https://www.morphllm.com/ai-coding-agent')
+    expect(text).toContain('HTTP 429')
+    expect(text).toContain('get_rendered_page')
+  })
+
+  it('flags a CAPTCHA warning on an HTTP 200 (Cloudflare challenge)', async () => {
+    jinaReturns({
+      title: 'Just a moment...', url: 'https://stockanalysis.com/stocks/acn/', httpStatus: 200,
+      warning: 'This page maybe requiring CAPTCHA, please make sure you are authorized to access this page.',
+      content: '## stockanalysis.com\n\n## Performing security verification\n\nThis website uses a security service to protect against malicious bots. This page is displayed while the website verifies you are not a bot.',
+    })
+    const text = await fetchText('https://stockanalysis.com/stocks/acn/')
+    expect(text).toContain('CAPTCHA')
+    expect(text).toContain('get_rendered_page')
+  })
+
+  it('reports a 404 as not found, without the browser hint', async () => {
+    jinaReturns({
+      title: '404 Not Found', url: 'https://www.legislation.govt.nz/act/public/2003/129/latest/DLM237091.html', httpStatus: 404,
+      warning: 'Target URL returned error 404: Not Found',
+      content: "## Page not found\n\n* * *\n\nThe page you are looking for doesn't exist, or it has been moved somewhere else.",
+    })
+    const text = await fetchText('https://www.legislation.govt.nz/act/public/2003/129/latest/DLM237091.html')
+    expect(text).toContain('HTTP 404')
+    expect(text).not.toContain('get_rendered_page')
+  })
+
+  it('still states the block reason when the browser is not available', async () => {
+    jinaReturns(reddit403)
+    const text = await fetchText('https://www.reddit.com/r/x/comments/1/y/', false)
+    expect(text).toContain('HTTP 403')
+    expect(text).not.toContain('get_rendered_page')
+  })
+
+  it('leaves a normal page untouched', async () => {
+    jinaReturns({ title: 'Ok', url: 'https://example.com', httpStatus: 200, content: 'A perfectly ordinary page with plenty of real content in it.' })
+    const text = await fetchText('https://example.com')
+    expect(text).toBe('A perfectly ordinary page with plenty of real content in it.')
+  })
+})
+
 // ── manage_memory dispatch ────────────────────────────────────────────────────
 
 describe('manage_memory dispatch', () => {

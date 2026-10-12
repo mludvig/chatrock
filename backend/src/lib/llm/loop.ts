@@ -168,8 +168,8 @@ async function* streamRounds(
   const tools = buildToolList(settings, ctx)
   const maxRounds = ROUND_BUDGETS[settings.researchDepth ?? 'brief']
   // Whether this invocation actually has the browser fallback on offer — a failed/empty Jina
-  // result only points at get_rendered_page when the model can really call it (a research
-  // sub-agent, for one, runs with browserCoreEnabled:false).
+  // result only points at get_rendered_page when the model can really call it (the browser
+  // can be switched off per chat, and a research sub-agent inherits that).
   const browserAvailable = tools.some(t => t.name === 'get_rendered_page')
 
   // Sanitize the incoming replayed history ONCE per invocation — coalesce/heal plus
