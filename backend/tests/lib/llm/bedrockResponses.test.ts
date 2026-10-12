@@ -126,6 +126,41 @@ describe('bedrockResponses.streamTurn', () => {
     expect(result.replayContent[0].opaque).toBeDefined()
   })
 
+  test('a second summary part in the same reasoning item streams after a blank line, matching the persisted join', async () => {
+    const response = {
+      status: 'completed',
+      output_text: '5 cents',
+      output: [
+        { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: '**Reading**\n\nA.' }, { type: 'summary_text', text: '**Checking**\n\nB.' }] },
+        { type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '5 cents', annotations: [] }] },
+      ],
+      usage: { input_tokens: 10, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 }, output_tokens: 10, output_tokens_details: {}, total_tokens: 20 },
+    }
+    mockCreate.mockResolvedValue(fakeStream([
+      { type: 'response.reasoning_summary_part.added', item_id: 'rs_1', summary_index: 0 },
+      { type: 'response.reasoning_summary_text.delta', delta: '**Reading**\n\nA.' },
+      { type: 'response.reasoning_summary_part.added', item_id: 'rs_1', summary_index: 1 },
+      { type: 'response.reasoning_summary_text.delta', delta: '**Checking**\n\nB.' },
+      { type: 'response.output_item.done', item: response.output[0] },
+      { type: 'response.output_text.delta', delta: '5 cents' },
+      { type: 'response.completed', response },
+    ]))
+
+    const { chunks, result } = await drain(bedrockResponsesProvider.streamTurn({
+      modelId: 'global.openai.gpt-6.1-sol',
+      systemPrompt: '',
+      messages: [{ role: 'user', content: [{ kind: 'text', text: 'ball?' }] }],
+      tools: [],
+      settings: { thinkingEffort: 'medium' },
+      cacheBoundaryIndex: -1,
+    }))
+
+    const streamed = chunks.filter((c): c is { type: 'thinking_delta'; text: string } => (c as { type: string }).type === 'thinking_delta')
+      .map(c => c.text).join('')
+    expect(streamed).toBe('**Reading**\n\nA.\n\n**Checking**\n\nB.')
+    expect(result.content[0]).toMatchObject({ kind: 'thinking', text: streamed })
+  })
+
   test('an oversized reasoning opaque is dropped from the persisted content but kept in replayContent', async () => {
     const hugeEncrypted = 'x'.repeat(200_000) // base64 chars; encoded opaque well over the 96 KB cap
     const response = {

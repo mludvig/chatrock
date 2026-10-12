@@ -183,6 +183,9 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
       // GPT streams a reasoning summary; Kimi K3 streams its raw reasoning text instead.
       thinkingOpen = true
       yield { type: 'thinking_delta', text: event.delta }
+    } else if (event.type === 'response.reasoning_summary_part.added' && event.summary_index > 0) {
+      // Parts of one reasoning item stream back to back; separate them as toNeutral joins them.
+      yield { type: 'thinking_delta', text: '\n\n' }
     } else if (event.type === 'response.output_item.added' && event.item.type === 'function_call') {
       yield { type: 'tool_call_start', toolUseId: event.item.call_id, name: event.item.name }
     } else if (event.type === 'response.output_item.done') {

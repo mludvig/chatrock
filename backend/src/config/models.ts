@@ -88,6 +88,8 @@ export const MODELS: Model[] = [
   },
   // OpenAI GPT via the Responses API on bedrock-runtime (docs/adr/0048-openai-models-on-bedrock-runtime.md).
   // Always reasons (no 'off' level) — thinkingLevels omits it.
+  // Verified live against ap-southeast-2 Oct 2026: reasoning.summary 'auto' streams a summary on all
+  // four GPT models ('detailed' is barely longer); one reasoning item may carry several summary parts.
   {
     id: 'global.openai.gpt-6-astra',
     name: 'GPT-6 Astra',
