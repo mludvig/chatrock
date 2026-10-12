@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCopy, faCheck, faTrash, faDownload, faQrcode } from '@fortawesome/free-solid-svg-icons'
+import { faCopy, faCheck, faTrash, faDownload, faQrcode, faFileLines } from '@fortawesome/free-solid-svg-icons'
 import QRCode from 'qrcode'
 import { api, exportChat, type Share } from '../api/http'
 import { ENV } from '../env'
@@ -152,9 +152,6 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
                   <a href={shareUrl(s.shareId)} target="_blank" rel="noopener noreferrer" className="published-links-url">
                     /s/{s.shareId}
                   </a>
-                  <a href={`${shareUrl(s.shareId)}.md`} target="_blank" rel="noopener noreferrer" className="published-links-url" title="Open the Markdown version of this link">
-                    Markdown
-                  </a>
                   <span className="topic-chip">{s.mode}</span>
                   <span className="topic-chip">
                     {s.includeThinking && s.includeTools ? '+thinking +tools'
@@ -163,6 +160,9 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
                   </span>
                 </div>
                 <div className="published-links-actions">
+                  <a href={`${shareUrl(s.shareId)}.md`} target="_blank" rel="noopener noreferrer" className="action-btn" title="Open the Markdown version of this link" aria-label="Open the Markdown version of this link">
+                    <FontAwesomeIcon icon={faFileLines} />
+                  </a>
                   <button className="action-btn" title="Copy link" onClick={() => copy(shareUrl(s.shareId), s.shareId)}>
                     <FontAwesomeIcon icon={copiedId === s.shareId ? faCheck : faCopy} />
                   </button>
