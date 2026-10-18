@@ -60,7 +60,7 @@ legacy image-generation settings. Keep historical image results renderable.
   visually correct. Validate representative outputs in the browser. Numeric chart
   data and geometry are validated separately.
 - HTML can still consume browser CPU. Isolation protects credentials/network, not
-  resource usage. The user can close/replay a visual; animation guidance requires
+  resource usage. Leaving the chat removes its frames; animation guidance requires
   pause and reduced motion. A worker timeout is future work for larger simulations.
 
 Alternatives considered:

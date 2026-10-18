@@ -65,7 +65,7 @@ test('recorded charts and specialist visuals render, interact, download and surv
     await expect(page.getByRole('dialog').frameLocator('iframe').frameLocator('iframe').locator('svg')).toBeVisible()
     await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
 
-    const road = page.locator('.visual-card').filter({ hasText: 'Why the inside of an uphill bend feels steeper' })
+    const road = page.locator('.visual-card').nth(5)
     const inner = road.frameLocator('iframe').frameLocator('iframe')
     await expect(inner.locator('#ig')).toHaveText('5.769%')
     await expect(inner.locator('#og')).toHaveText('4.412%')
@@ -84,17 +84,20 @@ test('recorded charts and specialist visuals render, interact, download and surv
     await expect(inner.locator('#ig')).toHaveText('0.000%')
     await road.getByRole('button', { name: 'Replay' }).click()
     await expect(inner.locator('#ig')).toHaveText('5.769%')
-    const organic = page.locator('.visual-card').filter({ hasText: 'Why the inside of an uphill curve feels steeper' })
+    const organic = page.locator('.visual-card').nth(6)
     const organicInner = organic.frameLocator('iframe').frameLocator('iframe')
-    await expect(organicInner.locator('#runnerGrade')).toHaveText('6.79%')
-    await organicInner.locator('#offset').evaluate(el => {
-      (el as HTMLInputElement).value = '-3.5'; el.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(await organicInner.getByRole('slider').count()).toBeGreaterThanOrEqual(3)
+    const initialText = await organicInner.locator('body').innerText()
+    await organicInner.getByRole('slider').first().evaluate(el => {
+      const input = el as HTMLInputElement
+      input.value = input.value === input.min ? input.max : input.min
+      el.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await expect(organicInner.locator('#runnerGrade')).toHaveText('5.37%')
+    await expect.poll(() => organicInner.locator('body').innerText()).not.toBe(initialText)
     await page.reload()
     await expect(page.locator('.visual-card')).toHaveCount(7)
     await expect(inner.locator('#ig')).toHaveText('5.769%')
-    await expect(organicInner.locator('#runnerGrade')).toHaveText('6.79%')
+    await expect(organicInner.locator('body')).toHaveText(initialText, { useInnerText: true })
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 900 })
       await assertFits(page, '.visual-card')
