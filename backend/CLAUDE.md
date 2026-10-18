@@ -25,8 +25,8 @@ backend/src/
   lib/projectContext.ts   — executeProjectReadFileTool / executeProjectReadChatTool: ownership validation, progressive detail (summary vs full), capToolResultText applied
   lib/promptAssembly.ts   — assembleSystemPrompt: merges instructions + date + answer-length + user memory + project memory + project manifest + forced files
   lib/preferences.ts      — UserPreferences type + resolvePreferences() layering
-  lib/transcript.ts       — groupTurnsToBubbles/filterSteps + renderMarkdown/renderHtml: the read-only transcript shared by public share pages and Markdown export
-  http/chats.ts           — chat CRUD, retitle, resummarize, fork, branch delete, share create/list/revoke, Markdown export, attachment presign; PATCH accepts projectId for project membership
+  lib/transcript.ts       — groupTurnsToBubbles/filterSteps + renderMarkdown/renderHtml: the read-only transcript shared by public share pages and Markdown/HTML export
+  http/chats.ts           — chat CRUD, retitle, resummarize, fork, branch delete, share create/list/revoke, Markdown/HTML export, attachment presign; PATCH accepts projectId for project membership
   http/messages.ts        — GET /messages: tree walk + attachment URL signing + `streaming` flag + `pending` queued messages
   http/models.ts          — GET /models
   http/memory.ts          — GET /memory, PATCH /memory/{memId}, DELETE /memory/{memId}
@@ -203,7 +203,7 @@ A share is a read-only public link to one chat: `https://<domain>/s/<shareId>`. 
 | `POST /api/chats/{chatId}/shares` | create a share link (see "Chat sharing") |
 | `GET /api/chats/{chatId}/shares` | list a chat's share links |
 | `DELETE /api/chats/{chatId}/shares/{shareId}` | revoke a share link |
-| `GET /api/chats/{chatId}/export` | active branch as a Markdown download |
+| `GET /api/chats/{chatId}/export` | active branch as a Markdown or HTML download |
 | `GET /s/{shareId}` | public share page, no auth (`http/share.ts`) |
 | `POST /api/attachments` | presign S3 PUT → `{s3Key, uploadUrl}` |
 | `GET /api/models` | list models |

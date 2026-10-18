@@ -25,6 +25,10 @@ window, message type, channel and finite positive height, then relays a bounded
 height to the host. The React/public host checks its own frame's window and channel.
 No URL, command, source, credential, or general application message crosses this
 bridge. Cap height at 20,000 px and coalesce measurements to at most ten per second.
+The host requests the current height after installing its listener and when the
+frame loads. This recovers measurements emitted before host setup in long shares
+or saved HTML. The outer frame accepts requests only from its parent, with the
+matching channel.
 ResizeObserver catches width and content changes, including opened details.
 
 For SVG, calculate height from the root viewBox and host width. No script is added

@@ -38,6 +38,7 @@ export interface VisualArtifact {
 export const MAX_VISUAL_BYTES = 20_000
 export const MAX_VISUAL_HEIGHT = 20_000
 export const VISUAL_SIZE_MESSAGE = 'chatrock:visual-size'
+export const VISUAL_SIZE_REQUEST = 'chatrock:visual-size-request'
 
 /** Only sizing crosses the sandbox boundary. Never accept code, URLs or actions. */
 export function visualMessageHeight(data: unknown, channel: string): number | undefined {
@@ -106,7 +107,7 @@ export function visualDocument(visual: VisualArtifact, channel = ''): string {
   const measure = visual.format === 'html' ? `<script>(()=>{let queued=false,last=0;function measure(){queued=false;const b=document.body;const height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(Math.max(b.scrollHeight,b.getBoundingClientRect().height))));if(height!==last){last=height;parent.postMessage({type:'${VISUAL_SIZE_MESSAGE}',channel:${token},height},'*')}}function queue(){if(!queued){queued=true;setTimeout(measure,100)}}new ResizeObserver(queue).observe(document.body);addEventListener('resize',queue);addEventListener('load',queue);queue()})();</script>` : ''
   const inner = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;box-sizing:border-box;background:#fff;color:#172033;font:15px system-ui}body{padding:12px}svg,canvas{max-width:100%;height:auto}${visual.format === 'svg' ? 'body>svg{width:100%;height:calc(100vh - 24px);display:block}' : ''}*{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}input,select,button{max-width:100%}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}</style></head><body>${visual.source}${measure}</body></html>`
   const outerPolicy = `default-src 'none'; frame-src about:; style-src 'unsafe-inline'; script-src ${scripts}; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'`
-  const relay = visual.format === 'html' ? `<script>addEventListener('message',e=>{const f=document.querySelector('iframe'),d=e.data;if(e.source!==f.contentWindow||!d||d.type!=='${VISUAL_SIZE_MESSAGE}'||d.channel!==${token}||!Number.isFinite(d.height)||d.height<=0)return;const height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(d.height)));f.style.height=height+'px';if(parent!==window)parent.postMessage({type:'${VISUAL_SIZE_MESSAGE}',channel:${token},height},'*')});</script>` : ''
+  const relay = visual.format === 'html' ? `<script>(()=>{const f=document.querySelector('iframe');function report(){if(parent!==window)parent.postMessage({type:'${VISUAL_SIZE_MESSAGE}',channel:${token},height:Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(f.getBoundingClientRect().height)))},'*')}addEventListener('message',e=>{const d=e.data;if(!d||d.channel!==${token})return;if(e.source===parent&&d.type==='${VISUAL_SIZE_REQUEST}'){report();return}if(e.source!==f.contentWindow||d.type!=='${VISUAL_SIZE_MESSAGE}'||!Number.isFinite(d.height)||d.height<=0)return;const height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(d.height)));f.style.height=height+'px';report()})})();</script>` : ''
   // srcdoc inherits the outer CSP. about: permits srcdoc; remote navigation is denied.
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${outerPolicy}"><style>html,body,iframe{margin:0;width:100%;border:0;display:block}${visual.format === 'svg' ? 'html,body,iframe{height:100%}' : `iframe{height:${visual.height}px}`}</style></head><body><iframe title="${escapeVisualText(visual.title)}" sandbox="${visual.format === 'html' ? 'allow-scripts' : ''}" srcdoc="${escapeVisualText(inner)}"></iframe>${relay}</body></html>`
 }
@@ -118,5 +119,7 @@ addEventListener('message',e=>{const d=e.data;if(!d||d.type!=='${VISUAL_SIZE_MES
 const f=frames.find(f=>f.contentWindow===e.source&&f.dataset.visualChannel===d.channel);if(f)f.style.height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(d.height)))+'px'});
 for(const f of frames){const ratio=Number(f.dataset.visualRatio);if(ratio>0&&Number.isFinite(ratio)){
 const size=()=>f.style.height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(Math.max(0,f.getBoundingClientRect().width-24)/ratio+24)))+'px';
-new ResizeObserver(size).observe(f);size()}}
+new ResizeObserver(size).observe(f);size()}else{
+const request=()=>f.contentWindow?.postMessage({type:'${VISUAL_SIZE_REQUEST}',channel:f.dataset.visualChannel},'*');
+f.addEventListener('load',request);request()}}
 })();`

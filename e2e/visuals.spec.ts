@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { openApp, newChat, request, assertFits } from './ux.helpers'
 import { renderChart } from '../backend/src/lib/visuals/chart'
 import { renderHtml, type RawBubble } from '../backend/src/lib/transcript'
-import { visualDocument, validateVisual, type VisualArtifact } from '../shared/visuals'
+import { visualDocument, validateVisual, VISUAL_HOST_SCRIPT, type VisualArtifact } from '../shared/visuals'
 
 // Model inference is tested in <local-profile>. These recorded real results exercise the
 // deployed client with test credentials without running paid inference in <local-profile>.
@@ -153,7 +153,7 @@ test('public visual wrapper supports interaction and blocks generated code from 
   await page.route('https://invalid.example/**', route => { attempted.push(route.request().url()); return route.abort() })
   const visual: VisualArtifact = {
     title: 'Isolation check', summary: 'Synthetic browser test', format: 'html', height: 300,
-    source: `<button id="add">Add</button><output id="count">0</output><output id="access">blocked</output>
+    source: `<button id="add">Add</button><output id="count">0</output><output id="access">blocked</output><div style="height:1100px"></div>
 <script>let n=0;document.getElementById('add').onclick=()=>document.getElementById('count').textContent=++n;
 try{window.top.localStorage.getItem('visualTest');document.getElementById('access').textContent='escaped'}catch{}
 fetch('https://invalid.example/fetch').catch(()=>{});let i=new Image();i.src='https://invalid.example/image';
@@ -162,9 +162,16 @@ try{window.top.location='https://invalid.example/top'}catch{};window.open('https
   }
   const bubble: RawBubble = { msgId: 'v', parentId: null, role: 'assistant', model: '', createdAt: '',
     steps: [{ kind: 'tool', toolUseId: 'v', name: 'create_visual', input: '{}', visual }] }
-  await page.route('**/s/visual-browser-test', route => route.fulfill({ contentType: 'text/html', body: renderHtml([bubble], { title: 'Public visual' }) }))
+  // The first measurement can precede the host script in a long transcript.
+  // Delaying host setup reproduces that race; its handshake must recover sizing.
+  const html = renderHtml([bubble], { title: 'Public visual' }).replace(
+    `<script>${VISUAL_HOST_SCRIPT}</script>`, `<script>setTimeout(()=>{${VISUAL_HOST_SCRIPT}},500)</script>`,
+  )
+  await page.route('**/s/visual-browser-test', route => route.fulfill({ contentType: 'text/html', body: html }))
   await page.goto('/s/visual-browser-test')
   const inner = page.frameLocator('iframe').frameLocator('iframe')
+  await expect.poll(() => page.locator('.visual iframe').evaluate(f => f.clientHeight)).toBeGreaterThan(1100)
+  await expect.poll(() => inner.locator('body').evaluate(e => e.scrollHeight <= innerHeight + 1)).toBe(true)
   await inner.getByRole('button', { name: 'Add' }).click()
   await expect(inner.locator('#count')).toHaveText('1')
   await expect(inner.locator('#access')).toHaveText('blocked')
