@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { validateVisual, visualDocument, visualAspectRatio, visualMessageHeight, visualSvgHeight, VISUAL_SIZE_REQUEST, type VisualArtifact } from '../../../shared/visuals'
+import { validateVisual, visualDocument, visualAspectRatio, visualSvgWidth, visualMessageHeight, visualSvgHeight, VISUAL_SIZE_REQUEST, type VisualArtifact } from '../../../shared/visuals'
 import Dialog from './Dialog'
 
 export default function VisualCard({ visual }: { visual: VisualArtifact }) {
@@ -28,7 +28,8 @@ export default function VisualCard({ visual }: { visual: VisualArtifact }) {
       requestSize()
     }
     const ratio = visualAspectRatio(visual)
-    const observer = ratio ? new ResizeObserver(() => setHeight(visualSvgHeight(frame.getBoundingClientRect().width, ratio))) : undefined
+    const authoredWidth = visualSvgWidth(visual)
+    const observer = ratio ? new ResizeObserver(() => setHeight(visualSvgHeight(frame.getBoundingClientRect().width, ratio, authoredWidth))) : undefined
     observer?.observe(frame)
     return () => {
       window.removeEventListener('message', onSize)

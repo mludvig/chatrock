@@ -49,16 +49,34 @@ export function visualMessageHeight(data: unknown, channel: string): number | un
   return Math.min(MAX_VISUAL_HEIGHT, Math.max(24, Math.ceil(d.height)))
 }
 
-export function visualAspectRatio(visual: VisualArtifact): number | undefined {
+function svgViewBox(visual: VisualArtifact): number[] | undefined {
   if (visual.format !== 'svg') return
   const root = visual.source.match(/^\s*<svg\b[^>]*>/i)?.[0] ?? ''
   const viewBox = root.match(/\bviewBox\s*=\s*["']([^"']+)["']/i)?.[1].trim().split(/[\s,]+/).map(Number)
   if (!viewBox || viewBox.length !== 4 || !viewBox.every(Number.isFinite) || viewBox[2] <= 0 || viewBox[3] <= 0) return
-  return viewBox[2] / viewBox[3]
+  return viewBox
 }
 
-export function visualSvgHeight(width: number, ratio: number): number {
-  return Math.min(MAX_VISUAL_HEIGHT, Math.max(24, Math.ceil(Math.max(0, width - 24) / ratio + 24)))
+export function visualAspectRatio(visual: VisualArtifact): number | undefined {
+  const box = svgViewBox(visual)
+  if (!box) return
+  const ratio = box[2] / box[3]
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined
+}
+
+/** Authored pixel width: an explicit numeric width, or the viewBox width. */
+export function visualSvgWidth(visual: VisualArtifact): number | undefined {
+  if (visual.format !== 'svg') return
+  const root = visual.source.match(/^\s*<svg\b[^>]*>/i)?.[0] ?? ''
+  const declared = Number(root.match(/\swidth\s*=\s*["'](\d+(?:\.\d+)?)(?:px)?["']/i)?.[1])
+  if (Number.isFinite(declared) && declared > 0) return declared
+  return svgViewBox(visual)?.[2]
+}
+
+export function visualSvgHeight(width: number, ratio: number, authoredWidth = Infinity): number {
+  // See docs/adr/0065-cap-svg-preview-upscaling.md.
+  const contentWidth = Math.min(Math.max(0, width - 24), authoredWidth)
+  return Math.min(MAX_VISUAL_HEIGHT, Math.max(24, Math.ceil(contentWidth / ratio + 24)))
 }
 
 export function validateVisual(value: unknown, maxBytes = MAX_VISUAL_BYTES): VisualArtifact {
@@ -105,7 +123,9 @@ export function visualDocument(visual: VisualArtifact, channel = ''): string {
   // The channel is host-created, but escape it for an inline script regardless.
   const token = JSON.stringify(channel).replace(/</g, '\\u003c')
   const measure = visual.format === 'html' ? `<script>(()=>{let queued=false,last=0;function measure(){queued=false;const b=document.body;const height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(Math.max(b.scrollHeight,b.getBoundingClientRect().height))));if(height!==last){last=height;parent.postMessage({type:'${VISUAL_SIZE_MESSAGE}',channel:${token},height},'*')}}function queue(){if(!queued){queued=true;setTimeout(measure,100)}}new ResizeObserver(queue).observe(document.body);addEventListener('resize',queue);addEventListener('load',queue);queue()})();</script>` : ''
-  const inner = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;box-sizing:border-box;background:#fff;color:#172033;font:15px system-ui}body{padding:12px}svg,canvas{max-width:100%;height:auto}${visual.format === 'svg' ? 'body>svg{width:100%;height:calc(100vh - 24px);display:block}' : ''}*{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}input,select,button{max-width:100%}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}</style></head><body>${visual.source}${measure}</body></html>`
+  const authoredWidth = visualSvgWidth(visual)
+  const svgStyle = visual.format === 'svg' ? `body>svg{width:100%!important;max-width:${authoredWidth ? `${authoredWidth}px` : '100%'}!important;height:auto!important;margin-inline:auto;display:block}` : ''
+  const inner = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;box-sizing:border-box;background:#fff;color:#172033;font:15px system-ui}body{padding:12px}svg,canvas{max-width:100%;height:auto}${svgStyle}*{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}input,select,button{max-width:100%}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}</style></head><body>${visual.source}${measure}</body></html>`
   const outerPolicy = `default-src 'none'; frame-src about:; style-src 'unsafe-inline'; script-src ${scripts}; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'`
   const relay = visual.format === 'html' ? `<script>(()=>{const f=document.querySelector('iframe');function report(){if(parent!==window)parent.postMessage({type:'${VISUAL_SIZE_MESSAGE}',channel:${token},height:Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(f.getBoundingClientRect().height)))},'*')}addEventListener('message',e=>{const d=e.data;if(!d||d.channel!==${token})return;if(e.source===parent&&d.type==='${VISUAL_SIZE_REQUEST}'){report();return}if(e.source!==f.contentWindow||d.type!=='${VISUAL_SIZE_MESSAGE}'||!Number.isFinite(d.height)||d.height<=0)return;const height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(d.height)));f.style.height=height+'px';report()})})();</script>` : ''
   // srcdoc inherits the outer CSP. about: permits srcdoc; remote navigation is denied.
@@ -118,7 +138,8 @@ const frames=[...document.querySelectorAll('iframe[data-visual-channel]')];
 addEventListener('message',e=>{const d=e.data;if(!d||d.type!=='${VISUAL_SIZE_MESSAGE}'||!Number.isFinite(d.height)||d.height<=0)return;
 const f=frames.find(f=>f.contentWindow===e.source&&f.dataset.visualChannel===d.channel);if(f)f.style.height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(d.height)))+'px'});
 for(const f of frames){const ratio=Number(f.dataset.visualRatio);if(ratio>0&&Number.isFinite(ratio)){
-const size=()=>f.style.height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(Math.max(0,f.getBoundingClientRect().width-24)/ratio+24)))+'px';
+const declared=Number(f.dataset.visualWidth);const authoredWidth=declared>0&&Number.isFinite(declared)?declared:Infinity;
+const size=()=>f.style.height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(Math.min(Math.max(0,f.getBoundingClientRect().width-24),authoredWidth)/ratio+24)))+'px';
 new ResizeObserver(size).observe(f);size()}else{
 const request=()=>f.contentWindow?.postMessage({type:'${VISUAL_SIZE_REQUEST}',channel:f.dataset.visualChannel},'*');
 f.addEventListener('load',request);request()}}

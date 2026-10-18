@@ -145,6 +145,74 @@ test('HTML conversation download uses the authenticated export without creating 
   }
 })
 
+test('portrait SVG keeps readable typography in wide cards, expanded views and HTML exports', async ({ page }) => {
+  const portrait: VisualArtifact = {
+    title: 'Planning timeline', summary: 'Three stages with readable labels.', format: 'svg', height: 800,
+    source: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 925" width="100%" role="img">
+<title>Planning timeline</title><rect width="320" height="925" rx="12" fill="#f5f7fb"/>
+<text id="heading" x="16" y="36" font-size="18">Planning timeline</text>
+<text x="16" y="68" font-size="13">An overview of three stages.</text>
+<rect x="16" y="100" width="288" height="180" rx="8" fill="#e8efff"/>
+<text x="28" y="132" font-size="14">Stage 1: preparation</text>
+<rect x="16" y="340" width="288" height="180" rx="8" fill="#e8efff"/>
+<text x="28" y="372" font-size="14">Stage 2: transition</text>
+<rect x="16" y="600" width="288" height="180" rx="8" fill="#e8efff"/>
+<text x="28" y="632" font-size="14">Stage 3: review</text>
+<text id="last" x="16" y="900" font-size="13">End of timeline</text></svg>`,
+  }
+  await openApp(page)
+  const { chatId } = await newChat(page)
+  const bubble: RawBubble = { msgId: 'portrait', parentId: null, role: 'assistant', model: 'test', createdAt: '',
+    steps: [{ kind: 'tool', toolUseId: 'portrait', name: 'create_visual', input: '{}', visual: portrait }] }
+  await page.route(`**/api/chats/${chatId}/messages**`, route => route.fulfill({
+    json: { bubbles: [bubble], conversationUsage: { inputTokens: 0, outputTokens: 0 }, hasMore: false, streaming: false },
+  }))
+  const checkSize = async (container: ReturnType<typeof page.locator>, nativeSize: boolean) => {
+    const inner = container.frameLocator('iframe').frameLocator('iframe')
+    await expect(inner.locator('svg')).toBeVisible()
+    await expect.poll(() => inner.locator('svg').evaluate(svg => svg.getBoundingClientRect().width)).toBeLessThanOrEqual(320)
+    if (nativeSize) {
+      await expect.poll(() => inner.locator('svg').evaluate(svg => svg.getBoundingClientRect().width)).toBe(320)
+      await expect.poll(() => container.locator('iframe').evaluate(f => f.clientHeight)).toBe(949)
+    }
+    // The last label remains within the viewport; no clipping or inner scroll.
+    await expect.poll(() => inner.locator('#last').evaluate(el => el.getBoundingClientRect().bottom <= innerHeight)).toBe(true)
+    await expect.poll(() => inner.locator('body').evaluate(el => el.scrollHeight <= innerHeight + 1)).toBe(true)
+  }
+  try {
+    await page.setViewportSize({ width: 1440, height: 1100 })
+    await page.goto(`/c/${chatId}`)
+    const card = page.locator('.visual-card')
+    await checkSize(card, true)
+    const inner = card.frameLocator('iframe').frameLocator('iframe')
+    const heading = await inner.locator('#heading').evaluate(el => {
+      const text = el as SVGGraphicsElement
+      return parseFloat(getComputedStyle(text).fontSize) * text.getScreenCTM()!.a
+    })
+    expect(heading).toBeCloseTo(18, 1)
+    await card.getByRole('button', { name: 'Expand' }).click()
+    await checkSize(page.getByRole('dialog'), true)
+    await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click()
+    await page.reload()
+    await checkSize(card, true)
+    await page.screenshot({ path: '.screenshots/2026-10-23-svg-portrait-sizing.jpg' })
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 900 })
+      await assertFits(page, '.visual-card')
+      await checkSize(card, false)
+    }
+    await page.route('**/s/portrait-test', route => route.fulfill({
+      contentType: 'text/html', body: renderHtml([bubble], { title: 'Planning example', shared: false }),
+    }))
+    await page.setViewportSize({ width: 1440, height: 1100 })
+    await page.goto('/s/portrait-test')
+    await checkSize(page.locator('.visual'), true)
+  } finally {
+    await page.goto('/c/new') // restore the app before the authenticated cleanup
+    await request(page, 'DELETE', `/chats/${chatId}`)
+  }
+})
+
 test('public visual wrapper supports interaction and blocks generated code from app storage and network', async ({ page }) => {
   await openApp(page)
   const attempted: string[] = []
