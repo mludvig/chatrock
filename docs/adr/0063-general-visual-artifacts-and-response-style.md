@@ -81,3 +81,15 @@ Alternatives considered:
   existing recovery and transcript contract with fewer moving parts.
 - **Keep photo generation in the active tool set:** rejected for current needs.
   Historical generated images remain available.
+
+## Retirement follow-up, October 2026
+
+The operator confirmed that historical generated images need no dedicated
+compatibility support. Remove the old tool's image label, icon and auto-expansion
+from `ToolCallPill`. This supersedes the historical-image compatibility commitment
+above. Keep generic attachment and screenshot handling, which also serves uploads,
+project files and browser tools. Existing stored records and S3 objects need no
+migration or deletion to remove the feature.
+
+The original introduction and shared code were audited against git history:
+see `docs/research/visual-artifacts-2026-10-22/sd-retirement.md`.

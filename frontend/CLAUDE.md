@@ -130,6 +130,6 @@ write them from Terraform outputs. Do not commit tokens, auth state, or credenti
 
 ## Visual responses
 
-Response style defaults to Concise and visual, with a Standard override in preferences and chat/project settings. `VisualCard` renders typed `tool_result.visual` metadata using the shared nested iframe wrapper. The same field arrives over WebSocket and HTTP. Numeric charts include an exact data table. Expand uses the normal Dialog; Download produces SVG or sandboxed HTML; Replay restarts interactive content. Historical generated images remain renderable after the Stability tool is retired.
+Response style defaults to Concise and visual, with a Standard override in preferences and chat/project settings. `VisualCard` renders typed `tool_result.visual` metadata using the shared nested iframe wrapper. The same field arrives over WebSocket and HTTP. Numeric charts include an exact data table. Expand uses the normal Dialog; Download produces SVG or sandboxed HTML; Replay restarts interactive content. The retired Stability tool has no dedicated UI handling; uploads and browser screenshots use the existing generic renderers.
 
 Successful visuals are automatically visible inline. HTML reports its content height through a bounded, source/channel-checked relay; SVG height follows its viewBox and container width. No same-origin permission is added. Shared pages and downloaded HTML use the same sizing logic. ShareTab offers HTML and Markdown exports; clean Markdown keeps summaries/chart data, and including tool calls retains visual source. See ADR 0064.

@@ -117,7 +117,7 @@ Screenshot images flow through the same live/persist bifurcation `bedrock.ts` us
 
 The serialized artifact is capped at 20 KB (or the smaller remaining per-call budget). `ToolResult.visual` becomes `ToolResultBlock.visual` and a first-class `tool_result` frame field. It is UI metadata; providers replay only the short text result. The stored source survives refetch, fork, share, and export. SVG/HTML render in nested sandboxed frames with restrictive CSP, never in the application DOM. See ADR 0063 and `shared/visuals.ts`.
 
-The default response style is concise and visual, from `prompts/concise-visual.txt`. `responseStyle: 'standard'` disables automatic style guidance; explicit visual requests can still use the tool. Numeric chart generation needs no specialist call. Stability generation is retired; historical images still render.
+The default response style is concise and visual, from `prompts/concise-visual.txt`. `responseStyle: 'standard'` disables automatic style guidance; explicit visual requests can still use the tool. Numeric chart generation needs no specialist call. Stability generation and its dedicated UI handling are removed; generic attachment and browser screenshot handling remain.
 
 ## Search history
 

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown, faChevronRight, faGlobe, faLink, faSpinner, faCircleCheck,
-  faCircleXmark, faBrain, faFile, faComments, faMagnifyingGlass, faMemory, faImage,
+  faCircleXmark, faBrain, faFile, faComments, faMagnifyingGlass, faMemory,
 } from '@fortawesome/free-solid-svg-icons'
 import type { Step } from '../api/http'
 import { useChatStore } from '../store/chatStore'
@@ -78,9 +78,7 @@ function SearchHistoryResultCard({ r }: { r: SearchHistoryResult }) {
 // ── Tool call display ─────────────────────────────────────────────────────────
 
 export function ToolCallPill({ step, progressText }: { step: Extract<Step, { kind: 'tool' }>; streaming?: boolean; progressText?: string }) {
-  // generate_image's whole point IS the image — unlike an incidental browser screenshot,
-  // it shouldn't be hidden behind a click.
-  const [expanded, setExpanded] = useState(() => step.name === 'generate_image')
+  const [expanded, setExpanded] = useState(false)
   const { projectFilesById, chats } = useChatStore()
   const pending = step.result === undefined
   const hasResults = !!step.searchResults?.length
@@ -103,8 +101,6 @@ export function ToolCallPill({ step, progressText }: { step: Extract<Step, { kin
     ? `Page: ${safeInput(step.input, 'url')}`
     : step.name === 'browse_web'
     ? `Browse: ${firstBrowserUrl(step.input)}`
-    : step.name === 'generate_image'
-    ? `Image: ${safeInput(step.input, 'prompt')}`
     : step.name === 'create_visual'
     ? `Visual: ${safeInput(step.input, 'title')}`
     : step.name === 'run_research_task'
@@ -129,7 +125,7 @@ export function ToolCallPill({ step, progressText }: { step: Extract<Step, { kin
   return (
     <div className={`tool-pill${step.isError ? ' error' : pending ? ' pending' : ''}`}>
       <button className="tool-pill-header" onClick={() => !pending && setExpanded(e => !e)}>
-        <FontAwesomeIcon icon={isMemoryTool ? faMemory : step.name === 'search_history' ? faMagnifyingGlass : step.name === 'generate_image' ? faImage : faGlobe} className="tool-icon" />
+        <FontAwesomeIcon icon={isMemoryTool ? faMemory : step.name === 'search_history' ? faMagnifyingGlass : faGlobe} className="tool-icon" />
         <span className="tool-label">{label}</span>
         <FontAwesomeIcon icon={icon} className="tool-status" spin={pending} />
         {!pending && (
