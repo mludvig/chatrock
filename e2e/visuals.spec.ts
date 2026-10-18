@@ -6,16 +6,14 @@ import { renderChart } from '../backend/src/lib/visuals/chart'
 import { renderHtml, type RawBubble } from '../backend/src/lib/transcript'
 import { visualDocument, validateVisual, VISUAL_HOST_SCRIPT, type VisualArtifact } from '../shared/visuals'
 
-// Model inference is tested in <local-profile>. These recorded real results exercise the
-// deployed client with test credentials without running paid inference in <local-profile>.
-const generated = JSON.parse(readFileSync(join(__dirname, '../docs/research/visual-artifacts-2026-10-22/results.json'), 'utf8')) as Array<{ visual: VisualArtifact }>
-const pipeline = JSON.parse(readFileSync(join(__dirname, '../docs/research/visual-artifacts-2026-10-22/full-pipeline.json'), 'utf8')) as { events: Array<{ type: string; visual?: VisualArtifact }> }
+// Recorded model outputs exercise the deployed client with test credentials
+// without running paid inference in the deployment account.
+const recorded = JSON.parse(readFileSync(join(__dirname, 'fixtures/visual-artifacts.json'), 'utf8')) as VisualArtifact[]
 const visuals = [
   ...(['bar', 'line', 'pie'] as const).map(type => renderChart(`${type} chart`, {
     type, labels: ['Q1', 'Q2', 'Q3', 'Q4'], series: [{ name: 'Revenue', values: [10, 15, 12, 20] }], unit: 'USD thousands',
   })),
-  ...generated.map(r => validateVisual(r.visual)),
-  validateVisual(pipeline.events.find(e => e.type === 'tool_result' && e.visual)!.visual),
+  ...recorded.map(visual => validateVisual(visual)),
 ]
 
 test('response style persists and chat overrides remain available', async ({ page }) => {

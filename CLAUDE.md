@@ -29,6 +29,13 @@ Rebuilds are skipped automatically when sources are not newer than artifacts. Us
 
 Local settings live in the gitignored root `.env`, which `deploy.sh` sources: `AWS_PROFILE`, `AWS_REGION` (the deployment's home region — the terraform provider reads it from the environment; nothing in the repo hard-codes it), plus the e2e variables below.
 
+Never commit real profile names, account IDs, private deployment domains or other
+environment-specific identifying information. This includes code comments, tests,
+documentation, generated files and commit messages. Use generic placeholders and
+keep actual values in ignored local configuration. When amending or filtering
+history, preserve both original author and committer dates.
+Obviously fake example values are acceptable; do not redact them unnecessarily.
+
 ### Backend
 
 ```bash

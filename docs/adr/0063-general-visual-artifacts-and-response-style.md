@@ -91,5 +91,6 @@ above. Keep generic attachment and screenshot handling, which also serves upload
 project files and browser tools. Existing stored records and S3 objects need no
 migration or deletion to remove the feature.
 
-The original introduction and shared code were audited against git history:
-see `docs/research/visual-artifacts-2026-10-22/sd-retirement.md`.
+The original changes were audited against git history: `c576be7` introduced the
+backend, `83a05e9` the frontend, `ab87fec` settings propagation, and `aece519`
+automatic expansion. Shared Bedrock authentication still serves the chat providers.
