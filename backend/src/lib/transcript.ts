@@ -2,6 +2,7 @@ import { marked } from 'marked'
 import { signCloudFrontUrl } from './attachments'
 import type { Block } from './llm/blocks'
 import type { TokenUsage } from './bedrock'
+import { visualDocument, type VisualArtifact } from '../../../shared/visuals'
 
 // ── Display types (safe to send to clients / render publicly — no signatures / redactedContent) ──
 //
@@ -25,6 +26,7 @@ export interface ToolStep {
   result?: string
   isError?: boolean
   screenshotUrls?: string[]
+  visual?: VisualArtifact
 }
 export interface AttachmentStep {
   kind: 'attachment'
@@ -223,6 +225,7 @@ export function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
             step.result = textEntries[0]?.text ?? ''
           }
           step.isError = block.isError
+          if (!block.isError && block.visual) step.visual = block.visual
         }
       }
     } else {
@@ -327,7 +330,7 @@ export function filterSteps(bubbles: RawBubble[], opts: IncludeOpts): RawBubble[
       // already suppresses this case, but the share/export renderers didn't, leaving a
       // clickable disclosure that reveals nothing.
       if (s.kind === 'thinking') return opts.includeThinking && s.text.trim().length > 0
-      if (s.kind === 'tool') return opts.includeTools
+      if (s.kind === 'tool') return !!s.visual || opts.includeTools
       return true
     }),
   }))
@@ -347,6 +350,11 @@ function stepToMarkdown(step: Step): string {
       // Blockquote keeps thinking visually distinct without breaking downstream parsers.
       return `> **Thinking**\n>\n${step.text.trim().split('\n').map(l => `> ${l}`).join('\n')}`
     case 'tool': {
+      if (step.visual) {
+        const v = step.visual
+        const fence = '`'.repeat(Math.max(3, ...Array.from(v.source.matchAll(/`+/g), m => m[0].length + 1)))
+        return `### ${v.title}\n\n${v.summary}\n\n${fence}${v.format}\n${v.source}\n${fence}`
+      }
       const parts: string[] = [`**Tool call: \`${step.name}\`**`]
       let input = step.input
       try { input = JSON.stringify(JSON.parse(step.input), null, 2) } catch { /* leave as-is */ }
@@ -401,6 +409,11 @@ function stepToHtml(step: Step): string {
     case 'thinking':
       return `<details class="thinking"><summary>Thinking</summary><div class="md">${md(step.text)}</div></details>`
     case 'tool': {
+      if (step.visual) {
+        const v = step.visual
+        return `<section class="visual"><h3>${escapeHtml(v.title)}</h3><p>${escapeHtml(v.summary)}</p>` +
+          `<iframe title="${escapeHtml(v.title)}" sandbox="${v.format === 'html' ? 'allow-scripts' : ''}" style="width:100%;height:${v.height}px;border:0" srcdoc="${escapeHtml(visualDocument(v))}"></iframe></section>`
+      }
       let input = step.input
       try { input = JSON.stringify(JSON.parse(step.input), null, 2) } catch { /* leave as-is */ }
       const shots = (step.screenshotUrls ?? [])

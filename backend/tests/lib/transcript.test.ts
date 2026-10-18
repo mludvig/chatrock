@@ -1,8 +1,26 @@
 import { filterSteps, renderMarkdown, renderHtml, groupTurnsToBubbles, type RawBubble, type TurnRow } from '../../src/lib/transcript'
+import { renderChart } from '../../src/lib/visuals/chart'
 
 const bubble = (overrides: Partial<RawBubble>): RawBubble => ({
   msgId: 'm1', parentId: null, role: 'assistant', steps: [], model: 'claude', createdAt: 't',
   ...overrides,
+})
+
+test('visuals survive durable grouping and clean share/export without exposing executable markup', () => {
+  const visual = renderChart('Revenue', { type: 'bar', labels: ['Q1', 'Q2'], series: [{ name: 'USD', values: [10, 20] }] })
+  const base = { PK: 'CHAT#c', SK: 'MSG#x', model: 'small', createdAt: 't', turnIndex: 0, responseId: 'r' }
+  const rows: TurnRow[] = [
+    { ...base, msgId: 'a', parentId: null, role: 'assistant', blocks: [{ kind: 'tool_call', callId: 'v', name: 'create_visual', input: { title: 'Revenue' } }] },
+    { ...base, msgId: 'b', parentId: 'a', role: 'user', blocks: [{ kind: 'tool_result', callId: 'v', entries: [{ kind: 'text', text: 'Created' }], isError: false, visual }] },
+  ]
+  const bubbles = filterSteps(groupTurnsToBubbles(rows).bubbles, { includeTools: false, includeThinking: false })
+  const step = bubbles[0].steps[0]
+  expect(step.kind === 'tool' && step.visual).toEqual(visual)
+  expect(renderMarkdown(bubbles, { title: 'T' })).toContain('```svg')
+  const html = renderHtml(bubbles, { title: 'T' })
+  expect(html).toContain('sandbox=""')
+  expect(html).toContain('srcdoc=')
+  expect(html).not.toContain(visual.source)
 })
 
 describe('filterSteps', () => {

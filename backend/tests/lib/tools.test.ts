@@ -4,7 +4,7 @@ import * as projectContextLib from '../../src/lib/projectContext'
 import * as searchLib from '../../src/lib/search'
 import * as gatewayLib from '../../src/lib/agentcore/gateway'
 import * as browserLib from '../../src/lib/agentcore/browser'
-import * as imageGenToolLib from '../../src/lib/imageGen/tool'
+import * as visualToolLib from '../../src/lib/visuals/tool'
 
 // Mock both memory tool executors so we can spy on them without real dynamo calls
 jest.mock('../../src/lib/memory', () => ({
@@ -34,10 +34,10 @@ jest.mock('../../src/lib/agentcore/browser', () => ({
   runBrowserSteps: jest.fn(),
 }))
 
-// Mock the generate_image tool executor so dispatch tests don't hit a real Bedrock call
-jest.mock('../../src/lib/imageGen/tool', () => ({
-  ...jest.requireActual('../../src/lib/imageGen/tool'),
-  executeGenerateImageTool: jest.fn(),
+// Mock the create_visual tool executor so dispatch tests don't hit a real Bedrock call
+jest.mock('../../src/lib/visuals/tool', () => ({
+  ...jest.requireActual('../../src/lib/visuals/tool'),
+  executeCreateVisualTool: jest.fn(),
 }))
 
 const mockExecuteMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>).executeMemoryTool
@@ -47,7 +47,7 @@ const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof 
 const mockExecuteSearchHistoryTool = (searchLib as jest.Mocked<typeof searchLib>).executeSearchHistoryTool
 const mockCallGatewayTool = (gatewayLib as jest.Mocked<typeof gatewayLib>).callGatewayTool
 const mockRunBrowserSteps = (browserLib as jest.Mocked<typeof browserLib>).runBrowserSteps
-const mockExecuteGenerateImageTool = (imageGenToolLib as jest.Mocked<typeof imageGenToolLib>).executeGenerateImageTool
+const mockExecuteCreateVisualTool = (visualToolLib as jest.Mocked<typeof visualToolLib>).executeCreateVisualTool
 
 const TEST_CTX = { sub: 'test-user' }
 
@@ -711,23 +711,23 @@ describe('take_screenshot dispatch', () => {
   })
 })
 
-// ── generate_image dispatch ───────────────────────────────────────────────────
+// ── create_visual dispatch ───────────────────────────────────────────────────
 
-describe('generate_image dispatch', () => {
+describe('create_visual dispatch', () => {
   beforeEach(() => {
-    mockExecuteGenerateImageTool.mockClear()
+    mockExecuteCreateVisualTool.mockClear()
   })
 
-  it('dispatches to executeGenerateImageTool', async () => {
-    mockExecuteGenerateImageTool.mockResolvedValueOnce({
-      entries: [{ kind: 'image', format: 'png', bytes: Buffer.from('img') }],
+  it('dispatches to executeCreateVisualTool', async () => {
+    mockExecuteCreateVisualTool.mockResolvedValueOnce({
+      entries: [{ kind: 'text', text: 'Created a visual.' }],
       isError: false,
     })
 
-    const result = await executeTool('generate_image', { prompt: 'a red panda skateboarding' }, { ...TEST_CTX, chatId: 'chat-1' })
+    const result = await executeTool('create_visual', { title: 'Example', brief: 'Draw a flow diagram' }, { ...TEST_CTX, chatId: 'chat-1' })
 
-    expect(mockExecuteGenerateImageTool).toHaveBeenCalledWith(
-      { prompt: 'a red panda skateboarding' },
+    expect(mockExecuteCreateVisualTool).toHaveBeenCalledWith(
+      { title: 'Example', brief: 'Draw a flow diagram' },
       { ...TEST_CTX, chatId: 'chat-1' },
     )
     expect(result.isError).toBe(false)

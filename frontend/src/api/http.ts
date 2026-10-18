@@ -79,10 +79,13 @@ export interface TokenUsage {
   cacheWriteInputTokens?: number
 }
 
+export type { VisualArtifact } from '../../../shared/visuals'
+import type { VisualArtifact } from '../../../shared/visuals'
+
 export type Step =
   | { kind: 'thinking'; text: string }
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }>; searchHistoryResults?: Array<{ kind: 'chat' | 'file'; id: string; title: string; reason: string; projectId?: string }>; screenshotUrls?: string[] }
+  | { kind: 'tool'; toolUseId: string; name: string; input: string; result?: string; isError?: boolean; searchResults?: Array<{ title: string; url: string; description: string }>; searchHistoryResults?: Array<{ kind: 'chat' | 'file'; id: string; title: string; reason: string; projectId?: string }>; screenshotUrls?: string[]; visual?: VisualArtifact }
   | { kind: 'attachment'; attachmentKind: 'image' | 'document'; filename: string; contentType: string; url: string; s3Key: string; mode?: 'standard' | 'rich' }
 
 export interface Message {
@@ -133,7 +136,7 @@ export interface ModelSettings {
   browserExtendedEnabled?: boolean
   memoryEnabled?: boolean
   searchEnabled?: boolean
-  imageGenerationEnabled?: boolean
+  responseStyle?: 'concise-visual' | 'standard'
   answerLength?: 'default' | 'short' | 'extensive'
   injectCurrentDate?: boolean
   showTokenStats?: boolean
@@ -182,6 +185,7 @@ export interface UserPreferences {
   persona?: string
   injectCurrentDate?: boolean
   answerLength?: 'default' | 'short' | 'extensive'
+  responseStyle?: 'concise-visual' | 'standard'
   defaultModel?: string
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearchEnabled?: boolean
@@ -239,9 +243,7 @@ export function migrateSettings(prev: ModelSettings, caps: ModelCapabilities): M
     browserExtendedEnabled: prev.browserExtendedEnabled ?? legacyBrowserToolEnabled ?? false,
     memoryEnabled: prev.memoryEnabled ?? true,
     searchEnabled: prev.searchEnabled ?? true,
-    // Opt-in (unlike the other tools above) — costs money per call, so carry the user's
-    // choice forward rather than defaulting it on.
-    ...(prev.imageGenerationEnabled !== undefined ? { imageGenerationEnabled: prev.imageGenerationEnabled } : {}),
+    ...(prev.responseStyle !== undefined ? { responseStyle: prev.responseStyle } : {}),
     ...(prev.showTokenStats !== undefined ? { showTokenStats: prev.showTokenStats } : {}),
   }
 }

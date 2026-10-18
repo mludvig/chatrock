@@ -536,7 +536,7 @@ test('final forced call itself returns tool_use with no text: toolUse stripped, 
 
 // ── F2: webSearchEnabled:false passes no toolConfig to Bedrock ──────────────────────
 
-test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the Bedrock request', async () => {
+test('f2: other tools disabled still offers the general visual tool', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -552,7 +552,7 @@ test('f2: webSearchEnabled:false, memoryEnabled:false sends no toolConfig in the
 
   // Bedrock send() was called once; the command input must have no toolConfig
   const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
-  expect(cmdInput.toolConfig).toBeUndefined()
+  expect((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools.map(t => t.toolSpec?.name)).toEqual(['create_visual'])
 })
 
 test('f2: webSearchEnabled:true (default) sends toolConfig to Bedrock', async () => {
@@ -787,7 +787,7 @@ test('ctx: loop threads ctx into executeTool call — 3rd arg is {sub}', async (
   // browserAvailable the tool pool always attaches (see loop.ts's runOneTool).
   expect(mockExecuteTool).toHaveBeenCalledTimes(1)
   const [, , ctxArg] = mockExecuteTool.mock.calls[0]
-  expect(ctxArg).toEqual({ ...toolCtx, modelId: 'test-model', browserAvailable: true, onProgress: expect.any(Function) })
+  expect(ctxArg).toEqual({ ...toolCtx, modelId: 'test-model', browserAvailable: true, onProgress: expect.any(Function), visualMaxBytes: 28000 })
 })
 
 test('memoryChanged: manage_memory tool success → memoryChanged chunk yielded', async () => {
@@ -958,7 +958,7 @@ test('regression: converseStream heals a dangling tool_use tail in the replayed 
 
 // ── Confirm non-regression: clean history + tools disabled still sends no toolConfig ──
 
-test('part1c: clean history with webSearchEnabled+memory disabled still sends no toolConfig', async () => {
+test('part1c: clean history with other tools disabled offers only the general visual tool', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([
     { contentBlockStart: { contentBlockIndex: 0, start: {} } },
     { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
@@ -976,7 +976,7 @@ test('part1c: clean history with webSearchEnabled+memory disabled still sends no
 
   // No tool blocks in history → no toolConfig needed (same as before)
   const cmdInput = getMockSend().mock.calls[0][0].input as Record<string, unknown>
-  expect(cmdInput.toolConfig).toBeUndefined()
+  expect((cmdInput.toolConfig as { tools: Array<{ toolSpec?: { name: string } }> }).tools.map(t => t.toolSpec?.name)).toEqual(['create_visual'])
 })
 
 // ── Test 5: existing UI chunks still flow through ────────────────────────────

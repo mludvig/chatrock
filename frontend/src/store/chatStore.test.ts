@@ -16,6 +16,17 @@ import type { Message } from '../api/http'
 
 const TEST_CHAT_ID = 'chat1'
 
+it('live visual metadata survives stream finalization', () => {
+  const store = useChatStore.getState()
+  const visual = { title: 'Flow', summary: 'A to B', format: 'svg' as const, source: '<svg></svg>', height: 300 }
+  store.startStream(TEST_CHAT_ID)
+  store.addToolCall(TEST_CHAT_ID, { toolUseId: 'visual-1', name: 'create_visual', input: '{}' })
+  store.resolveToolCall(TEST_CHAT_ID, 'visual-1', 'Created', false, undefined, visual)
+  const step = useChatStore.getState().streamingByChat[TEST_CHAT_ID]!.steps[0]
+  expect(step.kind === 'tool' && step.visual).toEqual(visual)
+  expect(store.finalizeStream(TEST_CHAT_ID)!.steps[0]).toMatchObject({ visual })
+})
+
 // Reset store state between tests
 beforeEach(() => {
   act(() => {

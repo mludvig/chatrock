@@ -8,6 +8,7 @@ import {
 import type { Step } from '../api/http'
 import { useChatStore } from '../store/chatStore'
 import type { SearchResult, SearchHistoryResult } from '../lib/toolResults'
+import VisualCard from './VisualCard'
 
 // The renderers for one step of a turn — a thinking block or a tool call — used by
 // MessageBubble to render a turn's steps, including run_research_task calls: Deep Research
@@ -104,6 +105,8 @@ export function ToolCallPill({ step, progressText }: { step: Extract<Step, { kin
     ? `Browse: ${firstBrowserUrl(step.input)}`
     : step.name === 'generate_image'
     ? `Image: ${safeInput(step.input, 'prompt')}`
+    : step.name === 'create_visual'
+    ? `Visual: ${safeInput(step.input, 'title')}`
     : step.name === 'run_research_task'
     ? `Research: ${safeInput(step.input, 'question')}`
     : step.name === 'read_project_file'
@@ -122,6 +125,7 @@ export function ToolCallPill({ step, progressText }: { step: Extract<Step, { kin
       })()
     : step.name
 
+  if (step.visual && !step.isError) return <VisualCard visual={step.visual} />
   return (
     <div className={`tool-pill${step.isError ? ' error' : pending ? ' pending' : ''}`}>
       <button className="tool-pill-header" onClick={() => !pending && setExpanded(e => !e)}>

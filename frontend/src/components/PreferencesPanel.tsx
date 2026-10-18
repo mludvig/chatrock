@@ -133,6 +133,14 @@ export default function PreferencesPanel() {
 
         </details>
         <EffortRow
+          label="Response style"
+          options={['concise-visual', 'standard'] as const}
+          value={prefs.responseStyle ?? 'concise-visual'}
+          onChange={v => patch({ responseStyle: v })}
+          format={s => s === 'concise-visual' ? 'Concise and visual' : 'Standard'}
+          title="Lead with the result. Use charts and diagrams when they help. Explicit requests always take priority."
+        />
+        <EffortRow
           label="Answer length"
           options={['default', 'short', 'extensive'] as const}
           value={prefs.answerLength ?? 'default'}

@@ -24,6 +24,13 @@ export default function ModelTuningPanel({ settings, onChange }: Props) {
       <div className="pref-label">Model settings</div>
 
       <div className="model-setting-row model-setting-row--inline">
+        <label className="setting-label">Response style</label>
+        <select className="model-select" aria-label="Response style" value={settings.responseStyle ?? 'concise-visual'} onChange={e => set({ responseStyle: e.target.value as ModelSettings['responseStyle'] })}>
+          <option value="concise-visual">Concise and visual</option>
+          <option value="standard">Standard</option>
+        </select>
+      </div>
+      <div className="model-setting-row model-setting-row--inline">
         <label className="setting-label">
           <FontAwesomeIcon icon={faRulerHorizontal} />
           <span>Answer length</span>

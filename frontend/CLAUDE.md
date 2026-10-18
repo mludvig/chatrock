@@ -127,3 +127,7 @@ and Personal memory exposes failed reads instead of displaying a false empty sta
 
 Local development uses VITE variables from `frontend/.deploy-env`; deployments
 write them from Terraform outputs. Do not commit tokens, auth state, or credentials.
+
+## Visual responses
+
+Response style defaults to Concise and visual, with a Standard override in preferences and chat/project settings. `VisualCard` renders typed `tool_result.visual` metadata using the shared nested iframe wrapper. The same field arrives over WebSocket and HTTP. Numeric charts include an exact data table. Expand uses the normal Dialog; Download produces SVG or sandboxed HTML; Replay restarts interactive content. Historical generated images remain renderable after the Stability tool is retired.

@@ -1,4 +1,7 @@
-import { assembleSystemPrompt } from '../../src/lib/promptAssembly'
+import { assembleSystemPrompt as assemble, type AssembleInput } from '../../src/lib/promptAssembly'
+
+// These tests isolate the pre-existing prompt fragments from the visual default.
+const assembleSystemPrompt = (input: AssembleInput) => assemble({ ...input, prefs: { responseStyle: 'standard', ...input.prefs } })
 
 // ── assembleSystemPrompt ──────────────────────────────────────────────────────
 
@@ -737,4 +740,13 @@ test('researchDepth absent → deep-research section absent', () => {
     memories: [],
   })
   expect(result).not.toContain('run_research_task')
+})
+
+
+test('concise visual is the default, with explicit instructions taking priority', () => {
+  const prompt = assemble({ basePrompt: '', prefs: {}, memories: [] })
+  expect(prompt).toContain('Response style: concise and visual')
+  expect(prompt).toContain('create_visual')
+  expect(prompt).toContain('Respect the user')
+  expect(assemble({ basePrompt: '', prefs: { responseStyle: 'standard' }, memories: [] })).toBe('')
 })

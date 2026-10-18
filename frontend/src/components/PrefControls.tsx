@@ -34,7 +34,7 @@ export function EffortRow<T extends string>({ label, options, value, onChange, f
     <div className="pref-section">
       <div className="pref-row">
         <span className="pref-row-label" title={title}>{label}</span>
-        <select className="model-select" value={value} onChange={e => onChange(e.target.value as T)} title={title}>
+        <select className="model-select" aria-label={label} value={value} onChange={e => onChange(e.target.value as T)} title={title}>
           {options.map(opt => (
             <option key={opt} value={opt}>{format ? format(opt) : opt.charAt(0).toUpperCase() + opt.slice(1)}</option>
           ))}

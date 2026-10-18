@@ -285,7 +285,7 @@ const runSend = async (
     browserExtendedEnabled: modelSettings.browserExtendedEnabled,
     memoryEnabled:          modelSettings.memoryEnabled,
     searchEnabled:          modelSettings.searchEnabled,
-    imageGenerationEnabled: modelSettings.imageGenerationEnabled,
+    responseStyle:          modelSettings.responseStyle,
     answerLength:           modelSettings.answerLength as UserPreferences['answerLength'],
     injectCurrentDate:      modelSettings.injectCurrentDate,
     researchDepth:          modelSettings.researchDepth,
@@ -303,7 +303,7 @@ const runSend = async (
     browserExtendedEnabled: effectivePrefs.browserExtendedEnabled,
     memoryEnabled:          effectivePrefs.memoryEnabled,
     searchEnabled:          effectivePrefs.searchEnabled,
-    imageGenerationEnabled: effectivePrefs.imageGenerationEnabled,
+    responseStyle:          effectivePrefs.responseStyle,
     researchDepth:          effectivePrefs.researchDepth,
   }
 

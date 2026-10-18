@@ -4,9 +4,9 @@ import { executeProjectReadFileTool, executeProjectReadChatTool } from './projec
 import { executeSearchHistoryTool } from './search'
 import { callGatewayTool } from './agentcore/gateway'
 import type { BrowserStep } from './agentcore/browser'
-import { GENERATE_IMAGE_TOOL, executeGenerateImageTool } from './imageGen/tool'
+import { CREATE_VISUAL_TOOL, executeCreateVisualTool } from './visuals/tool'
 
-export { GENERATE_IMAGE_TOOL }
+export { CREATE_VISUAL_TOOL }
 
 function textResult(text: string, isError = false): ToolResult {
   return { entries: [{ kind: 'text', text }], isError }
@@ -49,6 +49,8 @@ export interface ToolContext {
   // it just built — a failed or empty web_search/web_fetch only advises the browser fallback
   // when the model can actually call it.
   browserAvailable?: boolean
+  // Share the aggregate tool-result budget with bounded inline visual sources.
+  visualMaxBytes?: number
 }
 
 // ── Jina tool definitions for Bedrock ────────────────────────────────────────
@@ -405,8 +407,8 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     if (name === 'get_rendered_page') {
       return await executeGetRenderedPageTool(input, ctx)
     }
-    if (name === 'generate_image') {
-      return await executeGenerateImageTool(input, ctx)
+    if (name === 'create_visual') {
+      return await executeCreateVisualTool(input, ctx)
     }
     // The model sometimes tries to call a browse_web step name (e.g. "browser_take_screenshot")
     // as if it were its own top-level tool — give it a self-correcting hint instead of a bare

@@ -16,6 +16,7 @@ export default defineConfig({
     baseURL: process.env.E2E_BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    ...(process.env.E2E_PROXY ? { proxy: { server: process.env.E2E_PROXY } } : {}),
   },
 
   projects: [

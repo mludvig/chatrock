@@ -1369,7 +1369,7 @@ test('prefs2: client modelSettings override user preference defaults', async () 
   expect(opts.settings?.webSearchEnabled).toBe(true)
 })
 
-test('prefs2b: client modelSettings.imageGenerationEnabled flows through to converseStream (regression — was silently dropped by the chatPrefs/effectiveModelSettings field allowlist)', async () => {
+test('prefs2b: client modelSettings.responseStyle flows through to converseStream (regression — was silently dropped by the chatPrefs/effectiveModelSettings field allowlist)', async () => {
   prefsBase()
   mockDynamo.getUserPrefs.mockResolvedValue({})
 
@@ -1379,10 +1379,10 @@ test('prefs2b: client modelSettings.imageGenerationEnabled flows through to conv
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
-  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { imageGenerationEnabled: true } }))
+  await buildHandler(mockPost)(makeEvent({ chatId: 'c1', content: 'Q', model: MODEL, systemPrompt: '', modelSettings: { responseStyle: 'standard' } }))
 
   const [, , , opts] = mockBedrock.converseStream.mock.calls[0]
-  expect(opts.settings?.imageGenerationEnabled).toBe(true)
+  expect(opts.settings?.responseStyle).toBe('standard')
 })
 
 test('prefs3: getUserPrefs failure propagates as a fatal error — converseStream not called', async () => {

@@ -684,7 +684,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         updateToolCallInput(evt.chatId, evt.toolUseId, evt.input)
       } else if (evt.type === 'tool_result') {
         bumpIdleTimer(evt.chatId)
-        resolveToolCall(evt.chatId, evt.toolUseId, evt.content ?? '', evt.isError, evt.screenshotUrls)
+        resolveToolCall(evt.chatId, evt.toolUseId, evt.content ?? '', evt.isError, evt.screenshotUrls, evt.visual)
       } else if (evt.type === 'sub_agent_progress') {
         bumpIdleTimer(evt.chatId)
         if (evt.chatId === chatIdRef.current) setSubAgentProgress(prev => ({ ...prev, [evt.toolUseId]: evt.text }))

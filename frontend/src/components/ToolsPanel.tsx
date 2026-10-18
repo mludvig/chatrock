@@ -1,5 +1,5 @@
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faGlobe, faMemory, faMagnifyingGlass, faClock, faImage } from '@fortawesome/free-solid-svg-icons'
+import { faGlobe, faMemory, faMagnifyingGlass, faClock } from '@fortawesome/free-solid-svg-icons'
 import type { ModelSettings } from '../api/http'
 
 interface Props {
@@ -86,19 +86,6 @@ export default function ToolsPanel({ settings, onChange, hideMemory }: Props) {
           title="Toggle search history"
         >
           {settings.searchEnabled !== false ? 'On' : 'Off'}
-        </button>
-      </div>
-      <div className="model-setting-row model-setting-row--inline">
-        <label className="setting-label" title="Toggle the generate_image tool (Stability AI via Bedrock). Off by default — each call costs money. When on, the model can generate images from a text description mid-conversation.">
-          <FontAwesomeIcon icon={faImage} />
-          <span>Image generation</span>
-        </label>
-        <button
-          className={`toggle-btn${settings.imageGenerationEnabled === true ? ' active' : ''}`}
-          onClick={() => set({ imageGenerationEnabled: settings.imageGenerationEnabled === true ? false : true })}
-          title="Toggle image generation"
-        >
-          {settings.imageGenerationEnabled === true ? 'On' : 'Off'}
         </button>
       </div>
       <div className="model-setting-row model-setting-row--inline">

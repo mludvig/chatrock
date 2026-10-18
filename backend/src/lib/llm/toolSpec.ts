@@ -3,6 +3,8 @@
 //   Converse: { toolSpec: { name, description, inputSchema: { json } } } + trailing cachePoint
 //   Responses: { type: 'function', name, description, parameters, strict: false }
 
+import type { VisualArtifact } from '../../../../shared/visuals'
+
 export interface ToolSpec {
   name: string
   description: string
@@ -21,4 +23,5 @@ export type ToolResultEntry =
 export interface ToolResult {
   entries: ToolResultEntry[]
   isError: boolean
+  visual?: VisualArtifact
 }

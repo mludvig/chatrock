@@ -296,7 +296,8 @@ async function* streamRounds(
       // than yielded directly — runOneTool runs concurrently with the pool loop below, which
       // is the only place actually allowed to yield.
       const onProgress = (text: string) => { progressQueue.push({ type: 'sub_agent_progress', toolUseId: tu.callId, name: tu.name, text }) }
-      const toolResult = await executeTool(tu.name, input, { ...(ctx ?? { sub: '' }), onProgress, modelId, browserAvailable })
+      const toolResult = await executeTool(tu.name, input, { ...(ctx ?? { sub: '' }), onProgress, modelId, browserAvailable,
+        deadlineAt: deadlineAt ?? ctx?.deadlineAt, visualMaxBytes: Math.max(0, perCallCap - 2000) })
       const entries = toolResult.entries
       const textEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'text' }> => e.kind === 'text')
       const imageEntries = entries.filter((e): e is Extract<typeof entries[number], { kind: 'image' }> => e.kind === 'image')
@@ -316,10 +317,13 @@ async function* streamRounds(
         // one entry per step — join them all, not just the first, or later steps' content
         // (e.g. the actual snapshot YAML) silently disappears.
         const rawContent = textEntries.map(t => t.text).join('\n\n')
-        const cappedContent = capToolResultText(rawContent, perCallCap)
-        const block: Block = { kind: 'tool_result', callId: tu.callId, entries: [{ kind: 'text', text: cappedContent }], isError }
+        const visualBytes = toolResult.visual ? Buffer.byteLength(JSON.stringify(toolResult.visual), 'utf8') : 0
+        const cappedContent = capToolResultText(rawContent, Math.max(0, perCallCap - visualBytes))
+        const block: Block = { kind: 'tool_result', callId: tu.callId, entries: [{ kind: 'text', text: cappedContent }], isError,
+          ...(toolResult.visual ? { visual: toolResult.visual } : {}) }
         return {
-          toolResultChunk: { type: 'tool_result', toolUseId: tu.callId, name: tu.name, content: cappedContent, isError },
+          toolResultChunk: { type: 'tool_result', toolUseId: tu.callId, name: tu.name, content: cappedContent, isError,
+            ...(toolResult.visual ? { visual: toolResult.visual } : {}) },
           memoryChunk,
           live: block,
           persist: block,

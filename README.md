@@ -69,8 +69,9 @@ one deployment in one AWS account, with an opinionated deploy script.
 - **A real cloud browser** (Amazon Bedrock AgentCore Browser) handles JavaScript-heavy
   pages. It can take screenshots and read rendered pages. Optionally, it can run scripted
   multi-step sessions that navigate, click and type.
-- **Image generation** uses Stability AI Stable Image Ultra on Bedrock. It is off by
-  default, because every call costs money.
+- **Visual responses** draw charts, org charts, flow diagrams, and interactive
+  explanations inline. Numeric charts use exact data; complex visuals use a configured
+  specialist model. Choose Concise and visual or Standard in preferences.
 
 ### Memory and knowledge
 
@@ -168,7 +169,7 @@ from display text.
 | `web_fetch` | Fetch a page as clean text (Jina Reader) | on |
 | `take_screenshot`, `get_rendered_page` | Open one URL in a real cloud browser | on |
 | `browse_web` | Scripted multi-step browser session (navigate, click, type; up to 15 steps) | off |
-| `generate_image` | Text-to-image (Stability AI on Bedrock) | off (costs per call) |
+| `create_visual` | SVG charts, diagrams and interactive HTML | on (specialist calls use tokens) |
 | `manage_memory` | Remember, update or forget a personal fact | on, with memory |
 | `manage_project_memory` | The same, for project facts | project chats |
 | `read_project_file`, `read_project_chat` | Read a project file or sibling chat, as a summary or in full | project chats |
@@ -324,7 +325,7 @@ DynamoDB, which the stream loop polls every 750 ms. The full frame table is in
 |------|---------|
 | Web search and page fetch | Jina (`s.jina.ai`, `r.jina.ai`), or the Amazon Bedrock AgentCore Web Search connector behind an AgentCore Gateway (MCP over SigV4, us-east-1) |
 | Browser | Amazon Bedrock AgentCore Browser, driven over CDP by an embedded Playwright MCP server, one session per call |
-| Image generation | Bedrock `InvokeModel` with Stability AI Stable Image Ultra (us-west-2, the only region that offers it) |
+| Visual output | Deterministic numeric charts and a configurable Bedrock visual specialist; isolated SVG/HTML previews |
 
 ### Data
 
@@ -381,8 +382,7 @@ deploy.sh    Build and deploy: backend → Terraform → frontend → CloudFront
 **Prerequisites:**
 
 - An AWS account with Bedrock access to the models you want, in your region.
-- Optionally, Stability AI Stable Image Ultra in us-west-2 (for image generation) and
-  AgentCore Web Search in us-east-1.
+- Optionally, AgentCore Web Search in us-east-1.
 - A Route 53 hosted zone for your domain.
 - Terraform, Node.js 24 with npm, and the AWS CLI. The AgentCore Gateway target step needs
   AWS CLI 2.35.7 or later.

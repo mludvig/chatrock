@@ -16,7 +16,6 @@ const RESEARCHER_SETTINGS: ModelSettings = {
   browserExtendedEnabled: false,
   memoryEnabled: false,
   searchEnabled: false,
-  imageGenerationEnabled: false,
 }
 
 // Cap on the text handed back to the orchestrator for one sub-question — generous for a

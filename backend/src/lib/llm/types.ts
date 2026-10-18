@@ -1,6 +1,7 @@
 import type { Block, NeutralMessage, ProviderId } from './blocks'
 import type { ToolSpec } from './toolSpec'
 import type { ModelSettings } from '../../config/models'
+import type { VisualArtifact } from '../../../../shared/visuals'
 
 // ── Stream chunk types sent back over WebSocket ───────────────────────────────
 //
@@ -14,7 +15,7 @@ export type StreamChunk =
   | { type: 'delta'; text: string }
   | { type: 'tool_call_start'; toolUseId: string; name: string }
   | { type: 'tool_call'; toolUseId: string; name: string; input: string }
-  | { type: 'tool_result'; toolUseId: string; name: string; content: string; isError: boolean; screenshotUrls?: string[] }
+  | { type: 'tool_result'; toolUseId: string; name: string; content: string; isError: boolean; screenshotUrls?: string[]; visual?: VisualArtifact }
   // Sent periodically while a single tool call is in flight for longer than a few seconds
   // (e.g. browse_web's AgentCore session) so the WebSocket carries real traffic during an
   // otherwise-silent gap — observed empirically to reduce the WS connection going stale.
@@ -65,6 +66,7 @@ export type LlmPurpose =
   | 'file_summary'
   | 'search_history'
   | 'research_task'
+  | 'visual'
 
 export interface LlmCallContext {
   purpose: LlmPurpose

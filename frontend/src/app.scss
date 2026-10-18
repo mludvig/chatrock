@@ -3221,3 +3221,46 @@ input, select, textarea { &:focus-visible { outline: none; } }
 .sidebar-global-header { gap: 6px; cursor: default; &:hover { background: $surface; } .btn-new { width: 34px; height: 34px; background: transparent; color: $muted; border: 1px solid transparent; font-size: 16px; &:hover { background: $surface2; color: $text; border-color: $border; } } }
 .sidebar-resizer { left: var(--sidebar-w, 280px); }
 @media (max-width: 720px) { .sidebar-global-header .btn-new { width: 40px; height: 40px; } }
+// General visual output, separate from incidental browser screenshots.
+.visual-card {
+  margin: 12px 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border, #d8dce4);
+  border-radius: 12px;
+  background: var(--bg-secondary, #fff);
+}
+.visual-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+.visual-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  button {
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 5px 9px;
+    border-radius: 6px;
+    border: 1px solid var(--border, #d8dce4);
+    background: transparent;
+    color: inherit;
+  }
+}
+.visual-summary { margin: 8px 14px 12px; font-size: 14px; }
+.visual-frame { display: block; width: 100%; border: 0; background: #fff; }
+.visual-data {
+  padding: 10px 14px;
+  summary { cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px; text-align: left; border-bottom: 1px solid var(--border, #d8dce4); }
+}
+.visual-table-scroll { overflow-x: auto; }
+.visual-expanded { width: min(1100px, 85vw); max-width: 100%; }
+.dialog.visual-dialog { width: min(1200px, calc(100vw - 24px)); max-width: 1200px; }

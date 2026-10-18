@@ -97,6 +97,8 @@ if [ "$SKIP_BACKEND" = false ]; then
   NEWEST_ZIP="$TF_DIR/dist/ws-sendMessage.zip"
   if is_stale "$NEWEST_ZIP" \
        "$ROOT_DIR/backend/src" \
+       "$ROOT_DIR/backend/prompts" \
+       "$ROOT_DIR/shared" \
        "$ROOT_DIR/backend/package.json" \
        "$ROOT_DIR/backend/esbuild.config.mjs"; then
     echo "▶ Building backend Lambdas..."
@@ -167,6 +169,7 @@ if [ "$SKIP_FRONTEND" = false ]; then
   FRONTEND_ARTIFACT="$ROOT_DIR/frontend/dist/index.html"
   if is_stale "$FRONTEND_ARTIFACT" \
        "$ROOT_DIR/frontend/src" \
+       "$ROOT_DIR/shared" \
        "$ROOT_DIR/frontend/public" \
        "$ROOT_DIR/frontend/index.html" \
        "$ROOT_DIR/frontend/package.json" \

@@ -5,6 +5,8 @@
 // OpenAI-shaped — every provider's adapter translates to/from this at its own
 // boundary. See backend/CLAUDE.md's "LLM providers" section for the design.
 
+import type { VisualArtifact } from '../../../../shared/visuals'
+
 export type ProviderId = 'bedrock-converse' | 'bedrock-responses'
 
 /** Where binary content lives. `s3Uri` is the at-rest form; `bytes` is the
@@ -74,6 +76,8 @@ export interface ToolResultBlock {
   name?: string
   entries: ToolResultEntry[]
   isError: boolean
+  // UI artifact, not a provider input. Small, bounded source persists with the turn.
+  visual?: VisualArtifact
 }
 
 export interface ImageBlock {

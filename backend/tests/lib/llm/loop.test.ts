@@ -39,6 +39,27 @@ beforeEach(() => {
   mockExecuteTool.mockReset()
 })
 
+test('visual result reaches both the live frame and canonical persisted tool result', async () => {
+  const visual = { title: 'Flow', summary: 'A to B', format: 'svg' as const, source: '<svg><text>A to B</text></svg>', height: 300 }
+  let round = 0
+  const provider: ChatProvider = {
+    id: 'bedrock-converse', sanitizeHistory: m => m, once: jest.fn(),
+    // eslint-disable-next-line require-yield -- mock returns complete turns
+    streamTurn: async function* () { return round++ === 0 ? toolUseResult() : textResult('Done') },
+  }
+  mockGetProvider.mockReturnValue(provider)
+  mockExecuteTool.mockResolvedValue({ entries: [{ kind: 'text', text: 'Created' }], isError: false, visual })
+  const chunks = []
+  const deadlineAt = Date.now() + 120_000
+  for await (const c of converseStream(DEFAULT_CHAT_MODEL, 'system', [], { call: TEST_CALL, deadlineAt })) chunks.push(c)
+  const frame = chunks.find(c => c.type === 'tool_result')
+  expect(frame?.type === 'tool_result' && frame.visual).toEqual(visual)
+  const turn = chunks.find(c => c.type === 'turn' && c.role === 'user')
+  expect(turn?.type === 'turn' && turn.content[0].kind === 'tool_result' && turn.content[0].visual).toEqual(visual)
+  expect(mockExecuteTool.mock.calls[0][2].visualMaxBytes).toBe(28_000)
+  expect(mockExecuteTool.mock.calls[0][2].deadlineAt).toBe(deadlineAt)
+})
+
 test('a deadline already past skips the round loop and yields one truncated final turn', async () => {
   // eslint-disable-next-line require-yield -- mock has no chunks to stream, only a final result
   const streamTurn = jest.fn(async function* (_req: TurnRequest) {

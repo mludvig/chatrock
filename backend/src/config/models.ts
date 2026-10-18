@@ -35,7 +35,7 @@ export interface ModelSettings {
   browserExtendedEnabled?: boolean                  // true enables the scripted browse_web tool
   memoryEnabled?: boolean                           // false skips injection + extraction
   searchEnabled?: boolean                           // false omits the search_history tool from organic tool choice
-  imageGenerationEnabled?: boolean                  // true enables the generate_image tool (opt-in — costs money per call)
+  responseStyle?: 'concise-visual' | 'standard'
   answerLength?: 'default' | 'short' | 'extensive' // per-chat answer-length override
   injectCurrentDate?: boolean                       // true = prepend timestamp block to user turns
   // Agentic tool-round budget for this turn. Absent -> 'brief'. See docs/adr/0020-research-depth-and-budget-pacing.md.
@@ -163,6 +163,11 @@ export const MODELS: Model[] = [
 ]
 
 export const DEFAULT_CHAT_MODEL = 'global.anthropic.claude-sonnet-5-5'
+
+// Independent of the narrator model. Use a registry id from either provider.
+// See docs/adr/0063-general-visual-artifacts-and-response-style.md.
+// Verified with <local-profile>, Oct 2026: SVG flow diagram + interactive road-grade explanation.
+export const VISUAL_MODEL = 'global.openai.gpt-6.1-sol'
 
 // The smallest/cheapest model, for short mechanical calls whose output is a title or a
 // one-word classification rather than anything the user reads as an answer.

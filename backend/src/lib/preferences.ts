@@ -10,7 +10,7 @@ export interface UserPreferences {
   browserExtendedEnabled?: boolean    // true = enable the scripted browse_web tool
   memoryEnabled?: boolean             // false = skip user memory injection + extraction
   searchEnabled?: boolean             // false = omit the search_history tool from organic tool choice
-  imageGenerationEnabled?: boolean    // true = enable the generate_image tool (opt-in — costs money per call)
+  responseStyle?: 'concise-visual' | 'standard'
   showTokenStats?: boolean            // UI flag (not prompt-affecting)
   researchDepth?: 'brief' | 'extended' | 'deep'  // agentic tool-round budget default
 }

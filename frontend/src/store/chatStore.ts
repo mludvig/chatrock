@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences } from '../api/http'
+import type { Chat, Message, Model, ModelSettings, Project, ProjectFile, Step, TokenUsage, UserPreferences, VisualArtifact } from '../api/http'
 import type { MemoryUpdateItem } from '../api/ws'
 import { parseSearchResults, parseSearchHistoryResults } from '../lib/toolResults'
 export type { Step, TokenUsage, UserPreferences } from '../api/http'
@@ -99,7 +99,7 @@ interface ChatState {
   /** Set the JSON input on a tool step */
   updateToolCallInput: (chatId: string, toolUseId: string, input: string) => void
   /** Attach tool result to the matching tool step */
-  resolveToolCall: (chatId: string, toolUseId: string, result: string, isError: boolean, screenshotUrls?: string[]) => void
+  resolveToolCall: (chatId: string, toolUseId: string, result: string, isError: boolean, screenshotUrls?: string[], visual?: VisualArtifact) => void
   /** Set live usage stats from the 'usage' WS event */
   setStreamUsage: (chatId: string, usage: TokenUsage) => void
   /** Toggle idle indicator — churn-free: no-op when value unchanged */
@@ -345,7 +345,7 @@ export const useChatStore = create<ChatState>()(
         }
       }),
 
-      resolveToolCall: (chatId, toolUseId, result, isError, screenshotUrls) => set((s) => {
+      resolveToolCall: (chatId, toolUseId, result, isError, screenshotUrls, visual) => set((s) => {
         const sm = s.streamingByChat[chatId]
         if (!sm) return {}
         return {
@@ -357,7 +357,7 @@ export const useChatStore = create<ChatState>()(
                 if (step.kind !== 'tool' || step.toolUseId !== toolUseId) return step
                 const searchResults = parseSearchResults(step.name, result, isError)
                 const searchHistoryResults = parseSearchHistoryResults(step.name, result, isError)
-                return { ...step, result, isError, searchResults, searchHistoryResults, screenshotUrls }
+                return { ...step, result, isError, searchResults, searchHistoryResults, screenshotUrls, visual: isError ? undefined : visual }
               }),
             },
           },

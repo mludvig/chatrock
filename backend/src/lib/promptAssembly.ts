@@ -1,5 +1,6 @@
 import type { UserPreferences } from './preferences'
 import DEEP_RESEARCH_PROMPT from '../../prompts/deep-research.txt'
+import CONCISE_VISUAL_PROMPT from '../../prompts/concise-visual.txt'
 
 export interface AssembleInput {
   basePrompt: string          // the chat's systemPrompt (client-supplied)
@@ -121,5 +122,8 @@ export function assembleSystemPrompt(input: AssembleInput): string {
     parts.push(DEEP_RESEARCH_PROMPT)
   }
 
+  // Custom instructions and explicit user requests take priority over this style.
+  // See docs/adr/0063-general-visual-artifacts-and-response-style.md.
+  if (input.prefs.responseStyle !== 'standard') parts.push(CONCISE_VISUAL_PROMPT)
   return parts.join('\n\n')
 }

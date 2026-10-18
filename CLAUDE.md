@@ -143,7 +143,7 @@ The server pushes JSON frames; the frontend `api/ws.ts` routes them to the Zusta
 | `thinking_done` | — |
 | `tool_call_start` | `toolUseId`, `name` — fires immediately at block start for fast UI feedback |
 | `tool_call` | `toolUseId`, `name`, `input` — fires when full input JSON is accumulated |
-| `tool_result` | `toolUseId`, `name`, `isError`, `content`, `screenshotUrls?` — `screenshotUrls` is a first-class array of signed CloudFront URLs for browser-tool screenshots, never embedded as JSON inside `content` |
+| `tool_result` | `toolUseId`, `name`, `isError`, `content`, `screenshotUrls?`, `visual?` — `screenshotUrls` is a first-class array of signed CloudFront URLs for browser-tool screenshots, never embedded as JSON inside `content` |
 | `sub_agent_progress` | `toolUseId` (the parent `run_research_task` call), `name`, `text` — live-only narration of a research sub-agent's own tool calls; dropping one costs nothing, the finding lands as that call's `tool_result` |
 | `delta` | `text` |
 | `done` | `stopReason` |
@@ -181,7 +181,6 @@ Read it before adding anything that streams, polls, or reconnects; it ends in a 
 - **Screenshots**: save to `.screenshots/YYYY-MM-DD-description.jpg`.
 - **AgentCore Gateway target type**: `aws_bedrockagentcore_gateway_target` (AWS provider v6.51.0) doesn't yet support the `connector` target type that Web Search needs — only the *gateway* is a real Terraform resource (`terraform/agentcore.tf`); the target is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step (comment in that file has the exact command). Needs AWS CLI ≥ 2.35.7 — older builds reject the `connector` parameter outright.
 - **AgentCore Browser IAM ARN**: the AWS-managed system browser lives under the literal `aws` pseudo-account, not the caller's own account — the IAM resource must be `arn:aws:bedrock-agentcore:<region>:aws:browser/aws.browser.v1` (same pattern as Web Search's `arn:...:aws:tool/web-search.v1`). Scoping it to the caller's account ID instead produces an opaque `AccessDeniedException` on `StartBrowserSession`.
-- **Stability AI image models are `us-west-2`-only**: as of July 2026, Stability's Stable Image Ultra/Core/SD3.5 Large exist as on-demand Bedrock foundation models only in `us-west-2` — confirmed absent from `ap-southeast-2` (where this deployment runs), `us-east-1`, and `eu-west-1` via `aws bedrock list-foundation-models --by-provider stability-ai --region <region>`. Nova Canvas/Titan Image Generator (the only image models `ap-southeast-2`/`us-east-1`/`eu-west-1` do offer) are Legacy, EOL 2026-09-30 — don't build on them. `backend/src/lib/imageGen/providers/bedrockStability.ts` uses its own `us-west-2`-pinned `BedrockRuntimeClient`, a plain cross-region `InvokeModel` call (image models have no cross-region inference profile equivalent to the `global.*` one above).
 
 ## graphify
 

@@ -1,5 +1,5 @@
 import { ENV } from '../env'
-import type { ModelSettings, TokenUsage } from './http'
+import type { ModelSettings, TokenUsage, VisualArtifact } from './http'
 
 // Same shape whether the write came from an explicit manage_memory/manage_project_memory
 // tool call (one item) or passive post-turn enrichment (zero or more) — see
@@ -23,7 +23,7 @@ export type WSEvent = (
   | { type: 'thinking_done' }
   | { type: 'tool_call_start'; toolUseId: string; name: string }
   | { type: 'tool_call';      toolUseId: string; name: string; input: string }
-  | { type: 'tool_result';    toolUseId: string; name: string; isError: boolean; content?: string; screenshotUrls?: string[] }
+  | { type: 'tool_result';    toolUseId: string; name: string; isError: boolean; content?: string; screenshotUrls?: string[]; visual?: VisualArtifact }
   | { type: 'usage';          usage: TokenUsage }
   | { type: 'done';           stopReason: string }
   | { type: 'cancelled' }
