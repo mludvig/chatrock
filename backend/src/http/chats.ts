@@ -10,7 +10,7 @@ import { resolveLeaf, resolveResponseLeaf, resolveSafeLeaf, buildActivePath, sub
 import { validateAttachment, presignPut, copyChatObjects, rewriteBlockUri, s3KeyPrefix } from '../lib/attachments'
 import type { Block } from '../lib/llm/blocks'
 import { summarizeChatById, enrichProjectFactsByChatId } from '../lib/enrichment'
-import { groupTurnsToBubbles, signBubbleAttachments, filterSteps, renderMarkdown } from '../lib/transcript'
+import { groupTurnsToBubbles, signBubbleAttachments, filterSteps, renderMarkdown, renderHtml } from '../lib/transcript'
 
 const ok = (body: unknown, status = 200): APIGatewayProxyResultV2 => ({
   statusCode: status,
@@ -504,6 +504,7 @@ export const handler = async (
 
     const includeThinking = event.queryStringParameters?.includeThinking === 'true'
     const includeTools = event.queryStringParameters?.includeTools === 'true'
+    const format = event.queryStringParameters?.format === 'html' ? 'html' : 'md'
 
     const rows = (await listMessages(chatId)) as unknown as TurnRow[]
     const activeLeafId = (chat.activeLeafId as string | undefined) ?? null
@@ -511,17 +512,18 @@ export const handler = async (
     const { bubbles } = groupTurnsToBubbles(activePath)
     await signBubbleAttachments(bubbles)
     const filtered = filterSteps(bubbles, { includeThinking, includeTools })
-    const markdown = renderMarkdown(filtered, { title: (chat.title as string | undefined) ?? 'Chat' })
+    const meta = { title: (chat.title as string | undefined) ?? 'Chat', includeVisualSource: includeTools, shared: false }
+    const body = format === 'html' ? renderHtml(filtered, meta) : renderMarkdown(filtered, meta)
 
-    console.log(JSON.stringify({ event: 'chat_exported', sub, chatId, includeThinking, includeTools }))
+    console.log(JSON.stringify({ event: 'chat_exported', sub, chatId, includeThinking, includeTools, format }))
     const safeTitle = ((chat.title as string | undefined) ?? 'chat').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'chat'
     return {
       statusCode: 200,
       headers: {
-        'Content-Type': 'text/markdown; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${safeTitle}.md"`,
+        'Content-Type': `${format === 'html' ? 'text/html' : 'text/markdown'}; charset=utf-8`,
+        'Content-Disposition': `attachment; filename="${safeTitle}.${format}"`,
       },
-      body: markdown,
+      body,
     }
   }
 

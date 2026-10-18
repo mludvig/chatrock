@@ -1213,6 +1213,20 @@ test('DELETE /api/chats/{chatId}/shares/{shareId} returns 404 if chat not owned'
 
 // ── Markdown export ──────────────────────────────────────────────────────────
 
+test('HTML export stays authenticated and returns a downloadable interactive document', async () => {
+  mockDynamo.getChat.mockResolvedValue({ title: 'Visual Chat', activeLeafId: null })
+  mockDynamo.listMessages.mockResolvedValue([])
+  const res = await handler({
+    routeKey: 'GET /api/chats/{chatId}/export',
+    pathParameters: { chatId: 'chat-1' },
+    queryStringParameters: { format: 'html' },
+    requestContext: { authorizer: { jwt: { claims: { sub: 'user-1' } } } },
+  } as any) as APIGatewayProxyStructuredResultV2
+  expect(res.headers?.['Content-Type']).toContain('text/html')
+  expect(res.headers?.['Content-Disposition']).toContain('visual-chat.html')
+  expect(res.body).toContain('<!doctype html>')
+})
+
 test('GET /api/chats/{chatId}/export renders the active path to Markdown with a download header', async () => {
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', title: 'My Chat!', activeLeafId: 'a1' })
   mockDynamo.listMessages.mockResolvedValue([

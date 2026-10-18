@@ -8,7 +8,7 @@ import { useChatStore } from '../store/chatStore'
 import { ToggleRow } from './PrefControls'
 
 // Create/list/revoke read-only public share links (/s/{shareId}), plus a Markdown export
-// download — both driven off the same server-side transcript serializer (see
+// and HTML downloads — all driven off the same server-side transcript serializer (see
 // backend/CLAUDE.md "Chat sharing"). Mode and include-thinking/include-tools are fixed at
 // share-creation time (the server bakes them into the share record); export chooses them at
 // download time instead, since there's no persisted link to fix them on.
@@ -99,16 +99,16 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
     }
   }
 
-  async function handleExport() {
+  async function handleExport(format: 'md' | 'html') {
     setExporting(true)
     try {
-      const markdown = await exportChat(chatId, { includeThinking: exportThinking, includeTools: exportTools })
+      const body = await exportChat(chatId, { includeThinking: exportThinking, includeTools: exportTools, format })
       const safeTitle = chatTitle.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'chat'
-      const blob = new Blob([markdown], { type: 'text/markdown' })
+      const blob = new Blob([body], { type: format === 'html' ? 'text/html' : 'text/markdown' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${safeTitle}.md`
+      a.download = `${safeTitle}.${format}`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err) {
@@ -193,13 +193,18 @@ export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTi
       </div>
 
       <div className="pref-section">
-        <div className="pref-label">Export to Markdown</div>
-        <div className="pref-hint">Downloads the current active conversation as a .md file.</div>
+        <div className="pref-label">Download conversation</div>
+        <div className="pref-hint">HTML keeps interactive visuals. Markdown keeps readable text and chart data. Include tool calls to keep visual source code in Markdown.</div>
         <ToggleRow label="Include thinking" on={exportThinking} onToggle={() => setExportThinking(v => !v)} />
         <ToggleRow label="Include tool calls" on={exportTools} onToggle={() => setExportTools(v => !v)} />
-        <button className="btn-primary" disabled={exporting} onClick={handleExport}>
-          <FontAwesomeIcon icon={faDownload} /> {exporting ? 'Exporting…' : 'Download Markdown'}
-        </button>
+        <div className="share-export-actions">
+          <button className="btn-primary" disabled={exporting} onClick={() => handleExport('html')}>
+            <FontAwesomeIcon icon={faDownload} /> Download HTML
+          </button>
+          <button className="btn-primary" disabled={exporting} onClick={() => handleExport('md')}>
+            <FontAwesomeIcon icon={faDownload} /> Download Markdown
+          </button>
+        </div>
       </div>
     </>
   )

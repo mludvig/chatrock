@@ -3264,3 +3264,4 @@ input, select, textarea { &:focus-visible { outline: none; } }
 .visual-table-scroll { overflow-x: auto; }
 .visual-expanded { width: min(1100px, 85vw); max-width: 100%; }
 .dialog.visual-dialog { width: min(1200px, calc(100vw - 24px)); max-width: 1200px; }
+.share-export-actions { display: flex; flex-wrap: wrap; gap: 8px; }

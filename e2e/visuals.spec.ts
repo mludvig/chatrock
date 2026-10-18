@@ -67,6 +67,16 @@ test('recorded charts and specialist visuals render, interact, download and surv
 
     const road = page.locator('.visual-card').nth(5)
     const inner = road.frameLocator('iframe').frameLocator('iframe')
+    // Visible without clicking Expand; height follows the whole document.
+    await expect(road.locator('iframe')).toBeVisible()
+    await expect.poll(() => road.locator('iframe').evaluate(f => f.clientHeight)).toBeGreaterThan(visuals[5].height)
+    const originalHeight = await road.locator('iframe').evaluate(f => f.clientHeight)
+    await inner.locator('details summary').click()
+    await expect.poll(() => road.locator('iframe').evaluate(f => f.clientHeight)).toBeGreaterThan(originalHeight)
+    await inner.locator('details summary').click()
+    await expect.poll(() => road.locator('iframe').evaluate(f => f.clientHeight)).toBe(originalHeight)
+    await page.evaluate(() => window.postMessage({ type: 'chatrock:visual-size', channel: 'spoof', height: 19000 }, '*'))
+    await expect.poll(() => road.locator('iframe').evaluate(f => f.clientHeight)).toBe(originalHeight)
     await expect(inner.locator('#ig')).toHaveText('5.769%')
     await expect(inner.locator('#og')).toHaveText('4.412%')
     await expect(inner.locator('#verdict')).toContainText('30.769%')
@@ -103,10 +113,35 @@ test('recorded charts and specialist visuals render, interact, download and surv
       await assertFits(page, '.visual-card')
       await expect.poll(() => inner.locator('html').evaluate(el => el.scrollWidth <= window.innerWidth + 1)).toBe(true)
       await expect.poll(() => organicInner.locator('html').evaluate(el => el.scrollWidth <= window.innerWidth + 1)).toBe(true)
+      await expect.poll(() => inner.locator('body').evaluate(el => el.scrollHeight <= window.innerHeight + 1)).toBe(true)
+      await expect.poll(() => organicInner.locator('body').evaluate(el => el.scrollHeight <= window.innerHeight + 1)).toBe(true)
     }
     await page.setViewportSize({ width: 1440, height: 1050 })
     await road.scrollIntoViewIfNeeded()
     await page.screenshot({ path: '.screenshots/2026-10-22-uphill-road-visual.jpg' })
+  } finally {
+    await request(page, 'DELETE', `/chats/${chatId}`)
+  }
+})
+
+test('HTML conversation download uses the authenticated export without creating a public share', async ({ page }) => {
+  await openApp(page)
+  const { chatId } = await newChat(page)
+  try {
+    await page.goto(`/c/${chatId}`)
+    await page.getByTitle('Chat details', { exact: true }).click()
+    await page.getByRole('dialog').getByRole('button', { name: 'Share', exact: true }).click()
+    const pending = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Download HTML', exact: true }).click()
+    const downloaded = await pending
+    expect(downloaded.suggestedFilename()).toMatch(/\.html$/)
+    const stream = await downloaded.createReadStream()
+    const chunks: Buffer[] = []
+    for await (const chunk of stream) chunks.push(chunk as Buffer)
+    const html = Buffer.concat(chunks).toString('utf8')
+    expect(html).toContain('<!doctype html>')
+    expect(html).toContain('Saved conversation')
+    expect((await request<{ shares: unknown[] }>(page, 'GET', `/chats/${chatId}/shares`)).shares).toEqual([])
   } finally {
     await request(page, 'DELETE', `/chats/${chatId}`)
   }

@@ -48,9 +48,10 @@ one deployment in one AWS account, with an opinionated deploy script.
 - Attach images, PDFs and text or code files. The browser downscales images before upload.
 - New chats are titled automatically. You can also rename a chat or ask for a fresh AI
   title.
-- **Export** a chat to Markdown, or **share** it as a read-only link with a QR code. A
+- **Export** a chat to interactive HTML or readable Markdown, or **share** it as a read-only link with a QR code. A
   share is either a frozen snapshot or live, and can include the reasoning and tool calls.
   Shared pages are server-rendered HTML, or plain Markdown for `curl` and LLM agents.
+  Visuals open inline and resize to fit their content. HTML downloads preserve their controls.
 
 ### Research and tools
 

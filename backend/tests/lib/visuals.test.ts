@@ -3,12 +3,31 @@ import { converseOnce } from '../../src/lib/bedrock'
 import { executeCreateVisualTool } from '../../src/lib/visuals/tool'
 import { renderChart, validateChart } from '../../src/lib/visuals/chart'
 import { VISUAL_MODEL, isValidModelId } from '../../src/config/models'
-import { validateVisual, type VisualArtifact } from '../../../shared/visuals'
+import { validateVisual, visualMessageHeight, visualAspectRatio, visualSvgHeight, VISUAL_SIZE_MESSAGE, type VisualArtifact } from '../../../shared/visuals'
 
 const once = converseOnce as jest.Mock
 const ctx = { sub: 'test-user', chatId: 'test-chat', modelId: 'small-narrator' }
 const output = { format: 'svg', summary: 'A to B.', source: '<svg viewBox="0 0 100 100"><title>Flow</title><text>A → B</text></svg>', height: 300 }
 beforeEach(() => once.mockReset())
+
+test('sizing messages accept only a matching channel and finite positive height', () => {
+  const message = { type: VISUAL_SIZE_MESSAGE, channel: 'frame-1', height: 912.2 }
+  expect(visualMessageHeight(message, 'frame-1')).toBe(913)
+  expect(visualMessageHeight(message, 'other-frame')).toBeUndefined()
+  for (const height of [NaN, Infinity, -2, 0, '900', null]) {
+    expect(visualMessageHeight({ ...message, height }, 'frame-1')).toBeUndefined()
+  }
+  expect(visualMessageHeight({ ...message, type: 'run_code' }, 'frame-1')).toBeUndefined()
+  expect(visualMessageHeight({ ...message, height: 1e9 }, 'frame-1')).toBe(20_000)
+})
+
+test('SVG sizes follow viewBox proportions, with a fallback for legacy invalid roots', () => {
+  const visual = { ...output, title: 'Flow', format: 'svg' as const }
+  expect(visualAspectRatio(visual)).toBe(1)
+  expect(visualSvgHeight(720, 2)).toBe(372)
+  expect(visualAspectRatio({ ...visual, source: '<svg viewBox="0 0 0 4"></svg>' })).toBeUndefined()
+  expect(visualAspectRatio({ ...visual, source: '<svg></svg>' })).toBeUndefined()
+})
 
 test('numeric charts have exact geometry, signed values, and inspectable data without a model call', async () => {
   const chart = { type: 'bar' as const, labels: ['A', 'B', 'C'], series: [{ name: 'Amount', values: [-10, 0, 20] }], unit: 'USD' }

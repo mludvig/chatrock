@@ -16,7 +16,11 @@ test('visuals survive durable grouping and clean share/export without exposing e
   const bubbles = filterSteps(groupTurnsToBubbles(rows).bubbles, { includeTools: false, includeThinking: false })
   const step = bubbles[0].steps[0]
   expect(step.kind === 'tool' && step.visual).toEqual(visual)
-  expect(renderMarkdown(bubbles, { title: 'T' })).toContain('```svg')
+  const markdown = renderMarkdown(bubbles, { title: 'T', htmlUrl: 'https://example.com/s/test' })
+  expect(markdown).toContain('| Q2 | 20 |')
+  expect(markdown).toContain('[Open the visual in HTML](https://example.com/s/test)')
+  expect(markdown).not.toContain(visual.source)
+  expect(renderMarkdown(bubbles, { title: 'T', includeVisualSource: true })).toContain('```svg')
   const html = renderHtml(bubbles, { title: 'T' })
   expect(html).toContain('sandbox=""')
   expect(html).toContain('srcdoc=')

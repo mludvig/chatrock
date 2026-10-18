@@ -36,6 +36,29 @@ export interface VisualArtifact {
 
 // Includes JSON escaping: leaves room in the 32 KB WebSocket frame for its envelope.
 export const MAX_VISUAL_BYTES = 20_000
+export const MAX_VISUAL_HEIGHT = 20_000
+export const VISUAL_SIZE_MESSAGE = 'chatrock:visual-size'
+
+/** Only sizing crosses the sandbox boundary. Never accept code, URLs or actions. */
+export function visualMessageHeight(data: unknown, channel: string): number | undefined {
+  if (!data || typeof data !== 'object') return
+  const d = data as Record<string, unknown>
+  if (d.type !== VISUAL_SIZE_MESSAGE || d.channel !== channel ||
+    typeof d.height !== 'number' || !Number.isFinite(d.height) || d.height <= 0) return
+  return Math.min(MAX_VISUAL_HEIGHT, Math.max(24, Math.ceil(d.height)))
+}
+
+export function visualAspectRatio(visual: VisualArtifact): number | undefined {
+  if (visual.format !== 'svg') return
+  const root = visual.source.match(/^\s*<svg\b[^>]*>/i)?.[0] ?? ''
+  const viewBox = root.match(/\bviewBox\s*=\s*["']([^"']+)["']/i)?.[1].trim().split(/[\s,]+/).map(Number)
+  if (!viewBox || viewBox.length !== 4 || !viewBox.every(Number.isFinite) || viewBox[2] <= 0 || viewBox[3] <= 0) return
+  return viewBox[2] / viewBox[3]
+}
+
+export function visualSvgHeight(width: number, ratio: number): number {
+  return Math.min(MAX_VISUAL_HEIGHT, Math.max(24, Math.ceil(Math.max(0, width - 24) / ratio + 24)))
+}
 
 export function validateVisual(value: unknown, maxBytes = MAX_VISUAL_BYTES): VisualArtifact {
   if (!value || typeof value !== 'object') throw new Error('Visual must be an object.')
@@ -72,13 +95,28 @@ export function escapeVisualText(text: string): string {
 /**
  * Two opaque-origin frames. The trusted outer document constrains navigation of
  * the generated inner document; the inner CSP blocks network/resource access.
- * Never put generated markup into the application DOM. No message bridge exists.
+ * Never put generated markup into the application DOM. The only bridge reports
+ * bounded height through the trusted outer frame. See ADR 0064.
  */
-export function visualDocument(visual: VisualArtifact): string {
+export function visualDocument(visual: VisualArtifact, channel = ''): string {
   const scripts = visual.format === 'html' ? "'unsafe-inline'" : "'none'"
   const policy = `default-src 'none'; script-src ${scripts}; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'`
-  const inner = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;box-sizing:border-box;background:#fff;color:#172033;font:15px system-ui}body{padding:12px}svg,canvas{max-width:100%;height:auto}${visual.format === 'svg' ? 'body>svg{width:100%;height:calc(100vh - 24px);display:block}' : ''}*{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}input,select,button{max-width:100%}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}</style></head><body>${visual.source}</body></html>`
+  // The channel is host-created, but escape it for an inline script regardless.
+  const token = JSON.stringify(channel).replace(/</g, '\\u003c')
+  const measure = visual.format === 'html' ? `<script>(()=>{let queued=false,last=0;function measure(){queued=false;const b=document.body;const height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(Math.max(b.scrollHeight,b.getBoundingClientRect().height))));if(height!==last){last=height;parent.postMessage({type:'${VISUAL_SIZE_MESSAGE}',channel:${token},height},'*')}}function queue(){if(!queued){queued=true;setTimeout(measure,100)}}new ResizeObserver(queue).observe(document.body);addEventListener('resize',queue);addEventListener('load',queue);queue()})();</script>` : ''
+  const inner = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;box-sizing:border-box;background:#fff;color:#172033;font:15px system-ui}body{padding:12px}svg,canvas{max-width:100%;height:auto}${visual.format === 'svg' ? 'body>svg{width:100%;height:calc(100vh - 24px);display:block}' : ''}*{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}input,select,button{max-width:100%}@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}</style></head><body>${visual.source}${measure}</body></html>`
   const outerPolicy = `default-src 'none'; frame-src about:; style-src 'unsafe-inline'; script-src ${scripts}; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'`
+  const relay = visual.format === 'html' ? `<script>addEventListener('message',e=>{const f=document.querySelector('iframe'),d=e.data;if(e.source!==f.contentWindow||!d||d.type!=='${VISUAL_SIZE_MESSAGE}'||d.channel!==${token}||!Number.isFinite(d.height)||d.height<=0)return;const height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(d.height)));f.style.height=height+'px';if(parent!==window)parent.postMessage({type:'${VISUAL_SIZE_MESSAGE}',channel:${token},height},'*')});</script>` : ''
   // srcdoc inherits the outer CSP. about: permits srcdoc; remote navigation is denied.
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${outerPolicy}"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0;display:block}</style></head><body><iframe title="${escapeVisualText(visual.title)}" sandbox="${visual.format === 'html' ? 'allow-scripts' : ''}" srcdoc="${escapeVisualText(inner)}"></iframe></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${outerPolicy}"><style>html,body,iframe{margin:0;width:100%;border:0;display:block}${visual.format === 'svg' ? 'html,body,iframe{height:100%}' : `iframe{height:${visual.height}px}`}</style></head><body><iframe title="${escapeVisualText(visual.title)}" sandbox="${visual.format === 'html' ? 'allow-scripts' : ''}" srcdoc="${escapeVisualText(inner)}"></iframe>${relay}</body></html>`
 }
+
+/** Trusted host code used by public shares and self-contained HTML downloads. */
+export const VISUAL_HOST_SCRIPT = `(()=>{
+const frames=[...document.querySelectorAll('iframe[data-visual-channel]')];
+addEventListener('message',e=>{const d=e.data;if(!d||d.type!=='${VISUAL_SIZE_MESSAGE}'||!Number.isFinite(d.height)||d.height<=0)return;
+const f=frames.find(f=>f.contentWindow===e.source&&f.dataset.visualChannel===d.channel);if(f)f.style.height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(d.height)))+'px'});
+for(const f of frames){const ratio=Number(f.dataset.visualRatio);if(ratio>0&&Number.isFinite(ratio)){
+const size=()=>f.style.height=Math.min(${MAX_VISUAL_HEIGHT},Math.max(24,Math.ceil(Math.max(0,f.getBoundingClientRect().width-24)/ratio+24)))+'px';
+new ResizeObserver(size).observe(f);size()}}
+})();`

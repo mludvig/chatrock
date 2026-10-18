@@ -332,15 +332,16 @@ export const api = {
     req<void>('DELETE', `/api/chats/${chatId}/shares/${shareId}`),
 }
 
-// Not part of the `api` object above since it returns raw Markdown text (Content-Disposition
+// Not part of the `api` object above since it returns raw Markdown/HTML (Content-Disposition
 // download), not a JSON body — req() always calls res.json(). Authenticated like every other
 // /api/* call (bearer header); this is the OWNER's private export and is intentionally distinct
 // from the public /s/{shareId} link, where the ULID itself is the credential (see
 // backend/CLAUDE.md "Chat sharing" for why the two must not share an auth model).
-export async function exportChat(chatId: string, opts: { includeThinking: boolean; includeTools: boolean }): Promise<string> {
+export async function exportChat(chatId: string, opts: { includeThinking: boolean; includeTools: boolean; format?: 'md' | 'html' }): Promise<string> {
   const params = new URLSearchParams({
     includeThinking: String(opts.includeThinking),
     includeTools: String(opts.includeTools),
+    format: opts.format ?? 'md',
   })
   const res = await fetch(`${ENV.apiBaseUrl}/api/chats/${chatId}/export?${params}`, {
     headers: { Authorization: `Bearer ${_accessToken}` },

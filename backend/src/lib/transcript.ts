@@ -1,8 +1,9 @@
 import { marked } from 'marked'
+import { randomUUID } from 'node:crypto'
 import { signCloudFrontUrl } from './attachments'
 import type { Block } from './llm/blocks'
 import type { TokenUsage } from './bedrock'
-import { visualDocument, type VisualArtifact } from '../../../shared/visuals'
+import { visualDocument, visualAspectRatio, VISUAL_HOST_SCRIPT, type VisualArtifact } from '../../../shared/visuals'
 
 // ── Display types (safe to send to clients / render publicly — no signatures / redactedContent) ──
 //
@@ -342,7 +343,7 @@ function roleHeading(b: RawBubble): string {
   return b.role === 'user' ? '## User' : `## Assistant${b.model ? ` (${b.model})` : ''}`
 }
 
-function stepToMarkdown(step: Step): string {
+function stepToMarkdown(step: Step, meta: RenderMeta): string {
   switch (step.kind) {
     case 'text':
       return step.text.trim()
@@ -352,8 +353,18 @@ function stepToMarkdown(step: Step): string {
     case 'tool': {
       if (step.visual) {
         const v = step.visual
-        const fence = '`'.repeat(Math.max(3, ...Array.from(v.source.matchAll(/`+/g), m => m[0].length + 1)))
-        return `### ${v.title}\n\n${v.summary}\n\n${fence}${v.format}\n${v.source}\n${fence}`
+        const parts = [`### ${v.title}`, v.summary]
+        if (v.chart) {
+          const cell = (s: string | number) => String(s).replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ')
+          parts.push(`${v.chart.unit ? `Unit: ${cell(v.chart.unit)}\n\n` : ''}| Label | ${v.chart.series.map(s => cell(s.name)).join(' | ')} |\n| --- | ${v.chart.series.map(() => '---').join(' | ')} |\n` +
+            v.chart.labels.map((l, i) => `| ${cell(l)} | ${v.chart!.series.map(s => s.values[i]).join(' | ')} |`).join('\n'))
+        }
+        parts.push(meta.htmlUrl ? `[Open the visual in HTML](${meta.htmlUrl})` : '_Use the HTML download to view this visual and its controls._')
+        if (meta.includeVisualSource) {
+          const fence = '`'.repeat(Math.max(3, ...Array.from(v.source.matchAll(/`+/g), m => m[0].length + 1)))
+          parts.push(`${fence}${v.format}\n${v.source}\n${fence}`)
+        }
+        return parts.join('\n\n')
       }
       const parts: string[] = [`**Tool call: \`${step.name}\`**`]
       let input = step.input
@@ -376,6 +387,10 @@ function stepToMarkdown(step: Step): string {
 
 export interface RenderMeta {
   title: string
+  includeVisualSource?: boolean
+  htmlUrl?: string
+  downloadUrl?: string
+  shared?: boolean
 }
 
 /**
@@ -385,7 +400,7 @@ export interface RenderMeta {
 export function renderMarkdown(bubbles: RawBubble[], meta: RenderMeta): string {
   const out: string[] = [`# ${meta.title || 'Chat'}`, '']
   for (const b of bubbles) {
-    const body = b.steps.map(stepToMarkdown).filter(s => s.length > 0).join('\n\n')
+    const body = b.steps.map(s => stepToMarkdown(s, meta)).filter(s => s.length > 0).join('\n\n')
     out.push(roleHeading(b), '', body || '_(empty)_', '', '---', '')
   }
   return out.join('\n').replace(/\n{4,}/g, '\n\n\n').trimEnd() + '\n'
@@ -411,8 +426,11 @@ function stepToHtml(step: Step): string {
     case 'tool': {
       if (step.visual) {
         const v = step.visual
+        const channel = randomUUID()
+        const ratio = visualAspectRatio(v)
+        // See docs/adr/0064-inline-visual-sizing-and-html-export.md.
         return `<section class="visual"><h3>${escapeHtml(v.title)}</h3><p>${escapeHtml(v.summary)}</p>` +
-          `<iframe title="${escapeHtml(v.title)}" sandbox="${v.format === 'html' ? 'allow-scripts' : ''}" style="width:100%;height:${v.height}px;border:0" srcdoc="${escapeHtml(visualDocument(v))}"></iframe></section>`
+          `<iframe data-visual-channel="${channel}"${ratio ? ` data-visual-ratio="${ratio}"` : ''} title="${escapeHtml(v.title)}" sandbox="${v.format === 'html' ? 'allow-scripts' : ''}" referrerpolicy="no-referrer" style="width:100%;height:${v.height}px;border:0;display:block" srcdoc="${escapeHtml(visualDocument(v, channel))}"></iframe></section>`
       }
       let input = step.input
       try { input = JSON.stringify(JSON.parse(step.input), null, 2) } catch { /* leave as-is */ }
@@ -451,6 +469,7 @@ h1.chat-title { font-size: 1.5rem; margin: 8px 0 4px; }
 .md :not(pre) > code { background: rgba(135,131,120,0.15); padding: 0.15em 0.35em; border-radius: 4px; }
 .md table { border-collapse: collapse; } .md th, .md td { border: 1px solid #ccc; padding: 4px 8px; }
 .md img, img.attachment { max-width: 100%; border-radius: 8px; }
+.visual { min-width: 0; } .downloads { margin-bottom: 20px; }
 details.thinking, details.tool { margin: 10px 0; padding: 8px 12px; border-radius: 8px;
   background: rgba(135,131,120,0.1); font-size: 0.92rem; }
 details summary { cursor: pointer; font-weight: 600; color: #555; }
@@ -491,10 +510,12 @@ export function renderHtml(bubbles: RawBubble[], meta: RenderMeta): string {
 <body>
 <main>
 <h1 class="chat-title">${title}</h1>
-<div class="meta">Shared read-only chat · Chatrock</div>
+<div class="meta">${meta.shared === false ? 'Saved conversation' : 'Shared read-only chat'} · Chatrock</div>
+${meta.downloadUrl ? `<div class="downloads"><a href="${escapeHtml(meta.downloadUrl)}">Download interactive HTML</a></div>` : ''}
 ${turns}
 <footer>Rendered by Chatrock</footer>
 </main>
+${bubbles.some(b => b.steps.some(s => s.kind === 'tool' && s.visual)) ? `<script>${VISUAL_HOST_SCRIPT}</script>` : ''}
 </body>
 </html>
 `

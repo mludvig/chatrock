@@ -184,7 +184,7 @@ A share is a read-only public link to one chat: `https://<domain>/s/<shareId>`. 
 - **Modes**: `snapshot` freezes the active path's msgIds at creation (`snapshotMsgIds`) — later turns never appear, deleted ones drop out; `live` renders the chat's current active branch on every request.
 - **Options**: `includeThinking` and `includeTools` (both default `false`) filter steps out of the rendered bubbles (`lib/transcript.ts` `filterSteps`).
 - **Rendering**: server-rendered and self-contained, no client-side API calls. Markdown when the path ends in `.md`, `?format=md`, or `Accept: text/markdown`; HTML otherwise. CloudFront's `/s/*` behaviour forwards `Accept` and does not cache.
-- **Export**: `GET /api/chats/{chatId}/export` (authenticated) renders the active branch through the same `renderMarkdown` as a file download, with the same `includeThinking`/`includeTools` query flags.
+- **Export**: `GET /api/chats/{chatId}/export` (authenticated) renders the active branch as Markdown, or HTML with `?format=html`, with the same `includeThinking`/`includeTools` query flags. Public `/s/{shareId}.html` downloads the same share as a self-contained HTML file. Clean Markdown keeps visual summaries/chart data and links to public HTML; including tool calls retains source. HTML visuals auto-size through a bounded source/channel-checked height relay; SVG uses viewBox proportions. See ADR 0064.
 
 ## HTTP API routes
 

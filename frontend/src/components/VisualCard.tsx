@@ -1,13 +1,32 @@
-import { useMemo, useState } from 'react'
-import { validateVisual, visualDocument, type VisualArtifact } from '../../../shared/visuals'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { validateVisual, visualDocument, visualAspectRatio, visualMessageHeight, visualSvgHeight, type VisualArtifact } from '../../../shared/visuals'
 import Dialog from './Dialog'
 
 export default function VisualCard({ visual }: { visual: VisualArtifact }) {
   const [expanded, setExpanded] = useState(false)
   const [revision, setRevision] = useState(0)
+  const [channel] = useState(() => crypto.randomUUID())
+  const [height, setHeight] = useState(visual.height)
+  const frameRef = useRef<HTMLIFrameElement>(null)
   const document = useMemo(() => {
-    try { return visualDocument(validateVisual(visual)) } catch { return null }
-  }, [visual])
+    try { return visualDocument(validateVisual(visual), channel) } catch { return null }
+  }, [visual, channel])
+  useEffect(() => {
+    const frame = frameRef.current
+    if (!frame || !document) return
+    // Only the current outer frame can resize this card. No origin/storage access.
+    // See docs/adr/0064-inline-visual-sizing-and-html-export.md.
+    const onSize = (event: MessageEvent) => {
+      if (event.source !== frame.contentWindow) return
+      const next = visualMessageHeight(event.data, channel)
+      if (next !== undefined) setHeight(next)
+    }
+    window.addEventListener('message', onSize)
+    const ratio = visualAspectRatio(visual)
+    const observer = ratio ? new ResizeObserver(() => setHeight(visualSvgHeight(frame.getBoundingClientRect().width, ratio))) : undefined
+    observer?.observe(frame)
+    return () => { window.removeEventListener('message', onSize); observer?.disconnect() }
+  }, [visual, document, channel, revision, expanded])
   if (!document) return <p className="visual-error">This visual could not be displayed.</p>
 
   function download() {
@@ -21,9 +40,9 @@ export default function VisualCard({ visual }: { visual: VisualArtifact }) {
   }
 
   const frame = (large = false) => (
-    <iframe key={`${revision}-${large}`} title={visual.title} className="visual-frame"
+    <iframe ref={frameRef} key={`${revision}-${large}`} title={visual.title} className="visual-frame"
       sandbox={visual.format === 'html' ? 'allow-scripts' : ''} referrerPolicy="no-referrer"
-      srcDoc={document} style={{ height: large ? '70vh' : visual.height }} />
+      srcDoc={document} style={{ height }} />
   )
   return (
     <section className="visual-card">

@@ -110,6 +110,26 @@ test('.md path suffix returns Markdown with the shareId stripped of the extensio
   expect(res.body).toContain('## Assistant')
 })
 
+test('.html downloads the same owned snapshot with its resize code and download header', async () => {
+  mockDynamo.getShare.mockResolvedValue({
+    shareId: 's1', sub: 'user-1', chatId: 'c1', mode: 'snapshot', snapshotMsgIds: ['a1', 't1'],
+  })
+  mockDynamo.getChat.mockResolvedValue({ title: 'Visual chat' })
+  const visual = { title: 'Interactive', summary: 'A visual', format: 'html', source: '<button>Add</button>', height: 300 }
+  mockDynamo.listMessages.mockResolvedValue([
+    row('a1', null, 'assistant', [{ kind: 'tool_call', callId: 'v', name: 'create_visual', input: {} }]),
+    row('t1', 'a1', 'user', [{ kind: 'tool_result', callId: 'v', entries: [], visual }]),
+    row('later', 't1', 'assistant', [{ kind: 'text', text: 'Not in the snapshot' }]),
+  ])
+  const res = result(await handler(makeEvent('s1.html', { accept: 'text/markdown' }) as any))
+  expect(mockDynamo.getShare).toHaveBeenCalledWith('s1')
+  expect(res.headers?.['Content-Type']).toContain('text/html')
+  expect(res.headers?.['Content-Disposition']).toContain('.html')
+  expect(res.body).toContain('data-visual-channel')
+  expect(res.body).toContain('chatrock:visual-size')
+  expect(res.body).not.toContain('Not in the snapshot')
+})
+
 test('?format=md and Accept: text/markdown also select Markdown', async () => {
   mockDynamo.getShare.mockResolvedValue({
     shareId: 's1', sub: 'user-1', chatId: 'c1', mode: 'live', includeThinking: false, includeTools: false,

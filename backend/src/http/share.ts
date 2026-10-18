@@ -1,4 +1,4 @@
-import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda'
+import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda'
 import { getShare, getChat, listMessages } from '../lib/dynamo'
 import { buildActivePath } from '../lib/tree'
 import { groupTurnsToBubbles, signBubbleAttachments, filterSteps, renderMarkdown, renderHtml, type TurnRow } from '../lib/transcript'
@@ -14,7 +14,7 @@ import { groupTurnsToBubbles, signBubbleAttachments, filterSteps, renderMarkdown
 //   3. Accept: text/markdown
 // anything else -> text/html.
 
-const html = (body: string, status = 200): APIGatewayProxyResultV2 => ({
+const html = (body: string, status = 200): APIGatewayProxyStructuredResultV2 => ({
   statusCode: status,
   headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' },
   body,
@@ -35,11 +35,12 @@ function notFound(wantsMarkdown: boolean): APIGatewayProxyResultV2 {
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
   const rawId = event.pathParameters?.shareId ?? ''
   const wantsMarkdownExt = rawId.toLowerCase().endsWith('.md')
-  const shareId = wantsMarkdownExt ? rawId.slice(0, -3) : rawId
+  const wantsHtmlDownload = rawId.toLowerCase().endsWith('.html')
+  const shareId = wantsMarkdownExt ? rawId.slice(0, -3) : wantsHtmlDownload ? rawId.slice(0, -5) : rawId
   const accept = event.headers?.accept ?? event.headers?.Accept ?? ''
-  const wantsMarkdown = wantsMarkdownExt
+  const wantsMarkdown = !wantsHtmlDownload && (wantsMarkdownExt
     || event.queryStringParameters?.format === 'md'
-    || accept.includes('text/markdown')
+    || accept.includes('text/markdown'))
 
   if (!shareId) return notFound(wantsMarkdown)
 
@@ -78,7 +79,9 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   console.log(JSON.stringify({ event: 'share_accessed', shareId, chatId, mode, format: wantsMarkdown ? 'md' : 'html' }))
 
-  return wantsMarkdown
-    ? md(renderMarkdown(filtered, { title }))
-    : html(renderHtml(filtered, { title }))
+  const htmlUrl = `${(process.env.CLOUDFRONT_DOMAIN ?? '').replace(/\/$/, '')}/s/${encodeURIComponent(shareId)}`
+  if (wantsMarkdown) return md(renderMarkdown(filtered, { title, htmlUrl, includeVisualSource: includeTools }))
+  const response = html(renderHtml(filtered, { title, ...(wantsHtmlDownload ? {} : { downloadUrl: `${htmlUrl}.html` }) }))
+  if (wantsHtmlDownload) response.headers!['Content-Disposition'] = `attachment; filename="chatrock-${shareId.replace(/[^a-z0-9-]/gi, '')}.html"`
+  return response
 }
