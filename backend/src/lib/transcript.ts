@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { signCloudFrontUrl } from './attachments'
 import type { Block } from './llm/blocks'
 import type { TokenUsage } from './bedrock'
-import { visualDocument, visualAspectRatio, visualSvgWidth, VISUAL_HOST_SCRIPT, type VisualArtifact } from '../../../shared/visuals'
+import { visualDocument, VISUAL_HOST_SCRIPT, type VisualArtifact } from '../../../shared/visuals'
 
 // ── Display types (safe to send to clients / render publicly — no signatures / redactedContent) ──
 //
@@ -427,11 +427,9 @@ function stepToHtml(step: Step): string {
       if (step.visual) {
         const v = step.visual
         const channel = randomUUID()
-        const ratio = visualAspectRatio(v)
-        const authoredWidth = visualSvgWidth(v)
         // See docs/adr/0064-inline-visual-sizing-and-html-export.md.
         return `<section class="visual"><h3>${escapeHtml(v.title)}</h3><p>${escapeHtml(v.summary)}</p>` +
-          `<iframe data-visual-channel="${channel}"${ratio ? ` data-visual-ratio="${ratio}"` : ''}${authoredWidth ? ` data-visual-width="${authoredWidth}"` : ''} title="${escapeHtml(v.title)}" sandbox="${v.format === 'html' ? 'allow-scripts' : ''}" referrerpolicy="no-referrer" style="width:100%;height:${v.height}px;border:0;display:block" srcdoc="${escapeHtml(visualDocument(v, channel))}"></iframe></section>`
+          `<iframe data-visual-channel="${channel}" title="${escapeHtml(v.title)}" sandbox="allow-scripts" referrerpolicy="no-referrer" style="width:100%;height:${v.height}px;border:0;display:block" srcdoc="${escapeHtml(visualDocument(v, channel))}"></iframe></section>`
       }
       let input = step.input
       try { input = JSON.stringify(JSON.parse(step.input), null, 2) } catch { /* leave as-is */ }

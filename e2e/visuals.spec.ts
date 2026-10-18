@@ -158,7 +158,7 @@ test('portrait SVG keeps readable typography in wide cards, expanded views and H
 <text x="28" y="372" font-size="14">Stage 2: transition</text>
 <rect x="16" y="600" width="288" height="180" rx="8" fill="#e8efff"/>
 <text x="28" y="632" font-size="14">Stage 3: review</text>
-<text id="last" x="16" y="900" font-size="13">End of timeline</text></svg>`,
+<text id="last" x="16" y="940" font-size="13">End of timeline</text></svg>`,
   }
   await openApp(page)
   const { chatId } = await newChat(page)
@@ -173,10 +173,13 @@ test('portrait SVG keeps readable typography in wide cards, expanded views and H
     await expect.poll(() => inner.locator('svg').evaluate(svg => svg.getBoundingClientRect().width)).toBeLessThanOrEqual(320)
     if (nativeSize) {
       await expect.poll(() => inner.locator('svg').evaluate(svg => svg.getBoundingClientRect().width)).toBe(320)
-      await expect.poll(() => container.locator('iframe').evaluate(f => f.clientHeight)).toBe(949)
+      await expect.poll(() => container.locator('iframe').evaluate(f => f.clientHeight)).toBeGreaterThan(964)
     }
-    // The last label remains within the viewport; no clipping or inner scroll.
-    await expect.poll(() => inner.locator('#last').evaluate(el => el.getBoundingClientRect().bottom <= innerHeight)).toBe(true)
+    // Content beyond the authored viewBox is visible, including text descenders.
+    await expect.poll(() => inner.locator('#last').evaluate(el => {
+      const svg = el.closest('svg')!.getBoundingClientRect()
+      return el.getBoundingClientRect().bottom <= svg.bottom && svg.bottom <= innerHeight
+    })).toBe(true)
     await expect.poll(() => inner.locator('body').evaluate(el => el.scrollHeight <= innerHeight + 1)).toBe(true)
   }
   try {
@@ -248,4 +251,24 @@ try{window.top.location='https://invalid.example/top'}catch{};window.open('https
   expect(page.context().pages()).toHaveLength(1)
   expect(page.url()).toContain('/s/visual-browser-test')
   expect(visualDocument(visual)).toContain("frame-src about:")
+})
+
+test('SVG sizing runs trusted code while CSP blocks source scripts', async ({ page }) => {
+  await openApp(page)
+  // Bypass source validation only in this fixture to exercise the CSP boundary.
+  const visual: VisualArtifact = {
+    title: 'SVG isolation', summary: 'Trusted sizing only.', format: 'svg', height: 300,
+    source: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 100">
+<text id="status" x="12" y="140" font-size="18">Passive graphics</text>
+<script>document.querySelector('#status').textContent='Executed source script'</script></svg>`,
+  }
+  expect(() => validateVisual(visual)).toThrow('passive')
+  const channel = 'svg-isolation-test'
+  const body = `<iframe data-visual-channel="${channel}" sandbox="allow-scripts" style="width:400px;height:300px;border:0" srcdoc="${visualDocument(visual, channel).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></iframe><script>${VISUAL_HOST_SCRIPT}</script>`
+  await page.route('**/s/svg-isolation-test', route => route.fulfill({ contentType: 'text/html', body }))
+  await page.goto('/s/svg-isolation-test')
+  const inner = page.frameLocator('iframe').frameLocator('iframe')
+  await expect(inner.locator('#status')).toHaveText('Passive graphics')
+  await expect.poll(() => inner.locator('svg').evaluate(s => s.viewBox.baseVal.height)).toBeGreaterThan(140)
+  await expect.poll(() => inner.locator('#status').evaluate(el => el.getBoundingClientRect().bottom <= innerHeight)).toBe(true)
 })

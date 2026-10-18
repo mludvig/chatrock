@@ -22,7 +22,7 @@ test('visuals survive durable grouping and clean share/export without exposing e
   expect(markdown).not.toContain(visual.source)
   expect(renderMarkdown(bubbles, { title: 'T', includeVisualSource: true })).toContain('```svg')
   const html = renderHtml(bubbles, { title: 'T' })
-  expect(html).toContain('sandbox=""')
+  expect(html).toContain('sandbox="allow-scripts"')
   expect(html).toContain('srcdoc=')
   expect(html).not.toContain(visual.source)
 })

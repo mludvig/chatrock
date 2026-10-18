@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { validateVisual, visualDocument, visualAspectRatio, visualSvgWidth, visualMessageHeight, visualSvgHeight, VISUAL_SIZE_REQUEST, type VisualArtifact } from '../../../shared/visuals'
+import { validateVisual, visualDocument, visualMessageHeight, VISUAL_SIZE_REQUEST, type VisualArtifact } from '../../../shared/visuals'
 import Dialog from './Dialog'
 
 export default function VisualCard({ visual }: { visual: VisualArtifact }) {
@@ -23,18 +23,11 @@ export default function VisualCard({ visual }: { visual: VisualArtifact }) {
     }
     window.addEventListener('message', onSize)
     const requestSize = () => frame.contentWindow?.postMessage({ type: VISUAL_SIZE_REQUEST, channel }, '*')
-    if (visual.format === 'html') {
-      frame.addEventListener('load', requestSize)
-      requestSize()
-    }
-    const ratio = visualAspectRatio(visual)
-    const authoredWidth = visualSvgWidth(visual)
-    const observer = ratio ? new ResizeObserver(() => setHeight(visualSvgHeight(frame.getBoundingClientRect().width, ratio, authoredWidth))) : undefined
-    observer?.observe(frame)
+    frame.addEventListener('load', requestSize)
+    requestSize()
     return () => {
       window.removeEventListener('message', onSize)
       frame.removeEventListener('load', requestSize)
-      observer?.disconnect()
     }
   }, [visual, document, channel, revision, expanded])
   if (!document) return <p className="visual-error">This visual could not be displayed.</p>
@@ -51,7 +44,7 @@ export default function VisualCard({ visual }: { visual: VisualArtifact }) {
 
   const frame = (large = false) => (
     <iframe ref={frameRef} key={`${revision}-${large}`} title={visual.title} className="visual-frame"
-      sandbox={visual.format === 'html' ? 'allow-scripts' : ''} referrerPolicy="no-referrer"
+      sandbox="allow-scripts" referrerPolicy="no-referrer"
       srcDoc={document} style={{ height }} />
   )
   return (

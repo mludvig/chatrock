@@ -3,7 +3,7 @@ import { converseOnce } from '../../src/lib/bedrock'
 import { executeCreateVisualTool } from '../../src/lib/visuals/tool'
 import { renderChart, validateChart } from '../../src/lib/visuals/chart'
 import { VISUAL_MODEL, isValidModelId } from '../../src/config/models'
-import { validateVisual, visualMessageHeight, visualAspectRatio, visualSvgWidth, visualSvgHeight, VISUAL_SIZE_MESSAGE, type VisualArtifact } from '../../../shared/visuals'
+import { validateVisual, visualMessageHeight, visualSvgWidth, VISUAL_SIZE_MESSAGE, type VisualArtifact } from '../../../shared/visuals'
 
 const once = converseOnce as jest.Mock
 const ctx = { sub: 'test-user', chatId: 'test-chat', modelId: 'small-narrator' }
@@ -21,23 +21,11 @@ test('sizing messages accept only a matching channel and finite positive height'
   expect(visualMessageHeight({ ...message, height: 1e9 }, 'frame-1')).toBe(20_000)
 })
 
-test('SVG sizes follow viewBox proportions, with a fallback for legacy invalid roots', () => {
-  const visual = { ...output, title: 'Flow', format: 'svg' as const }
-  expect(visualAspectRatio(visual)).toBe(1)
-  expect(visualSvgHeight(720, 2)).toBe(372)
-  expect(visualAspectRatio({ ...visual, source: '<svg viewBox="0 0 0 4"></svg>' })).toBeUndefined()
-  expect(visualAspectRatio({ ...visual, source: '<svg></svg>' })).toBeUndefined()
-})
-
-test('narrow SVG keeps its authored size in wide cards and shrinks on phones', () => {
+test('SVG authored width uses explicit pixel width or a valid viewBox', () => {
   const visual = { ...output, title: 'Timeline', format: 'svg' as const,
     source: '<svg viewBox="0 0 320 925" width="100%"></svg>' }
-  const ratio = visualAspectRatio(visual)!
   const width = visualSvgWidth(visual)!
   expect(width).toBe(320)
-  expect(visualSvgHeight(900, ratio, width)).toBe(949)
-  expect(visualSvgHeight(1200, ratio, width)).toBe(949)
-  expect(visualSvgHeight(264, ratio, width)).toBe(718)
   expect(visualSvgWidth({ ...visual, source: '<svg width="640px" viewBox="0 0 320 925"></svg>' })).toBe(640)
   expect(visualSvgWidth({ ...visual, source: '<svg width="480" viewBox="0 0 320 925"></svg>' })).toBe(480)
   expect(visualSvgWidth({ ...visual, source: '<svg width="0" viewBox="0 0 320 925"></svg>' })).toBe(320)
