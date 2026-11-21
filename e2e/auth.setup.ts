@@ -10,6 +10,7 @@
  */
 import { test as setup, expect } from '@playwright/test'
 import * as path from 'path'
+import { signInOnHostedUi } from './ux.helpers'
 
 const STATE_FILE = path.join(__dirname, '../.auth/state.json')
 
@@ -28,31 +29,7 @@ setup('authenticate', async ({ page }) => {
   await loginButton.waitFor({ timeout: 15_000 })
   await loginButton.click()
 
-  // On Cognito Hosted UI — fill in credentials.
-  // The Hosted UI injects both a mobile form (CSS-hidden) and a desktop form.
-  // Both have the same IDs, so strict-mode locators fail. We wait for the DOM
-  // to be ready (state: attached), then fill via evaluate() to hit the visible form.
-  await page.waitForSelector('#signInFormUsername', { state: 'attached', timeout: 15_000 })
-  await page.evaluate(
-    ([user, pass]: string[]) => {
-      const userInputs = document.querySelectorAll<HTMLInputElement>('#signInFormUsername')
-      const passInputs = document.querySelectorAll<HTMLInputElement>('#signInFormPassword')
-      // Pick the visible one (offsetParent === null means hidden)
-      const visibleUser = Array.from(userInputs).find(el => el.offsetParent !== null) ?? userInputs[userInputs.length - 1]
-      const visiblePass = Array.from(passInputs).find(el => el.offsetParent !== null) ?? passInputs[passInputs.length - 1]
-      visibleUser.value = user
-      visibleUser.dispatchEvent(new Event('input', { bubbles: true }))
-      visiblePass.value = pass
-      visiblePass.dispatchEvent(new Event('input', { bubbles: true }))
-    },
-    [username, password],
-  )
-  // Click the submit button — also duplicated; pick the visible one
-  await page.evaluate(() => {
-    const buttons = document.querySelectorAll<HTMLInputElement>('[name="signInSubmitButton"]')
-    const visible = Array.from(buttons).find(el => el.offsetParent !== null) ?? buttons[buttons.length - 1]
-    visible.click()
-  })
+  await signInOnHostedUi(page, username, password)
 
   // Wait for redirect back to the app
   await page.waitForURL('**/c/new', { timeout: 30_000 })

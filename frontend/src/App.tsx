@@ -14,6 +14,7 @@ import ProjectView from './components/ProjectView'
 import Toaster from './components/Toaster'
 import { sortByRecent } from './lib/sort'
 import { mergeFetchedChats } from './lib/chatList'
+import { isNetworkAuthError, needsInteractiveSignin, returnToState } from './lib/authRedirect'
 import './app.scss'
 
 // Renew this far ahead of expiry rather than at it: a token that dies mid-handshake looks
@@ -204,22 +205,36 @@ export default function App() {
 
   // Auto-retry on transient network errors (e.g. laptop wake / coming back online).
   // The refresh token is still valid — we just couldn't reach the token endpoint.
-  const isNetworkError = /NetworkError|Failed to fetch|network/i.test(auth.error?.message ?? '')
+  const isNetworkError = isNetworkAuthError(auth.error)
   useEffect(() => {
     if (!isNetworkError) return
     const timer = setTimeout(() => void auth.signinSilent(), 3000)
     return () => clearTimeout(timer)
   }, [isNetworkError, auth])
 
+  // A rejected refresh token can't be renewed — send the user to sign in again, and back
+  // to this page afterwards. The ref keeps `auth` churn during the redirect from firing it twice.
+  const mustSignIn = needsInteractiveSignin(auth.error)
+  const redirectingRef = useRef(false)
+  useEffect(() => {
+    if (!mustSignIn || redirectingRef.current) return
+    redirectingRef.current = true
+    void auth.removeUser().then(() => auth.signinRedirect({ state: returnToState() }))
+  }, [mustSignIn, auth])
+
   if (auth.isLoading || (!auth.isAuthenticated && auth.user?.refresh_token && !auth.error)) {
     return <div className="splash">Loading…</div>
+  }
+
+  if (mustSignIn) {
+    return <div className="splash">Session expired — signing in again…</div>
   }
 
   if (auth.error) {
     return (
       <div className="splash error">
         {isNetworkError ? 'Connection error — retrying…' : `Auth error: ${auth.error.message}`}
-        <button onClick={() => void auth.removeUser().then(() => auth.signinRedirect())}>Reset</button>
+        <button onClick={() => void auth.removeUser().then(() => auth.signinRedirect({ state: returnToState() }))}>Reset</button>
       </div>
     )
   }
@@ -233,7 +248,7 @@ export default function App() {
           </div>
           <h1>Chatrock</h1>
           <p>Sign in to start chatting.</p>
-          <button className="btn-primary btn-lg" onClick={() => auth.signinRedirect()}>
+          <button className="btn-primary btn-lg" onClick={() => auth.signinRedirect({ state: returnToState() })}>
             Sign in
           </button>
         </div>

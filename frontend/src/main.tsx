@@ -2,10 +2,11 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from 'react-oidc-context'
-import { WebStorageStateStore } from 'oidc-client-ts'
+import { WebStorageStateStore, type User } from 'oidc-client-ts'
 import { ENV } from './env'
 import { installViewportHeightTracking } from './lib/viewportHeight'
 import App from './App'
+import { returnPathFromState } from './lib/authRedirect'
 
 installViewportHeightTracking()
 
@@ -28,9 +29,11 @@ const oidcConfig = {
     end_session_endpoint: `${ENV.cognitoDomain}/logout`,
     jwks_uri: `${cognitoIdpBase}/${ENV.cognitoUserPoolId}/.well-known/jwks.json`,
   },
-  onSigninCallback: () => {
-    // Clean up the PKCE callback params and redirect to /c/new
-    window.history.replaceState({}, document.title, '/c/new')
+  onSigninCallback: (user: User | undefined) => {
+    // Clean up the PKCE callback params and return to the page that started the sign-in
+    window.history.replaceState({}, document.title, returnPathFromState(user?.state))
+    // replaceState is invisible to React Router, which would otherwise keep routing /callback
+    window.dispatchEvent(new PopStateEvent('popstate'))
   },
 }
 
