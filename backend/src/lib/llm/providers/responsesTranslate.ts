@@ -20,6 +20,7 @@ import {
   type ToolResultEntry as NeutralToolResultEntry,
   encodeOpaque, decodeOpaque,
 } from '../blocks'
+import { textDocument } from '../documents'
 
 interface ResponsesReasoning {
   id: string
@@ -38,16 +39,11 @@ function mediaSourceToDataUrl(source: MediaSource, mime: string): string {
   return source.s3Uri
 }
 
-function mediaSourceToText(source: MediaSource): string {
-  if ('bytes' in source) return Buffer.from(source.bytes).toString('utf8')
-  return `[document at ${source.s3Uri} — not hydrated]`
-}
-
 const INLINE_TEXT_DOCUMENT_FORMATS: DocumentFormat[] = ['txt', 'md', 'csv']
 
 function documentContent(doc: DocumentRef): { type: 'input_text'; text: string } | { type: 'input_file'; filename: string; file_data: string } {
   if (INLINE_TEXT_DOCUMENT_FORMATS.includes(doc.format)) {
-    return { type: 'input_text', text: `<document name="${doc.name}">\n${mediaSourceToText(doc.source)}\n</document>` }
+    return { type: 'input_text', text: textDocument(doc) }
   }
   return { type: 'input_file', filename: doc.name, file_data: mediaSourceToDataUrl(doc.source, 'application/pdf') }
 }

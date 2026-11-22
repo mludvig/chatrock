@@ -1269,6 +1269,27 @@ test('cachePoint still goes last when the boundary message has no document', asy
   expect('cachePoint' in content[content.length - 1]).toBe(true)
 })
 
+test('a Converse model without PDF support reads text documents inline and gets a note for a PDF', async () => {
+  getMockSend().mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockStart: { contentBlockIndex: 0, start: {} } },
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'answer' } } },
+    { contentBlockStop: { contentBlockIndex: 0 } },
+    { messageStop: { stopReason: 'end_turn' } },
+  ]))
+  const textDoc = { kind: 'document' as const, document: { format: 'txt' as const, name: 'notes.txt', source: { bytes: new TextEncoder().encode('hello') } } }
+  const pdfDoc = { kind: 'document' as const, document: { format: 'pdf' as const, name: 'report.pdf', source: { bytes: new Uint8Array([1]) } } }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  for await (const _chunk of converseStream('global.xai.grok-4.7', '', [{ role: 'user', content: [{ kind: 'text', text: 'read' }, textDoc, pdfDoc] }], { settings: {}, ctx: { sub: 'user-1' }, call: TEST_CALL })) {
+    // drain
+  }
+
+  const content = sentContent()
+  expect(content.some(b => 'document' in b)).toBe(false)
+  // Names arrive already Converse-sanitized by sanitizeHistory (docs/adr/0054), hence no extension.
+  expect(content).toContainEqual({ text: '<document name="notes">\nhello\n</document>' })
+  expect(content).toContainEqual({ text: '[PDF "report" omitted: this model can\'t read PDFs]' })
+})
+
 // ── forced Search turn: forceToolName param ──────────────────────────────────────
 
 describe('converseStream forceToolName (forced Search turn)', () => {

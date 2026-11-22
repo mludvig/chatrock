@@ -12,6 +12,7 @@ import type {
   ResponseInputItem, ResponseStreamEvent, FunctionTool, Response as OpenAIResponse,
 } from 'openai/resources/responses/responses'
 import { getCapabilities, type ModelSettings } from '../../../config/models'
+import { adaptDocuments } from '../documents'
 import { ensureBedrockAuth, bedrockRegion } from '../../bedrockAuth'
 import type { StreamChunk, TurnRequest, TurnResult, OnceRequest, OnceResult, ChatProvider, TokenUsage } from '../types'
 import type { ToolSpec } from '../toolSpec'
@@ -148,7 +149,7 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   const caps = getCapabilities(req.modelId)
   const client = await getClient()
 
-  const input: ResponseInputItem[] = fromNeutralMessages(req.messages, req.modelId)
+  const input: ResponseInputItem[] = fromNeutralMessages(adaptDocuments(req.messages, { pdf: caps.pdf, inlineText: false }), req.modelId)
   const tools = req.tools.map(toResponsesTool)
 
   const create = (input: ResponseInputItem[]) => client.responses.create({
@@ -222,7 +223,7 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
 async function once(req: OnceRequest): Promise<OnceResult> {
   const caps = getCapabilities(req.modelId)
   const client = await getClient()
-  const input: ResponseInputItem[] = fromNeutralMessages(req.messages, req.modelId)
+  const input: ResponseInputItem[] = fromNeutralMessages(adaptDocuments(req.messages, { pdf: caps.pdf, inlineText: false }), req.modelId)
   const response = await client.responses.create({
     model: req.modelId,
     input,

@@ -15,6 +15,7 @@ import ChatDetailsDialog from './ChatDetailsDialog'
 import ItemMenu from './ItemMenu'
 import { describeChatPrivacy } from '../lib/privacyDescription'
 import { queuedBubble, takeInjected } from '../lib/queuedMessages'
+import { countPdfAttachments, PDF_CONTENT_TYPE } from '../lib/pdfSupport'
 
 interface Props {
   models: Model[]
@@ -183,6 +184,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   }
 
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [dismissedPdfNotice, setDismissedPdfNotice] = useState<string | null>(null)
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null)
   const [editParentId, setEditParentId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -263,7 +265,12 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const currentModelId = isNew ? (newModel || draftProject?.defaultModel || defaultModel) : (activeChat?.model || defaultModel)
   const currentModelDef = models.find(m => m.id === currentModelId)
   const currentCaps: ModelCapabilities = currentModelDef?.capabilities
-    ?? { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
+    ?? { provider: 'bedrock-converse', thinking: 'none', attachments: true, pdf: true, promptCaching: 'none' }
+  const modelName = currentModelDef?.name ?? 'This model'
+  // A model without PDF support sees only a note in place of each PDF. See docs/adr/0071-pdf-support-separate-from-text-documents.md.
+  const unreadablePdfs = currentCaps.pdf ? [] : attachments.filter(a => a.contentType === PDF_CONTENT_TYPE)
+  const historyPdfCount = currentCaps.pdf || isNew ? 0 : countPdfAttachments(messages)
+  const pdfNoticeKey = `${chatId}:${currentModelId}`
 
   // Store only explicit overrides; display and send the resolved values. See docs/adr/0045-simple-navigation-and-project-drafts.md.
   const effectiveSettings: ModelSettings = {
@@ -385,8 +392,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       }
     }
 
-    if (kind === 'document' && !currentCaps.documents) {
-      pushToast({ kind: 'error', text: `${currentModelDef?.name ?? 'This model'} can't read documents, only images: ${file.name}` })
+    if (ct === PDF_CONTENT_TYPE && !currentCaps.pdf) {
+      pushToast({ kind: 'error', text: `${modelName} can't read PDFs: ${file.name}` })
       return
     }
 
@@ -1280,6 +1287,10 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
       pushToast({ kind: 'error', text: 'Please wait for uploads to finish' })
       return
     }
+    if (unreadablePdfs.length > 0) {
+      pushToast({ kind: 'error', text: `${modelName} can't read PDFs: remove ${unreadablePdfs.map(a => a.filename).join(', ')} or pick another model` })
+      return
+    }
     const editMsgId = editingMsgId
     const editPid = editParentId
     // Flush synchronously so the debounced save (composer onChange) can't lose anything
@@ -1737,6 +1748,18 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
         </div>
       )}
 
+      {historyPdfCount > 0 && dismissedPdfNotice !== pdfNoticeKey && (
+        <div className="error-banner warning">
+          <span>
+            <FontAwesomeIcon icon={faTriangleExclamation} /> {modelName} can't read the {historyPdfCount === 1 ? 'PDF' : `${historyPdfCount} PDFs`} earlier
+            in this chat — it sees only a note in their place.
+          </span>
+          <button onClick={() => setDismissedPdfNotice(pdfNoticeKey)} title="Dismiss">
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        </div>
+      )}
+
       <div className="messages-wrap">
         <div className="messages" ref={messagesRef} onScroll={handleMessagesScroll}>
           {loadingMessages && (
@@ -1858,7 +1881,8 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             {attachments.map(att => (
               <div
                 key={att.id}
-                className={`attachment-tray-item${att.status === 'error' ? ' error' : att.status === 'uploading' ? ' uploading' : ''}`}
+                className={`attachment-tray-item${att.status === 'error' || unreadablePdfs.includes(att) ? ' error' : att.status === 'uploading' ? ' uploading' : ''}`}
+                title={unreadablePdfs.includes(att) ? `${modelName} can't read PDFs` : undefined}
               >
                 {att.attachmentKind === 'image' && (att.localUrl || att.url)
                   ? <img className="tray-thumbnail" src={att.localUrl ?? att.url} alt={att.filename} />
@@ -1866,6 +1890,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
                 <span className="tray-filename">{att.filename}</span>
                 {att.status === 'uploading' && <FontAwesomeIcon icon={faSpinner} spin className="tray-spinner" />}
                 {att.status === 'error' && <span className="tray-error" title={att.errorMsg}>!</span>}
+                {unreadablePdfs.includes(att) && <span className="tray-error" title={`${modelName} can't read PDFs`}>!</span>}
                 {att.attachmentKind === 'document' && att.status === 'ready' && (
                   <button
                     className={`tray-mode-btn${att.mode === 'rich' ? ' rich' : ''}`}
@@ -1946,9 +1971,10 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             ref={fileInputRef}
             type="file"
             multiple
-            accept={currentCaps.documents
-              ? [...Object.keys(ALLOWED_TYPES), ...[...TEXT_EXTENSIONS].map(ext => `.${ext}`)].join(',')
-              : Object.keys(ALLOWED_TYPES).filter(ct => ALLOWED_TYPES[ct] === 'image').join(',')}
+            accept={[
+              ...Object.keys(ALLOWED_TYPES).filter(ct => currentCaps.pdf || ct !== PDF_CONTENT_TYPE),
+              ...[...TEXT_EXTENSIONS].map(ext => `.${ext}`),
+            ].join(',')}
             style={{ display: 'none' }}
             onChange={e => {
               const files = Array.from(e.target.files ?? [])
@@ -1996,16 +2022,14 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             disabled={creatingChat}
             autoFocus
           />
-          {(currentCaps?.attachments || currentCaps?.documents) && (
-            <button
-              className="btn-attach"
-              title="Attach file"
-              disabled={(sending && isNew) || creatingChat}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <FontAwesomeIcon icon={faPaperclip} />
-            </button>
-          )}
+          <button
+            className="btn-attach"
+            title={currentCaps.pdf ? 'Attach file' : `Attach images or text files (${modelName} can't read PDFs)`}
+            disabled={(sending && isNew) || creatingChat}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <FontAwesomeIcon icon={faPaperclip} />
+          </button>
           {sending && (
             // sending is derived from sendingByChat[viewedOrPendingChatId], so it's already
             // scoped to the chat currently in view — see docs/adr/0040-concurrent-per-chat-streaming.md.
@@ -2022,7 +2046,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
             <button
               className="btn-send"
               onClick={() => handleSend()}
-              disabled={creatingChat || (!isNew && !activeChat) || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
+              disabled={creatingChat || (!isNew && !activeChat) || unreadablePdfs.length > 0 || (!input.trim() && attachments.filter(a => a.status === 'ready').length === 0)}
               title={isMobileViewport() ? 'Send' : 'Send (Enter to submit, Shift+Enter for a new line)'}
             >
               <FontAwesomeIcon icon={faPaperPlane} />

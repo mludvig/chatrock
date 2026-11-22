@@ -327,6 +327,39 @@ describe('bedrockResponses.streamTurn', () => {
   })
 })
 
+describe('bedrockResponses PDF support', () => {
+  const completed = {
+    status: 'completed', output_text: 'ok',
+    output: [{ type: 'message', id: 'm1', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'ok', annotations: [] }] }],
+    usage: { input_tokens: 1, input_tokens_details: { cached_tokens: 0 }, output_tokens: 1, output_tokens_details: {}, total_tokens: 2 },
+  }
+  const messages: NeutralMessage[] = [{
+    role: 'user',
+    content: [
+      { kind: 'text', text: 'read' },
+      { kind: 'document', document: { format: 'pdf', name: 'report.pdf', source: { bytes: new Uint8Array([1]) } } },
+      { kind: 'document', document: { format: 'txt', name: 'notes.txt', source: { bytes: new TextEncoder().encode('hello') } } },
+    ],
+  }]
+  const sentParts = () => mockCreate.mock.calls[0][0].input[0].content as Array<Record<string, unknown>>
+
+  test('a model without PDF support gets a note instead of the file; text documents still go inline', async () => {
+    mockCreate.mockResolvedValue(fakeStream([{ type: 'response.completed', response: completed }]))
+    await drain(bedrockResponsesProvider.streamTurn({ modelId: 'global.openai.gpt-6.2-sol', systemPrompt: '', messages, tools: [], settings: {}, cacheBoundaryIndex: -1 }))
+
+    expect(sentParts().some(p => p.type === 'input_file')).toBe(false)
+    expect(sentParts()).toContainEqual({ type: 'input_text', text: '[PDF "report.pdf" omitted: this model can\'t read PDFs]' })
+    expect(sentParts()).toContainEqual({ type: 'input_text', text: '<document name="notes.txt">\nhello\n</document>' })
+  })
+
+  test('a model with PDF support still gets the PDF as an input_file', async () => {
+    mockCreate.mockResolvedValue(fakeStream([{ type: 'response.completed', response: completed }]))
+    await drain(bedrockResponsesProvider.streamTurn({ modelId: 'global.openai.gpt-6.1-sol', systemPrompt: '', messages, tools: [], settings: {}, cacheBoundaryIndex: -1 }))
+
+    expect(sentParts()).toContainEqual(expect.objectContaining({ type: 'input_file', filename: 'report.pdf' }))
+  })
+})
+
 describe('bedrockResponses.sanitizeHistory', () => {
   test('drops thinking blocks with foreign (bedrock-converse) opaque', () => {
     const opaque = encodeOpaque('bedrock-converse', { signature: 'sig' })

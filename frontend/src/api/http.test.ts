@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { carryThinkingEffort, type ModelCapabilities } from './http'
 
 const caps = (thinkingLevels?: ModelCapabilities['thinkingLevels'], thinking: ModelCapabilities['thinking'] = 'effort'): ModelCapabilities =>
-  ({ provider: 'bedrock-responses', thinking, thinkingLevels, attachments: true, documents: true, promptCaching: 'none' })
+  ({ provider: 'bedrock-responses', thinking, thinkingLevels, attachments: true, pdf: true, promptCaching: 'none' })
 
 describe('carryThinkingEffort', () => {
   it('keeps the chosen effort when the new model supports it', () => {

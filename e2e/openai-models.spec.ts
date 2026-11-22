@@ -7,8 +7,6 @@ import { test, expect, type Page } from '@playwright/test'
 import * as path from 'path'
 
 const GPT_MODEL_LABELS = ['GPT-6 Luna', 'GPT-6.1 Terra', 'GPT-6.2 Sol', 'GPT-6.1 Sol', 'GPT-6.2 Astra', 'GPT-6 Astra']
-// GPT-6.2 rejects PDF input, so it is registered with documents off: the composer refuses the text file.
-const NO_DOCUMENT_LABELS = new Set(['GPT-6.2 Sol', 'GPT-6.2 Astra'])
 // A real icon, not fixtures/test-image.png: GPT silently ignores that 1x1 pixel image.
 const PNG_FIXTURE = path.join(__dirname, '..', 'frontend', 'public', 'icon-192.png')
 const TXT_FIXTURE = path.join(__dirname, 'fixtures', 'hello.txt')
@@ -29,15 +27,12 @@ for (const label of GPT_MODEL_LABELS) {
       page.waitForEvent('filechooser'),
       page.locator('.btn-attach').click(),
     ])
-    const documents = !NO_DOCUMENT_LABELS.has(label)
     await fileChooser.setFiles([PNG_FIXTURE, TXT_FIXTURE])
-    await expect(page.locator('.attachment-tray-item')).toHaveCount(documents ? 2 : 1, { timeout: 5_000 })
+    await expect(page.locator('.attachment-tray-item')).toHaveCount(2, { timeout: 5_000 })
     await expect(page.locator('.attachment-tray-item.uploading')).toHaveCount(0, { timeout: 30_000 })
 
     const input = page.locator('.message-input')
-    await input.fill(documents
-      ? 'In one sentence each: what colour is the image, what does the text file say, and — using web search — what is the current AWS Lambda maximum timeout?'
-      : 'In one sentence each: what colour is the image, and — using web search — what is the current AWS Lambda maximum timeout?')
+    await input.fill('In one sentence each: what colour is the image, what does the text file say, and — using web search — what is the current AWS Lambda maximum timeout?')
     await input.press('Enter')
     await page.waitForURL(/\/c\/(?!new)[^/]+$/, { timeout: 30_000 })
     await waitForTurnDone(page, 1)
@@ -46,7 +41,7 @@ for (const label of GPT_MODEL_LABELS) {
     // Retrying assertions double as the wait: the Send button can reappear between rounds.
     const answer = page.locator('.message.assistant').last()
     await expect(answer).toContainText(/blue/i, { timeout: 60_000 })
-    if (documents) await expect(answer).toContainText(/hello|chatrock/i, { timeout: 60_000 })
+    await expect(answer).toContainText(/hello|chatrock/i, { timeout: 60_000 })
 
     await input.fill('Repeat the Lambda timeout you found, as a number of minutes only.')
     await input.press('Enter')

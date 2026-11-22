@@ -54,7 +54,7 @@ Probes, and the capability each one decides:
 | --- | --- |
 | `text`, `once` | basic streaming and one-shot calls (titles, enrichment, search ranking) |
 | `image`, `tool_result_image` | `attachments`; browser screenshots arrive as images *inside a tool result* |
-| `document_pdf`, `document_txt` | `documents` |
+| `document_pdf`, `document_txt` | `pdf` (WEAK with pdf off is expected: the model gets a note); `document_txt` must pass on every model |
 | `tool_roundtrip` | tool calling at all |
 | `forced_tool`, `forced_tool_thinking_high` | `forcedToolChoice` (ADR 0058) |
 | `thinking_<level>` | `thinking` mode and `thinkingLevels`; on Converse also `thinkingOff` |

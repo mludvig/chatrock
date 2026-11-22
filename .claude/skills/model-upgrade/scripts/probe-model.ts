@@ -35,7 +35,7 @@ if (existing) {
     id: modelId,
     name: `probe:${modelId}`,
     capabilities: {
-      provider: 'bedrock-responses', thinking: 'effort', attachments: true, documents: true,
+      provider: 'bedrock-responses', thinking: 'effort', attachments: true, pdf: true,
       promptCaching: 'explicit', maxOutputTokens: 16000, ...capsOverride,
     } as ModelCapabilities,
   })

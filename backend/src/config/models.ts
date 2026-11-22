@@ -21,7 +21,8 @@ export interface ModelCapabilities {
   // instead. Omit -> supported. See docs/adr/0058-forcing-a-tool-without-toolchoice.md.
   forcedToolChoice?: false
   attachments: boolean                          // images
-  documents: boolean                             // pdf/txt/csv/md
+  // PDF input. Text documents (txt/csv/md) work on every model. See docs/adr/0071-pdf-support-separate-from-text-documents.md.
+  pdf: boolean
   promptCaching: 'auto' | 'explicit' | 'none'
   maxOutputTokens?: number
 }
@@ -60,7 +61,7 @@ export const MODELS: Model[] = [
     id: 'global.anthropic.claude-fable-5-1',
     name: 'Claude Fable 5.1',
     replaces: ['global.anthropic.claude-fable-5'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', forcedToolChoice: false, attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', forcedToolChoice: false, attachments: true, pdf: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-opus-5-5',
@@ -69,13 +70,13 @@ export const MODELS: Model[] = [
       'global.anthropic.claude-opus-5', 'global.anthropic.claude-opus-5-1',
       'global.anthropic.claude-opus-4-8', 'apac.anthropic.claude-opus-4-8',
     ],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', forcedToolChoice: false, attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', forcedToolChoice: false, attachments: true, pdf: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   {
     id: 'global.anthropic.claude-sonnet-5-5',
     name: 'Claude Sonnet 5.5',
     replaces: ['global.anthropic.claude-sonnet-5', 'global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'between_tools', forcedToolChoice: false, attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'between_tools', forcedToolChoice: false, attachments: true, pdf: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   // Verified live against ap-southeast-2 Oct 2026: images, PDF/txt documents, cachePoints,
   // forced toolChoice (with or without thinking) and adaptive thinking at every effort all
@@ -84,7 +85,7 @@ export const MODELS: Model[] = [
     id: 'global.anthropic.claude-haiku-5-5',
     name: 'Claude Haiku 5.5',
     replaces: ['global.anthropic.claude-haiku-4-5-20251001-v1:0', 'apac.anthropic.claude-haiku-4-5-20251001'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'disabled', attachments: true, documents: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'disabled', attachments: true, pdf: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
   // OpenAI GPT via the Responses API on bedrock-runtime (docs/adr/0048-openai-models-on-bedrock-runtime.md).
   // Always reasons (no 'off' level) — thinkingLevels omits it.
@@ -93,7 +94,7 @@ export const MODELS: Model[] = [
   // GPT-6.2 verified live Nov 2026 (Sol and Astra; there is no 6.2 Terra/Luna): images (also inside a
   // tool result), txt documents, tools, forced tool_choice with and without reasoning, own-reasoning
   // replay and automatic prompt caching work. PDF input_file is rejected ("does not support PDF
-  // input") — older GPT models accept it — so documents is off. No encrypted_content is returned.
+  // input") — older GPT models accept it — so pdf is off. No encrypted_content is returned.
   // Astra: every effort level scales reasoning; 'none' rejected.
   {
     id: 'global.openai.gpt-6.2-astra',
@@ -101,7 +102,7 @@ export const MODELS: Model[] = [
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
-      attachments: true, documents: false, promptCaching: 'explicit',
+      attachments: true, pdf: false, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },
@@ -112,7 +113,7 @@ export const MODELS: Model[] = [
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
-      attachments: true, documents: true, promptCaching: 'explicit',
+      attachments: true, pdf: true, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },
@@ -124,7 +125,7 @@ export const MODELS: Model[] = [
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'max'],
-      attachments: true, documents: false, promptCaching: 'explicit',
+      attachments: true, pdf: false, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },
@@ -135,7 +136,7 @@ export const MODELS: Model[] = [
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
-      attachments: true, documents: true, promptCaching: 'explicit',
+      attachments: true, pdf: true, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },
@@ -149,7 +150,7 @@ export const MODELS: Model[] = [
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
-      attachments: true, documents: true, promptCaching: 'explicit',
+      attachments: true, pdf: true, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },
@@ -160,7 +161,7 @@ export const MODELS: Model[] = [
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
-      attachments: true, documents: true, promptCaching: 'explicit',
+      attachments: true, pdf: true, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },
@@ -174,12 +175,13 @@ export const MODELS: Model[] = [
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['off', 'low', 'medium', 'high', 'max'],
-      attachments: true, documents: true, promptCaching: 'explicit',
+      attachments: true, pdf: true, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },
   // xAI Grok via Bedrock Converse. Verified live against ap-southeast-2 Oct 2026 (Grok 4.7):
-  // image blocks work; document blocks are rejected ("This model doesn't support documents");
+  // image blocks work; document blocks are rejected ("This model doesn't support documents"), so
+  // with pdf off text documents are inlined as text (verified Nov 2026) and PDFs become a note;
   // temperature/topP are rejected (ValidationException); a cachePoint is an AccessDeniedException.
   // Always emits a reasoningContent/redactedContent block regardless of any thinking
   // param tried (Anthropic-style thinking.type=adaptive, reasoning_effort, reasoning.effort) with
@@ -188,7 +190,7 @@ export const MODELS: Model[] = [
     id: 'global.xai.grok-4.7',
     name: 'Grok 4.7',
     replaces: ['global.xai.grok-4.6'],
-    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: false, promptCaching: 'none', maxOutputTokens: 16000 },
+    capabilities: { provider: 'bedrock-converse', thinking: 'none', attachments: true, pdf: false, promptCaching: 'none', maxOutputTokens: 16000 },
   },
 ]
 
@@ -213,7 +215,7 @@ export const MEMORY_EXTRACTION_MODEL = DEFAULT_CHAT_MODEL
 
 export function getCapabilities(modelId: string): ModelCapabilities {
   return MODELS.find(m => m.id === modelId)?.capabilities
-    ?? { provider: 'bedrock-converse', thinking: 'none', attachments: true, documents: true, promptCaching: 'none' }
+    ?? { provider: 'bedrock-converse', thinking: 'none', attachments: true, pdf: true, promptCaching: 'none' }
 }
 
 export function isValidModelId(modelId: string): boolean {

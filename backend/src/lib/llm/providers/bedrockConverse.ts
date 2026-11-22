@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/client-bedrock-runtime'
 import type { DocumentType } from '@smithy/types'
 import { getCapabilities, type ModelSettings } from '../../../config/models'
+import { adaptDocuments } from '../documents'
 import { ensureBedrockAuth, bedrockRegion } from '../../bedrockAuth'
 import type { StreamChunk, TurnResult, TurnRequest, OnceRequest, OnceResult, ChatProvider, TokenUsage } from '../types'
 import type { ToolSpec } from '../toolSpec'
@@ -349,13 +350,15 @@ function sanitizeHistory(messages: NeutralMessage[]): NeutralMessage[] {
 }
 
 async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult> {
-  const cachingEnabled = getCapabilities(req.modelId).promptCaching !== 'none'
-  const bedrockMessages = req.messages.map(fromNeutralMessage)
+  const caps = getCapabilities(req.modelId)
+  const cachingEnabled = caps.promptCaching !== 'none'
+  // On Converse, document blocks and PDF support go together: a model without them reads text inline.
+  const bedrockMessages = adaptDocuments(req.messages, { pdf: caps.pdf, inlineText: !caps.pdf }).map(fromNeutralMessage)
   const withCache = injectCachePointAt(bedrockMessages, req.cacheBoundaryIndex, cachingEnabled)
 
   // A model that rejects forced toolChoice gets the forced tool as its only option instead.
   // See docs/adr/0058-forcing-a-tool-without-toolchoice.md.
-  const toolChoiceForce = getCapabilities(req.modelId).forcedToolChoice === false ? undefined : req.forceToolName
+  const toolChoiceForce = caps.forcedToolChoice === false ? undefined : req.forceToolName
   const offeredTools = req.forceToolName && !toolChoiceForce ? req.tools.filter(t => t.name === req.forceToolName) : req.tools
 
   let tools = toBedrockToolsWithCache(offeredTools, cachingEnabled)
@@ -399,7 +402,9 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
 }
 
 async function once(req: OnceRequest): Promise<OnceResult> {
-  return sendConverseOnce(req.modelId, req.systemPrompt, req.messages.map(fromNeutralMessage), { maxTokens: req.maxTokens })
+  const pdf = getCapabilities(req.modelId).pdf
+  const messages = adaptDocuments(req.messages, { pdf, inlineText: !pdf }).map(fromNeutralMessage)
+  return sendConverseOnce(req.modelId, req.systemPrompt, messages, { maxTokens: req.maxTokens })
 }
 
 export const bedrockConverseProvider: ChatProvider = {

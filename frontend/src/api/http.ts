@@ -123,7 +123,7 @@ export interface ModelCapabilities {
   thinking: 'adaptive' | 'effort' | 'none'
   thinkingLevels?: ThinkingEffort[]
   attachments: boolean
-  documents: boolean
+  pdf: boolean
   promptCaching: 'auto' | 'explicit' | 'none'
   region?: string
   maxOutputTokens?: number
