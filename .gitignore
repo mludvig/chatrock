@@ -21,7 +21,8 @@ playwright-report/
 test-results/
 .agents/
 .claude/settings.local.json
-.claude/skills/
+.claude/skills/*
+!.claude/skills/model-upgrade/
 skills-lock.json
 backend/scripts/migrate-blocks.mjs
 backend/scripts/backup-table.mjs
