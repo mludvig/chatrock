@@ -79,7 +79,7 @@ resource "aws_cloudwatch_metric_alarm" "ws_send_message_throttles" {
 
 # ── Bedrock call failures ───────────────────────────────────────────────────
 # ws_send_message is the primary Bedrock caller (chat streaming + all agentic tool use); it logs
-# a single `stream_error` line (console.error, backend/CLAUDE.md "CloudWatch logging" table) for
+# a single `stream_error` line (console.error, backend/AGENTS.md "CloudWatch logging" table) for
 # any hard failure in the ConverseStream loop — model errors, throttling, malformed history, etc.
 # http_chats (title generation) and http_projects (file summarization) also call Bedrock via
 # converseOnce but log-and-continue on failure rather than erroring the request, and are already
@@ -148,7 +148,7 @@ resource "aws_cloudwatch_metric_alarm" "bedrock_auth_ssm_failed" {
 }
 
 # ── Cascade-delete DLQ ───────────────────────────────────────────────────────
-# Any message here (root CLAUDE.md "Chat deletion & sensitive/ephemeral chats") means a chat's
+# Any message here (root AGENTS.md "Chat deletion & sensitive/ephemeral chats") means a chat's
 # message/S3 cascade-delete failed after retries — an orphaned-data leak, not a transient blip.
 resource "aws_cloudwatch_metric_alarm" "chat_cleanup_dlq_depth" {
   alarm_name          = "chatrock-chat-cleanup-dlq-depth-${var.env}"

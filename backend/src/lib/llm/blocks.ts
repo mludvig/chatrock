@@ -3,7 +3,7 @@
 // This is what lands in the DynamoDB `blocks` attribute (TurnRow.blocks) once
 // llm/providers/*/translate wires it up. Nothing in it is Bedrock- or
 // OpenAI-shaped — every provider's adapter translates to/from this at its own
-// boundary. See backend/CLAUDE.md's "LLM providers" section for the design.
+// boundary. See backend/AGENTS.md's "LLM providers" section for the design.
 
 import type { VisualArtifact } from '../../../../shared/visuals'
 
@@ -58,7 +58,7 @@ export interface ThinkingBlock {
 export interface ToolCallBlock {
   kind: 'tool_call'
   /** Opaque; pairs with the matching ToolResultBlock.callId. Never rewritten
-   *  in either direction between providers — see backend/CLAUDE.md. */
+   *  in either direction between providers — see backend/AGENTS.md. */
   callId: string
   name: string
   input: Record<string, unknown>

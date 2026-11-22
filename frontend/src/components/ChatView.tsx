@@ -254,7 +254,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
   const chatIdRef = useRef<string | undefined>(chatId)
 
   // Sensitive chats are returned by GET /api/chats like any other (visibility is a frontend
-  // filter, not an API-level exclusion — see "Sensitive & ephemeral chats" in backend/CLAUDE.md),
+  // filter, not an API-level exclusion — see "Sensitive & ephemeral chats" in backend/AGENTS.md),
   // so activeChat is a plain lookup with no fallback fetch needed.
   const activeChat = isNew ? null : chats.find(c => c.chatId === chatId)
   const chatProject = activeChat?.projectId ? projects.find(p => p.projectId === activeChat.projectId) : null
@@ -1542,7 +1542,7 @@ export default function ChatView({ models, defaultModel, onModelChange, onOpenSi
     catch (err) { setErrorMsg(`Could not move chat: ${String(err)}`) }
   }
 
-  // Sensitive/ephemeral are independent per-chat flags (see backend/CLAUDE.md) — toggled from
+  // Sensitive/ephemeral are independent per-chat flags (see backend/AGENTS.md) — toggled from
   // the header cog. Applies the flip optimistically so the checkbox/header respond instantly
   // (the PATCH+GET round trip alone felt like nothing was happening), then reconciles with the
   // authoritative DTO — needed for expiresAt, which only the server knows (fresh ttl on

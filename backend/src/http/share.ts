@@ -5,7 +5,7 @@ import { groupTurnsToBubbles, signBubbleAttachments, filterSteps, renderMarkdown
 
 // Public, UNAUTHENTICATED renderer for a shared chat — GET /s/{shareId}. No JWT: the route has
 // authorization_type=NONE in terraform, and this file must never call subFromClaims. The
-// unguessable ULID shareId is itself the capability — see backend/CLAUDE.md "Chat sharing".
+// unguessable ULID shareId is itself the capability — see backend/AGENTS.md "Chat sharing".
 //
 // Server-rendered, self-contained response (no client-side API calls): a plain GET/curl returns
 // readable HTML or Markdown immediately. Content negotiation, in priority order:

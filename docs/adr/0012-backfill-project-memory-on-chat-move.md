@@ -18,7 +18,7 @@ Alternatives considered:
 
 Option 2: `enrichProjectFactsByChatId(chatId, projectId)` in `backend/src/lib/enrichment.ts`, called from `http/chats.ts`'s PATCH handler right after `summarizeChatById`, only on a `null → projectId` transition (matching the existing `summarizeChatById` guard). Shares a new `buildChatTranscript` helper with `summarizeChatById` rather than duplicating the transcript-building logic a second time.
 
-Guarded by the same rules that already gate passive enrichment in `ws/sendMessage.ts` (see "Sensitive & ephemeral chats" in `backend/CLAUDE.md`): skipped when `chat.sensitive`, and skipped when the target project's `memoryEnabled` is off.
+Guarded by the same rules that already gate passive enrichment in `ws/sendMessage.ts` (see "Sensitive & ephemeral chats" in `backend/AGENTS.md`): skipped when `chat.sensitive`, and skipped when the target project's `memoryEnabled` is off.
 
 ## Consequences
 

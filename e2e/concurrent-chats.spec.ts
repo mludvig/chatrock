@@ -33,7 +33,7 @@ test('a background chat keeps streaming while a foreground chat sends, and cance
 
   // Navigate to a brand-new chat — client-side, so chat A's in-memory per-chat state
   // survives (a page.goto/reload here would wipe sendingByChat/streamingByChat, since they
-  // are deliberately not persisted — frontend/CLAUDE.md's "Persisted Zustand state" list).
+  // are deliberately not persisted — frontend/AGENTS.md's "Persisted Zustand state" list).
   await page.locator('button.btn-new[title="New chat"]').click()
   await expect(page).toHaveURL(/\/c\/new$/)
 

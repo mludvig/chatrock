@@ -298,7 +298,7 @@ The server pushes JSON frames such as these:
 A heartbeat goes out every 4 s while a tool runs or the model is thinking silently. If the
 model stays silent for 90 s, the round is aborted and retried. Cancelling sets a flag in
 DynamoDB, which the stream loop polls every 750 ms. The full frame table is in
-[`CLAUDE.md`](CLAUDE.md#websocket-event-protocol).
+[`AGENTS.md`](AGENTS.md#websocket-event-protocol).
 
 ### LLM layer
 
@@ -419,8 +419,8 @@ npm --prefix frontend run build     # tsc + Vite
 npm run test:e2e                    # Playwright against the live deployment
 ```
 
-[`CLAUDE.md`](CLAUDE.md), [`backend/CLAUDE.md`](backend/CLAUDE.md) and
-[`frontend/CLAUDE.md`](frontend/CLAUDE.md) are the detailed engineering notes.
+[`AGENTS.md`](AGENTS.md), [`backend/AGENTS.md`](backend/AGENTS.md) and
+[`frontend/AGENTS.md`](frontend/AGENTS.md) are the detailed engineering notes.
 
 ## Design decisions
 

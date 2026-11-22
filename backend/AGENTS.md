@@ -1,6 +1,8 @@
 # Backend
 
-See root `CLAUDE.md` for commands, architecture overview, DynamoDB schema, and key gotchas.
+This file provides backend implementation guidance for coding assistants like Claude Code or Codex.
+
+See root [AGENTS.md](../AGENTS.md) for commands, architecture overview, DynamoDB schema, and key gotchas.
 
 ## Backend structure
 
@@ -173,7 +175,7 @@ Call sites that must check `sensitive` (miss one of these and content leaks outs
 
 Other mechanics: `GET /api/chats` returns sensitive chats like any other (visibility is a frontend concern, not an API-level exclusion — `chatDto()` includes `sensitive`/`ephemeral`/`expiresAt` only when set). Forking inherits both flags from the source; `ephemeral` gets a **fresh** `ttl`. `updateChatSensitive`/`updateChatEphemeral` (`dynamo.ts`) fully `REMOVE` the attribute when turning a flag off, not just set `false`. Table's `ttl` attribute was already enabled for `CONN#` rows — ephemeral chats are the second user of it.
 
-**Frontend**: see "Chat controls and settings" in `frontend/CLAUDE.md`.
+**Frontend**: see "Chat controls and settings" in [frontend/AGENTS.md](../frontend/AGENTS.md#chat-controls-and-settings).
 
 ## Chat sharing
 

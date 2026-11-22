@@ -19,6 +19,6 @@ Option 2. Real scenarios split the two and can't be expressed by a single flag: 
 
 ## Consequences
 
-- Every place that could leak chat content outward — user-fact memory, project-fact memory, `search_history`'s summary index — must independently check `sensitive` rather than one combined flag; more call sites to get right (enumerated explicitly in `backend/CLAUDE.md`'s "Sensitive & ephemeral chats" section: enrichment skip, `resummarize` 400, search-corpus exclusion).
+- Every place that could leak chat content outward — user-fact memory, project-fact memory, `search_history`'s summary index — must independently check `sensitive` rather than one combined flag; more call sites to get right (enumerated explicitly in `backend/AGENTS.md`'s "Sensitive & ephemeral chats" section: enrichment skip, `resummarize` 400, search-corpus exclusion).
 - Marginally more UI surface than a single toggle, mitigated by a one-click "Private" shortcut (`ChatView.tsx`'s `.btn-private-toggle`) that sets both flags at once for the common case, alongside the dialog's independent per-flag control for the uncommon cases.
 - Title generation is deliberately *exempt* from the `sensitive` exclusion (the title lives on the chat record itself and is a frontend display-filter concern, not a content-leak concern) — a distinction easy to get backwards if "sensitive" is assumed to mean "hide from everything."

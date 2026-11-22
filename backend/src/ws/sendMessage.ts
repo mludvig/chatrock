@@ -930,7 +930,7 @@ const runSend = async (
   // skipped for memory, summary, and project facts: each of those writes into a shared or
   // searchable store (user memory, project memory, the search_history-indexed summary) that could
   // surface this chat's content from a different chat. See "Sensitive & ephemeral chats" in
-  // backend/CLAUDE.md.
+  // backend/AGENTS.md.
   {
     // Organization works even when learning new facts is disabled. See docs/adr/0044-project-context-and-memory-policy.md.
     const transcript = [

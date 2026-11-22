@@ -37,7 +37,7 @@ export interface Chat {
   projectId?: string
   summary?: string
   topics?: string[]
-  // Independent flags — see "Sensitive & ephemeral chats" in backend/CLAUDE.md.
+  // Independent flags — see "Sensitive & ephemeral chats" in backend/AGENTS.md.
   // sensitive: excluded from memory/summary/search_history; masked in the chat list unless
   // the "show sensitive" filter is on. ephemeral: auto-deletes at expiresAt (the DynamoDB TTL
   // deadline, fixed at creation).
@@ -336,7 +336,7 @@ export const api = {
 // download), not a JSON body — req() always calls res.json(). Authenticated like every other
 // /api/* call (bearer header); this is the OWNER's private export and is intentionally distinct
 // from the public /s/{shareId} link, where the ULID itself is the credential (see
-// backend/CLAUDE.md "Chat sharing" for why the two must not share an auth model).
+// backend/AGENTS.md "Chat sharing" for why the two must not share an auth model).
 export async function exportChat(chatId: string, opts: { includeThinking: boolean; includeTools: boolean; format?: 'md' | 'html' }): Promise<string> {
   const params = new URLSearchParams({
     includeThinking: String(opts.includeThinking),

@@ -1,6 +1,8 @@
 # Frontend
 
-See root `CLAUDE.md` for commands and architecture. Decisions behind the current
+This file provides frontend implementation guidance for coding assistants like Claude Code or Codex.
+
+See root [AGENTS.md](../AGENTS.md) for commands and architecture. Decisions behind the current
 navigation and knowledge experience are in ADRs 0045 and 0046.
 
 ## Layout and navigation

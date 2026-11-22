@@ -9,7 +9,7 @@ import { ToggleRow } from './PrefControls'
 
 // Create/list/revoke read-only public share links (/s/{shareId}), plus a Markdown export
 // and HTML downloads — all driven off the same server-side transcript serializer (see
-// backend/CLAUDE.md "Chat sharing"). Mode and include-thinking/include-tools are fixed at
+// backend/AGENTS.md "Chat sharing"). Mode and include-thinking/include-tools are fixed at
 // share-creation time (the server bakes them into the share record); export chooses them at
 // download time instead, since there's no persisted link to fix them on.
 export default function ShareTab({ chatId, chatTitle }: { chatId: string; chatTitle: string }) {

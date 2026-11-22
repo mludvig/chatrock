@@ -185,7 +185,7 @@ $header-h: 45px;
   &:hover { background: $accent-h; }
 
   // "New project" — always visible next to "New chat" rather than hidden behind a
-  // menu or only appearing once the Projects panel is already open (see frontend/CLAUDE.md).
+  // menu or only appearing once the Projects panel is already open (see frontend/AGENTS.md).
   // Outlined instead of filled so "New chat" keeps the stronger visual weight as the
   // far more common action.
   &--secondary {

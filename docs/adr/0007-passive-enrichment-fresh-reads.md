@@ -21,4 +21,4 @@ Option 2, in `ws/sendMessage.ts`'s post-turn enrichment block.
 
 - One extra DynamoDB read per turn when `memoryEnabled` — negligible cost for the correctness gained.
 - Enrichment and `manage_memory` can never race into duplicate entries for a fact established during the same turn.
-- This ordering is load-bearing and not obvious from reading `enrichUserFacts`/`enrichProjectFacts` in isolation — an innocuous-looking refactor to "just reuse the snapshot we already built for the prompt" would silently reintroduce duplicate memories. Documented in `backend/CLAUDE.md`'s Memory section as well as here.
+- This ordering is load-bearing and not obvious from reading `enrichUserFacts`/`enrichProjectFacts` in isolation — an innocuous-looking refactor to "just reuse the snapshot we already built for the prompt" would silently reintroduce duplicate memories. Documented in `backend/AGENTS.md`'s Memory section as well as here.

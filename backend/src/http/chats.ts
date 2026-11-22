@@ -36,7 +36,7 @@ export const handler = async (
     const items = await listChats(sub)
     // Sensitive chats ARE returned — the frontend's sidebar eye toggle hides/masks them by
     // default, but the API doesn't filter them out (see "Sensitive & ephemeral chats" in
-    // backend/CLAUDE.md).
+    // backend/AGENTS.md).
     const chats = items.map(i => chatDto(i))
     return ok({ chats })
   }
@@ -79,7 +79,7 @@ export const handler = async (
     const ephemeral = body.ephemeral === true
     // sensitive/ephemeral are independent flags — both are allowed on project chats. A
     // sensitive chat still reads project context in (instructions/files/memory) but never
-    // writes back to it; see "Sensitive & ephemeral chats" in backend/CLAUDE.md, and
+    // writes back to it; see "Sensitive & ephemeral chats" in backend/AGENTS.md, and
     // docs/adr/0008-sensitive-and-ephemeral-are-independent-flags.md.
     await putChat({
       ...buildChatKey(sub, chatId),
@@ -92,7 +92,7 @@ export const handler = async (
       ...(body.projectId !== undefined && body.projectId !== null ? { projectId: body.projectId as string } : {}),
       ...(sensitive ? { sensitive: true } : {}),
       // TTL is fixed at creation time, not sliding — see "Sensitive & ephemeral chats" in
-      // backend/CLAUDE.md. Cascade cleanup (messages + S3) runs off the Chat item's own
+      // backend/AGENTS.md. Cascade cleanup (messages + S3) runs off the Chat item's own
       // DynamoDB Stream REMOVE event (terraform/stream_chat_cleanup.tf), not this ttl field
       // directly, so there's nothing else to wire up here.
       ...(ephemeral ? { ephemeral: true, ttl: Math.floor(Date.now() / 1000) + EPHEMERAL_CHAT_TTL_SECONDS } : {}),
@@ -196,7 +196,7 @@ export const handler = async (
     }
     if (body.projectId !== undefined) {
       // sensitive/ephemeral no longer block project membership — a sensitive chat reads
-      // project context in but never writes back to it (see backend/CLAUDE.md).
+      // project context in but never writes back to it (see backend/AGENTS.md).
       const prevProjectId = chat.projectId as string | undefined
       if (body.projectId === null) {
         await updateChatProject(sub, chatId, null)
@@ -208,7 +208,7 @@ export const handler = async (
           await summarizeChatById(sub, chatId)
           // Backfill project memory on move — see docs/adr/0012-backfill-project-memory-on-chat-move.md.
           // Sensitive chats never write facts out into shared project memory — see
-          // "Sensitive & ephemeral chats" in backend/CLAUDE.md.
+          // "Sensitive & ephemeral chats" in backend/AGENTS.md.
           if (chat.sensitive !== true && (proj.memoryEnabled ?? true)) {
             await enrichProjectFactsByChatId(chatId, body.projectId, sub)
           }
@@ -243,7 +243,7 @@ export const handler = async (
     // Only the Chat item is deleted here — the DynamoDB Stream REMOVE event it produces
     // triggers stream_chat_cleanup (streams/chatTtlCleanup.ts), which cascades the delete
     // to this chat's messages + S3 attachments. Same cascade path TTL expiry uses, so there's
-    // one cleanup implementation instead of two. See backend/CLAUDE.md for the full rationale.
+    // one cleanup implementation instead of two. See backend/AGENTS.md for the full rationale.
     await deleteChatItem(sub, chatId)
     console.log(JSON.stringify({ event: 'chat_deleted', sub, chatId }))
     return { statusCode: 204, body: '' }
@@ -419,7 +419,7 @@ export const handler = async (
   }
 
   // ── Chat sharing (read-only public links) ──────────────────────────────────
-  // See "Chat sharing" in backend/CLAUDE.md. Public rendering itself lives in http/share.ts
+  // See "Chat sharing" in backend/AGENTS.md. Public rendering itself lives in http/share.ts
   // (unauthenticated /s/{shareId}) — everything here is authenticated create/list/revoke, gated
   // by the same getChat(sub, chatId) ownership check every other chat route uses.
 

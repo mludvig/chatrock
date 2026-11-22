@@ -220,7 +220,7 @@ resource "aws_apigatewayv2_route" "chat_export" {
 }
 
 # Public, unauthenticated share renderer — the unguessable ULID shareId is itself the
-# capability (see backend/CLAUDE.md "Chat sharing"), so this route deliberately has NO
+# capability (see backend/AGENTS.md "Chat sharing"), so this route deliberately has NO
 # authorizer, unlike every other /api/* route above. Matches /s/{shareId} including a
 # ".md" suffix (e.g. /s/01abc.md) — a dot doesn't start a new path segment, so the plain
 # (non-greedy) {shareId} param already captures it whole; http/share.ts strips the suffix.

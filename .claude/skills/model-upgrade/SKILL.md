@@ -14,7 +14,7 @@ entry should therefore come from a live probe, not from the model card or from t
 replaces. Docs tell you what *should* work; the probe tells you what the app's actual
 requests do.
 
-Read the root `CLAUDE.md` "Adding or updating a model" section and `backend/CLAUDE.md`
+Read the root `AGENTS.md` "Adding or updating a model" section and `backend/AGENTS.md`
 "Model capabilities" / "Retired models" first if you have not this session — this skill
 is the operational version of those.
 
@@ -82,7 +82,7 @@ Add a probe when you hit a new gotcha so the next upgrade checks it automaticall
 - Set capabilities from the probe. Update or write the "Verified live against <region> <Mon
   YYYY>: …" comment above the entry with what was verified and anything surprising. Never
   write the real region/account in a comment if it isn't already generic — see the
-  identifier rule in the root `CLAUDE.md`.
+  identifier rule in the root `AGENTS.md`.
 - If the provider needs new behaviour (a new thinking dial, a new off switch), that is a
   code change in the adapter plus a unit test, and usually an ADR — stop and confirm with the
   user before starting it.
@@ -109,7 +109,7 @@ so check every one on every upgrade:
 ## 5. Every other list
 
 - `README.md` Models table and its "as of" month.
-- Model examples in `CLAUDE.md`, `backend/CLAUDE.md`, `frontend/CLAUDE.md`.
+- Model examples in `AGENTS.md`, `backend/AGENTS.md`, `frontend/AGENTS.md`.
 - Unit tests using the old id as a sample model (`grep -rn "<old id>" backend/tests frontend/src`).
   These matter beyond tidiness: a retired id resolves through `getCapabilities`' fallback
   (Converse, no caching), so a test on it silently tests a different provider.

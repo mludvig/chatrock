@@ -11,7 +11,7 @@ Chatrock stores chats, per-turn messages, WebSocket connections, user preference
 Alternatives considered:
 
 1. **One table per entity type** (Chats, Messages, Users, Projects, ...) — the conventional relational-style decomposition. More familiar to browse, but every table carries its own backup/PITR/streams/IAM configuration, and cross-entity operations (e.g. "delete everything under this chat") become multi-table fan-outs.
-2. **Single table, overloaded `PK`/`SK`** (`terraform/dynamodb.tf`'s `chatrock-<env>` table) — the standard DynamoDB single-table-design pattern. Each entity type gets a distinguishable key shape: `PK=USER#<sub>`/`SK=CHAT#<chatId>` for a chat, `PK=CHAT#<chatId>`/`SK=MSG#...` for a turn, `PK=USER#<sub>`/`SK=PREF#USER` for preferences, etc. (full schema in root `CLAUDE.md`).
+2. **Single table, overloaded `PK`/`SK`** (`terraform/dynamodb.tf`'s `chatrock-<env>` table) — the standard DynamoDB single-table-design pattern. Each entity type gets a distinguishable key shape: `PK=USER#<sub>`/`SK=CHAT#<chatId>` for a chat, `PK=CHAT#<chatId>`/`SK=MSG#...` for a turn, `PK=USER#<sub>`/`SK=PREF#USER` for preferences, etc. (full schema in root `AGENTS.md`).
 
 ## Decision
 

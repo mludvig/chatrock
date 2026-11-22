@@ -1,7 +1,7 @@
 # Cascade-delete cleanup for chats. Triggered by the DynamoDB Stream on Chat-item REMOVE
 # events (manual DELETE /api/chats/{chatId} or TTL expiry of a private chat) — deletes that
 # chat's Message items + S3 attachments. See "Chat deletion & temporary/private chats" in
-# backend/CLAUDE.md for the full design rationale.
+# backend/AGENTS.md for the full design rationale.
 
 resource "aws_sqs_queue" "chat_cleanup_dlq" {
   name                      = "chatrock-chat-cleanup-dlq-${var.env}"

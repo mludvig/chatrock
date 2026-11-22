@@ -21,4 +21,4 @@ Option 2. `ChatDetailsDialog.tsx` is literally the same component for a not-yet-
 
 - Eliminates the class of bug that motivated this by construction — there is now exactly one editor for a project's `description`/`instructions`/`memoryEnabled`, not two.
 - New per-item settings have one clear home (that item's dialog) instead of a three-way judgment call between header/popover/sidebar.
-- The rule of thumb — "defaults are a page, item-scoped settings are a dialog" — is a convention enforced by habit, not structurally. A future feature could still get bolted onto the header again without someone reading this ADR (or the note in `frontend/CLAUDE.md`) first.
+- The rule of thumb — "defaults are a page, item-scoped settings are a dialog" — is a convention enforced by habit, not structurally. A future feature could still get bolted onto the header again without someone reading this ADR (or the note in `frontend/AGENTS.md`) first.
