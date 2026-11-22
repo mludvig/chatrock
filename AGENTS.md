@@ -186,7 +186,7 @@ Read it before adding anything that streams, polls, or reconnects; it ends in a 
 - **WS authorizer**: TTL caching (`authorizer_result_ttl_in_seconds`) is not valid for WebSocket APIs — omit it.
 - **`cd` in Bash**: avoid `cd` in commands; use `--prefix` or absolute paths to keep auto-approval working.
 - **Screenshots**: save to `.screenshots/YYYY-MM-DD-description.jpg`.
-- **AgentCore Gateway target type**: `aws_bedrockagentcore_gateway_target` (AWS provider v6.51.0) doesn't yet support the `connector` target type that Web Search needs — only the *gateway* is a real Terraform resource (`terraform/agentcore.tf`); the target is a one-time manual `aws bedrock-agentcore-control create-gateway-target` step (comment in that file has the exact command). Needs AWS CLI ≥ 2.35.7 — older builds reject the `connector` parameter outright.
+- **AgentCore Web Search**: uses the direct `InvokeWebSearch` API in the deployment region, with no Gateway or connector provisioning. Amazon is the default starting provider; `web_search` can escalate to Jina per call. See `docs/adr/0068-direct-web-search-with-provider-escalation.md`.
 - **AgentCore Browser IAM ARN**: the AWS-managed system browser lives under the literal `aws` pseudo-account, not the caller's own account — the IAM resource must be `arn:aws:bedrock-agentcore:<region>:aws:browser/aws.browser.v1` (same pattern as Web Search's `arn:...:aws:tool/web-search.v1`). Scoping it to the caller's account ID instead produces an opaque `AccessDeniedException` on `StartBrowserSession`.
 
 ## graphify

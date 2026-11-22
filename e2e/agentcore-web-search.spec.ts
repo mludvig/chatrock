@@ -3,7 +3,16 @@ import { test, expect } from '@playwright/test'
 test.describe('AgentCore web search provider', () => {
   test.use({ storageState: '.auth/state.json' })
 
-  test('switching to AgentCore in Defaults and asking a current-events question returns real search results', async ({ page }) => {
+  test('one chat can search Amazon and Jina and render results from both', async ({ page }) => {
+    const searchProviders: string[] = []
+    page.on('websocket', ws => ws.on('framereceived', frame => {
+      try {
+        const event = JSON.parse(String(frame.payload))
+        if (event.type === 'tool_result' && event.name === 'web_search' && !event.isError) {
+          searchProviders.push(JSON.parse(event.content).provider)
+        }
+      } catch { /* Other frames need not contain search JSON. */ }
+    }))
     await page.goto('/c/new')
     await page.waitForLoadState('networkidle')
 
@@ -11,7 +20,7 @@ test.describe('AgentCore web search provider', () => {
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await page.getByText('Advanced browsing options', { exact: true }).click()
     // The provider picker is a <select> (EffortRow), not a row of buttons.
-    await page.locator('.pref-section', { hasText: 'Web search provider' })
+    await page.locator('.pref-section', { hasText: 'Preferred search provider' })
       .locator('select')
       .selectOption('agentcore')
     await page.waitForTimeout(1200) // debounced save
@@ -19,7 +28,7 @@ test.describe('AgentCore web search provider', () => {
     // Ask something that forces a real web_search tool call
     await page.getByRole('button', { name: 'Back to chats and projects', exact: false }).click()
     await page.locator('.message-input').fill(
-      'Use the web_search tool to find AWS’s announcement of "Web Search on Amazon Bedrock AgentCore" and summarize it in one sentence.',
+      'Use web_search with the default provider to find AWS’s November 2026 announcement of the AgentCore Web Search API. Then use web_search with provider jina for the same topic to compare sources. Summarize it in one sentence.',
     )
     await page.locator('.btn-send').click()
 
@@ -38,5 +47,7 @@ test.describe('AgentCore web search provider', () => {
     await expect(page.locator('.message.assistant')).toBeVisible({ timeout: 60000 })
     await expect(page.locator('.btn-stop')).toHaveCount(0, { timeout: 60000 })
     await expect(page.locator('.message.assistant .md').first()).toBeVisible({ timeout: 10000 })
+    expect(searchProviders).toContain('agentcore')
+    expect(searchProviders).toContain('jina')
   })
 })

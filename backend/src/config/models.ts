@@ -30,7 +30,7 @@ export interface ModelCapabilities {
 export interface ModelSettings {
   thinkingEffort?: ThinkingEffort
   webSearchEnabled?: boolean                        // false disables web tools
-  webSearchProvider?: 'jina' | 'agentcore'           // which backend powers the web_search tool
+  webSearchProvider?: 'jina' | 'agentcore'           // preferred starting provider; web_search can escalate per call
   browserCoreEnabled?: boolean                      // false disables take_screenshot/get_rendered_page
   browserExtendedEnabled?: boolean                  // true enables the scripted browse_web tool
   memoryEnabled?: boolean                           // false skips injection + extraction

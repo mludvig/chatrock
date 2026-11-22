@@ -5,7 +5,7 @@ export interface UserPreferences {
   defaultModel?: string
   thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
   webSearchEnabled?: boolean
-  webSearchProvider?: 'jina' | 'agentcore'  // which backend powers the web_search tool
+  webSearchProvider?: 'jina' | 'agentcore'  // preferred starting provider; web_search can escalate per call
   browserCoreEnabled?: boolean        // false = disable take_screenshot/get_rendered_page
   browserExtendedEnabled?: boolean    // true = enable the scripted browse_web tool
   memoryEnabled?: boolean             // false = skip user memory injection + extraction

@@ -113,11 +113,12 @@ export default function PreferencesPanel() {
 
         <details className="advanced-tools"><summary>Advanced browsing options</summary>
         <EffortRow
-          label="Web search provider"
-          options={['jina', 'agentcore'] as const}
-          value={prefs.webSearchProvider ?? 'jina'}
+          label="Preferred search provider"
+          options={['agentcore', 'jina'] as const}
+          value={prefs.webSearchProvider ?? 'agentcore'}
           onChange={v => patch({ webSearchProvider: v })}
           format={p => p === 'jina' ? 'Jina' : 'AgentCore'}
+          title="Try this provider first. Search can use the other provider when results are missing or need wider coverage."
         />
 
         <ToggleRow

@@ -324,7 +324,7 @@ DynamoDB, which the stream loop polls every 750 ms. The full frame table is in
 
 | Tool | Backend |
 |------|---------|
-| Web search and page fetch | Jina (`s.jina.ai`, `r.jina.ai`), or the Amazon Bedrock AgentCore Web Search connector behind an AgentCore Gateway (MCP over SigV4, us-east-1) |
+| Web search and page fetch | Amazon Bedrock AgentCore `InvokeWebSearch` by default, with Jina search for fallback or broader research coverage; full-page reads use Jina (`r.jina.ai`) |
 | Browser | Amazon Bedrock AgentCore Browser, driven over CDP by an embedded Playwright MCP server, one session per call |
 | Visual output | Deterministic numeric charts and a configurable Bedrock visual specialist; isolated SVG/HTML previews |
 
@@ -361,8 +361,8 @@ follow from that:
 - Every handler takes the user from the verified JWT and never from the request body.
 - CloudWatch alarms send email through SNS. They cover Lambda errors, throttling, stream
   errors, API 5xx responses, WebSocket execution errors and dead-letter queue depth.
-- Terraform defines all infrastructure. The one exception is a single manual AgentCore
-  Gateway target step, documented in `terraform/agentcore.tf`.
+- Terraform defines all infrastructure. AgentCore Web Search uses the managed API
+  directly and needs no Gateway or manual connector setup.
 
 ---
 
@@ -383,10 +383,10 @@ deploy.sh    Build and deploy: backend → Terraform → frontend → CloudFront
 **Prerequisites:**
 
 - An AWS account with Bedrock access to the models you want, in your region.
-- Optionally, AgentCore Web Search in us-east-1.
+- AgentCore Web Search in the deployment region (US East N. Virginia/Ohio, US West
+  Oregon, Asia Pacific Sydney/Tokyo, or Europe Ireland as of November 2026).
 - A Route 53 hosted zone for your domain.
-- Terraform, Node.js 24 with npm, and the AWS CLI. The AgentCore Gateway target step needs
-  AWS CLI 2.35.7 or later.
+- Terraform, Node.js 24 with npm, and the AWS CLI.
 
 **Steps:**
 

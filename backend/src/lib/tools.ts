@@ -2,7 +2,7 @@ import type { ToolSpec, ToolResult, ToolResultEntry } from './llm/toolSpec'
 import { executeMemoryTool, executeProjectMemoryTool } from './memory'
 import { executeProjectReadFileTool, executeProjectReadChatTool } from './projectContext'
 import { executeSearchHistoryTool } from './search'
-import { callGatewayTool } from './agentcore/gateway'
+import { invokeWebSearch } from './agentcore/search'
 import type { BrowserStep } from './agentcore/browser'
 import { CREATE_VISUAL_TOOL, executeCreateVisualTool } from './visuals/tool'
 
@@ -53,16 +53,21 @@ export interface ToolContext {
   visualMaxBytes?: number
 }
 
-// ── Jina tool definitions for Bedrock ────────────────────────────────────────
+// ── Web tool definitions ────────────────────────────────────────────────────
 
 export const WEB_TOOLS: ToolSpec[] = [
   {
     name: 'web_search',
-    description: 'Search the web for current information. Returns titles, URLs and snippets of the top results. Use this when you need up-to-date information or facts you are not sure about.',
+    description: 'Search the web for current information. Returns titles, URLs and snippets of the top results, and identifies the provider used. Start with the preferred provider (Amazon AgentCore by default): omit provider on the first search. Errors or empty results automatically try the other provider. If results are irrelevant, repetitive, or leave an important question unanswered, refine the query and try the other provider explicitly. In research, use Jina for additional source coverage when Amazon results do not adequately cover a claim or perspective. Read promising sources with web_fetch; do not call both providers for every routine search.',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'The search query' },
+        provider: {
+          type: 'string',
+          enum: ['agentcore', 'jina'],
+          description: 'Optional provider override for this search. agentcore = Amazon index; jina = alternative sources. Omit to start with the preferred provider.',
+        },
       },
       required: ['query'],
     },
@@ -375,17 +380,7 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
       return await executeSearchHistoryTool(input, { sub: ctx.sub, projectId: ctx.projectId, chatId: ctx.chatId, searchScope: ctx.searchScope })
     }
     if (name === 'web_search') {
-      const provider = ctx.webSearchProvider === 'agentcore' ? 'agentcore' : 'jina'
-      const query = input.query as string
-      try {
-        const result = provider === 'agentcore' ? await agentcoreSearch(query) : await jinaSearch(query)
-        console.log(JSON.stringify({ event: 'web_search', provider, result: 'success' }))
-        return textResult(withEmptySearchHint(result, query, ctx.browserAvailable))
-      } catch (err) {
-        console.error(JSON.stringify({ event: 'web_search', provider, result: 'error', error: String(err) }))
-        const hint = searchFallbackHint(query, ctx.browserAvailable)
-        return errorResult(hint ? `${String(err)}\n\n${hint}` : String(err))
-      }
+      return await executeWebSearch(input, ctx)
     }
     if (name === 'web_fetch') {
       const url = input.url as string
@@ -613,15 +608,15 @@ function withEmptySearchHint(resultJson: string, query: string, browserAvailable
   }
 }
 
-async function jinaGetJson(url: string, what: string): Promise<unknown> {
-  const headers: Record<string, string> = { 'Accept': 'application/json' }
+async function jinaGetJson(url: string, what: string, extraHeaders: Record<string, string> = {}): Promise<unknown> {
+  const headers: Record<string, string> = { 'Accept': 'application/json', ...extraHeaders }
   if (JINA_KEY) headers['Authorization'] = `Bearer ${JINA_KEY}`
 
   let lastError = ''
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise(resolve => setTimeout(resolve, JINA_RETRY_DELAY_MS))
     try {
-      const res = await fetch(url, { headers })
+      const res = await fetch(url, { headers, ...(what === 'search' ? { signal: AbortSignal.timeout(15_000) } : {}) })
       if (res.ok) return await res.json()
       lastError = `${res.status} ${(await res.text()).slice(0, 200)}`
       if (!(res.status === 408 || res.status === 429 || res.status >= 500)) break
@@ -634,8 +629,8 @@ async function jinaGetJson(url: string, what: string): Promise<unknown> {
 }
 
 async function jinaSearch(query: string): Promise<string> {
-  const url = `https://s.jina.ai/${encodeURIComponent(query)}`
-  const json = await jinaGetJson(url, 'search') as { data?: Array<{ title: string; url: string; description: string }> }
+  const url = `https://s.jina.ai/${encodeURIComponent(query)}?num=5`
+  const json = await jinaGetJson(url, 'search', { 'X-Respond-With': 'no-content' }) as { data?: Array<{ title: string; url: string; description: string }> }
   const results = (json.data ?? []).slice(0, 5).map(r => ({
     title: r.title ?? '',
     url: r.url ?? '',
@@ -652,22 +647,11 @@ async function jinaSearch(query: string): Promise<string> {
   return JSON.stringify({ results, text })
 }
 
-// Amazon Bedrock AgentCore Web Search — routed through the MCP gateway (see ./agentcore/gateway.ts).
+// Amazon Bedrock AgentCore Web Search — direct API (see ./agentcore/search.ts).
 // Mapped into the same { results, text } contract jinaSearch produces so toolResults.ts card
 // parsing and the SearchResult shape work unchanged regardless of provider.
-interface AgentCoreSearchResult {
-  text: string
-  url?: string
-  title?: string
-  publishedDate?: string
-}
-
 async function agentcoreSearch(query: string): Promise<string> {
-  const res = await callGatewayTool('WebSearch', { query: query.slice(0, 200), maxResults: 5 })
-  if (res.isError) throw new Error(`AgentCore web search failed: ${res.text}`)
-
-  const parsed = JSON.parse(res.text) as { results?: AgentCoreSearchResult[] }
-  const results: SearchResult[] = (parsed.results ?? []).map(r => ({
+  const results: SearchResult[] = (await invokeWebSearch(query)).map(r => ({
     title: r.title ?? r.url ?? '',
     url: r.url ?? '',
     description: r.text ?? '',
@@ -680,6 +664,42 @@ async function agentcoreSearch(query: string): Promise<string> {
   ).join('\n\n')
 
   return JSON.stringify({ results, text })
+}
+
+type WebSearchProvider = 'agentcore' | 'jina'
+
+// Both parent and research agents use this dispatch; an override applies to one call.
+// See docs/adr/0068-direct-web-search-with-provider-escalation.md.
+async function executeWebSearch(input: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  const query = typeof input.query === 'string' ? input.query.trim() : ''
+  if (!query) return errorResult('web_search requires a non-empty query.')
+  if (input.provider !== undefined && input.provider !== 'agentcore' && input.provider !== 'jina') {
+    return errorResult('web_search provider must be agentcore or jina.')
+  }
+  const first: WebSearchProvider = input.provider ?? ctx.webSearchProvider ?? 'agentcore'
+  const second: WebSearchProvider = first === 'agentcore' ? 'jina' : 'agentcore'
+  const errors: string[] = []
+  let empty: { results: SearchResult[]; text: string; provider: WebSearchProvider } | undefined
+  for (const provider of [first, second]) {
+    try {
+      const result = JSON.parse(provider === 'agentcore' ? await agentcoreSearch(query) : await jinaSearch(query)) as {
+        results: SearchResult[]; text: string
+      }
+      console.log(JSON.stringify({ event: 'web_search', provider, result: result.results.length ? 'success' : 'empty', fallback: provider !== first }))
+      const payload = { ...result, provider, ...(provider !== first ? { fallbackFrom: first } : {}) }
+      if (result.results.length) return textResult(JSON.stringify(payload))
+      empty = payload
+    } catch (err) {
+      errors.push(`${provider}: ${String(err)}`)
+      console.error(JSON.stringify({ event: 'web_search', provider, result: 'error', fallback: provider !== first, error: String(err) }))
+    }
+  }
+  if (empty) {
+    const note = errors.length ? ` Search coverage is incomplete: ${errors.join('; ')}` : ' Both providers returned no results.'
+    return textResult(withEmptySearchHint(JSON.stringify({ ...empty, text: `${empty.text}${note}` }), query, ctx.browserAvailable))
+  }
+  const hint = searchFallbackHint(query, ctx.browserAvailable)
+  return errorResult(`${errors.join('\n')}${hint ? `\n\n${hint}` : ''}`)
 }
 
 // Jina answers 200 even when the target site refused it; the site's own verdict is in

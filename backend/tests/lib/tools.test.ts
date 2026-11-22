@@ -2,7 +2,7 @@ import { executeTool, MAX_BROWSER_STEPS, MAX_BROWSER_SCREENSHOTS } from '../../s
 import * as memoryLib from '../../src/lib/memory'
 import * as projectContextLib from '../../src/lib/projectContext'
 import * as searchLib from '../../src/lib/search'
-import * as gatewayLib from '../../src/lib/agentcore/gateway'
+import * as agentcoreSearchLib from '../../src/lib/agentcore/search'
 import * as browserLib from '../../src/lib/agentcore/browser'
 import * as visualToolLib from '../../src/lib/visuals/tool'
 
@@ -24,9 +24,9 @@ jest.mock('../../src/lib/search', () => ({
   executeSearchHistoryTool: jest.fn(),
 }))
 
-// Mock the AgentCore MCP gateway client so web_search:agentcore tests don't open a real session
-jest.mock('../../src/lib/agentcore/gateway', () => ({
-  callGatewayTool: jest.fn(),
+// Mock the direct AgentCore API so dispatch tests do not make network calls
+jest.mock('../../src/lib/agentcore/search', () => ({
+  invokeWebSearch: jest.fn(),
 }))
 
 // Mock the AgentCore Browser session executor so browse_web tests don't open a real session
@@ -45,7 +45,7 @@ const mockExecuteProjectMemoryTool = (memoryLib as jest.Mocked<typeof memoryLib>
 const mockExecuteProjectReadFileTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadFileTool
 const mockExecuteProjectReadChatTool = (projectContextLib as jest.Mocked<typeof projectContextLib>).executeProjectReadChatTool
 const mockExecuteSearchHistoryTool = (searchLib as jest.Mocked<typeof searchLib>).executeSearchHistoryTool
-const mockCallGatewayTool = (gatewayLib as jest.Mocked<typeof gatewayLib>).callGatewayTool
+const mockInvokeWebSearch = (agentcoreSearchLib as jest.Mocked<typeof agentcoreSearchLib>).invokeWebSearch
 const mockRunBrowserSteps = (browserLib as jest.Mocked<typeof browserLib>).runBrowserSteps
 const mockExecuteCreateVisualTool = (visualToolLib as jest.Mocked<typeof visualToolLib>).executeCreateVisualTool
 
@@ -444,96 +444,91 @@ describe('search_history dispatch', () => {
 
 describe('web_search provider dispatch', () => {
   const realFetch = global.fetch
-  afterEach(() => {
-    global.fetch = realFetch
-    jest.clearAllMocks()
+  const amazonResults = [{ title: 'Amazon source', url: 'https://example.com/amazon', text: 'Amazon snippet' }]
+  const jinaResults = [{ title: 'Jina source', url: 'https://example.com/jina', description: 'Jina snippet' }]
+  const payload = (result: Awaited<ReturnType<typeof executeTool>>) => JSON.parse((result.entries[0] as { text: string }).text)
+  beforeEach(() => {
+    mockInvokeWebSearch.mockReset().mockResolvedValue(amazonResults)
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: jinaResults }) }) as unknown as typeof fetch
   })
+  afterEach(() => { global.fetch = realFetch; jest.clearAllMocks() })
 
-  it('defaults to Jina when ctx.webSearchProvider is unset', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ data: [{ title: 'A', url: 'https://a.com', description: 'desc' }] }),
-    }) as unknown as typeof fetch
-
+  it('starts with Amazon by default and does not also request Jina for nonempty results', async () => {
     const result = await executeTool('web_search', { query: 'hello' }, TEST_CTX)
-
-    expect(global.fetch).toHaveBeenCalled()
-    expect(mockCallGatewayTool).not.toHaveBeenCalled()
+    expect(mockInvokeWebSearch).toHaveBeenCalledWith('hello')
+    expect(global.fetch).not.toHaveBeenCalled()
+    expect(payload(result)).toMatchObject({ provider: 'agentcore', results: [{ title: 'Amazon source', url: 'https://example.com/amazon', description: 'Amazon snippet' }] })
     expect(result.isError).toBe(false)
   })
 
-  it('routes to Jina when ctx.webSearchProvider is "jina"', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ data: [{ title: 'A', url: 'https://a.com', description: 'desc' }] }),
-    }) as unknown as typeof fetch
-
-    await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'jina' })
-
-    expect(global.fetch).toHaveBeenCalled()
-    expect(mockCallGatewayTool).not.toHaveBeenCalled()
+  it('honors an existing Jina starting preference and requests only five snippets', async () => {
+    const result = await executeTool('web_search', { query: 'a b?' }, { ...TEST_CTX, webSearchProvider: 'jina' })
+    expect(global.fetch).toHaveBeenCalledWith('https://s.jina.ai/a%20b%3F?num=5', expect.objectContaining({ headers: expect.objectContaining({ 'X-Respond-With': 'no-content' }), signal: expect.any(AbortSignal) }))
+    expect(mockInvokeWebSearch).not.toHaveBeenCalled()
+    expect(payload(result).provider).toBe('jina')
   })
 
-  it('routes to the AgentCore gateway when ctx.webSearchProvider is "agentcore"', async () => {
-    mockCallGatewayTool.mockResolvedValueOnce({
-      isError: false,
-      text: JSON.stringify({
-        id: 'abc123',
-        results: [
-          { text: 'Python 3.13 was released in October 2024.', url: 'https://example.com/py313', title: 'Python 3.13', publishedDate: '2024-10-07' },
-        ],
-      }),
-    })
+  it('can search both indexes within one chat without changing the starting preference', async () => {
+    const ctx = { ...TEST_CTX, chatId: 'same-chat', webSearchProvider: 'agentcore' as const }
+    expect(payload(await executeTool('web_search', { query: 'hello' }, ctx)).provider).toBe('agentcore')
+    expect(payload(await executeTool('web_search', { query: 'hello', provider: 'jina' }, ctx)).provider).toBe('jina')
+    expect(payload(await executeTool('web_search', { query: 'hello again' }, ctx)).provider).toBe('agentcore')
+    expect(mockInvokeWebSearch).toHaveBeenCalledTimes(2)
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
 
-    const result = await executeTool('web_search', { query: 'python release' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
+  it('permits the same provider override for a research sub-agent', async () => {
+    const result = await executeTool('web_search', { query: 'missing perspective', provider: 'jina' }, { ...TEST_CTX, subAgentDepth: 1 })
+    expect(payload(result).provider).toBe('jina')
+    expect(mockInvokeWebSearch).not.toHaveBeenCalled()
+  })
 
-    expect(mockCallGatewayTool).toHaveBeenCalledWith('WebSearch', { query: 'python release', maxResults: 5 })
+  it.each(['error', 'empty'])('falls back to Jina after an Amazon %s', async mode => {
+    if (mode === 'error') mockInvokeWebSearch.mockRejectedValue(new Error('Unavailable'))
+    else mockInvokeWebSearch.mockResolvedValue([])
+    const result = await executeTool('web_search', { query: 'hello' }, TEST_CTX)
     expect(result.isError).toBe(false)
-    const payload = JSON.parse((result.entries[0] as { text: string }).text)
-    expect(payload.results).toEqual([
-      { title: 'Python 3.13', url: 'https://example.com/py313', description: 'Python 3.13 was released in October 2024.' },
-    ])
-    expect(payload.text).toContain('Python 3.13 was released in October 2024.')
+    expect(payload(result)).toMatchObject({ provider: 'jina', fallbackFrom: 'agentcore', results: jinaResults })
+    expect(mockInvokeWebSearch).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledTimes(1)
   })
 
-  it('truncates the query to 200 chars before calling AgentCore', async () => {
-    mockCallGatewayTool.mockResolvedValueOnce({ isError: false, text: JSON.stringify({ results: [] }) })
-
-    const longQuery = 'x'.repeat(250)
-    await executeTool('web_search', { query: longQuery }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
-
-    const calledArgs = mockCallGatewayTool.mock.calls[0][1] as { query: string }
-    expect(calledArgs.query.length).toBe(200)
+  it('falls back to Amazon after an explicit Jina call returns nothing', async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }) as unknown as typeof fetch
+    expect(payload(await executeTool('web_search', { query: 'hello', provider: 'jina' }, TEST_CTX))).toMatchObject({ provider: 'agentcore', fallbackFrom: 'jina' })
   })
 
-  it('returns error status when AgentCore reports an error', async () => {
-    mockCallGatewayTool.mockResolvedValueOnce({ isError: true, text: 'gateway unavailable' })
-
-    const result = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
-
+  it('retains browser fallback after both providers fail, without looping', async () => {
+    mockInvokeWebSearch.mockRejectedValue(new Error('Amazon unavailable'))
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401, text: async () => 'unauthorized' }) as unknown as typeof fetch
+    const result = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, browserAvailable: true })
     expect(result.isError).toBe(true)
+    expect((result.entries[0] as { text: string }).text).toContain('get_rendered_page')
+    expect((result.entries[0] as { text: string }).text).toContain('Amazon unavailable')
+    expect((result.entries[0] as { text: string }).text).toContain('unauthorized')
+    expect(mockInvokeWebSearch).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledTimes(1)
   })
 
-  it('returns "No results found." when AgentCore returns an empty results array', async () => {
-    mockCallGatewayTool.mockResolvedValueOnce({ isError: false, text: JSON.stringify({ results: [] }) })
-
-    const result = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
-
-    const payload = JSON.parse((result.entries[0] as { text: string }).text)
-    expect(payload.results).toEqual([])
-    expect(payload.text).toBe('No results found.')
+  it('distinguishes an incomplete search from both indexes having no results', async () => {
+    mockInvokeWebSearch.mockRejectedValueOnce(new Error('Amazon unavailable')).mockResolvedValueOnce([])
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }) as unknown as typeof fetch
+    expect(payload(await executeTool('web_search', { query: 'hello' }, TEST_CTX)).text).toContain('coverage is incomplete')
+    expect(payload(await executeTool('web_search', { query: 'hello' }, TEST_CTX)).text).toContain('Both providers returned no results')
   })
 
-  it('web_fetch always uses Jina, even when webSearchProvider is "agentcore"', async () => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ data: { title: 'A', url: 'https://a.com', content: 'body' } }),
-    }) as unknown as typeof fetch
+  it('rejects invalid input before calling either provider', async () => {
+    for (const input of [{ query: ' ' }, { query: 'hello', provider: 'unknown' }]) {
+      expect((await executeTool('web_search', input, TEST_CTX)).isError).toBe(true)
+    }
+    expect(global.fetch).not.toHaveBeenCalled()
+    expect(mockInvokeWebSearch).not.toHaveBeenCalled()
+  })
 
-    await executeTool('web_fetch', { url: 'https://a.com' }, { ...TEST_CTX, webSearchProvider: 'agentcore' })
-
-    expect(global.fetch).toHaveBeenCalled()
-    expect(mockCallGatewayTool).not.toHaveBeenCalled()
+  it('web_fetch still reads full pages through Jina', async () => {
+    await executeTool('web_fetch', { url: 'https://example.com' }, TEST_CTX)
+    expect(global.fetch).toHaveBeenCalledWith('https://r.jina.ai/https://example.com', expect.objectContaining({ headers: expect.not.objectContaining({ 'X-Respond-With': 'no-content' }) }))
+    expect(mockInvokeWebSearch).not.toHaveBeenCalled()
   })
 })
 
@@ -816,6 +811,7 @@ describe('get_rendered_page dispatch', () => {
 // See docs/adr/0042-jina-retry-and-browser-fallback.md.
 
 describe('Jina transient-failure retry and browser fallback', () => {
+  beforeEach(() => { mockInvokeWebSearch.mockReset().mockResolvedValue([]) })
   const realFetch = global.fetch
   afterEach(() => { global.fetch = realFetch })
 
@@ -845,7 +841,7 @@ describe('Jina transient-failure retry and browser fallback', () => {
       })
     global.fetch = fetchMock as unknown as typeof fetch
 
-    const res = await executeTool('web_search', { query: 'hello' }, TEST_CTX)
+    const res = await executeTool('web_search', { query: 'hello' }, { ...TEST_CTX, webSearchProvider: 'jina' })
 
     expect(res.isError).toBeFalsy()
     expect(fetchMock).toHaveBeenCalledTimes(2)
