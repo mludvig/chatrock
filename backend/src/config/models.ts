@@ -90,6 +90,21 @@ export const MODELS: Model[] = [
   // Always reasons (no 'off' level) — thinkingLevels omits it.
   // Verified live against ap-southeast-2 Oct 2026: reasoning.summary 'auto' streams a summary on all
   // four GPT models ('detailed' is barely longer); one reasoning item may carry several summary parts.
+  // GPT-6.2 verified live Nov 2026 (Sol and Astra; there is no 6.2 Terra/Luna): images (also inside a
+  // tool result), txt documents, tools, forced tool_choice with and without reasoning, own-reasoning
+  // replay and automatic prompt caching work. PDF input_file is rejected ("does not support PDF
+  // input") — older GPT models accept it — so documents is off. No encrypted_content is returned.
+  // Astra: every effort level scales reasoning; 'none' rejected.
+  {
+    id: 'global.openai.gpt-6.2-astra',
+    name: 'GPT-6.2 Astra',
+    capabilities: {
+      provider: 'bedrock-responses',
+      thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
+      attachments: true, documents: false, promptCaching: 'explicit',
+      maxOutputTokens: 16000,
+    },
+  },
   {
     id: 'global.openai.gpt-6-astra',
     name: 'GPT-6 Astra',
@@ -98,6 +113,18 @@ export const MODELS: Model[] = [
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],
       attachments: true, documents: true, promptCaching: 'explicit',
+      maxOutputTokens: 16000,
+    },
+  },
+  // GPT-6.2 Sol: see the GPT-6.2 note above. low/medium/high produced identical, reasoning-free
+  // output (out≈10 tokens vs 60–130 on 6.1 Sol); only max reasons, so only low and max are offered.
+  {
+    id: 'global.openai.gpt-6.2-sol',
+    name: 'GPT-6.2 Sol',
+    capabilities: {
+      provider: 'bedrock-responses',
+      thinking: 'effort', thinkingLevels: ['low', 'max'],
+      attachments: true, documents: false, promptCaching: 'explicit',
       maxOutputTokens: 16000,
     },
   },

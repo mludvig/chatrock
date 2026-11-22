@@ -106,11 +106,11 @@ one deployment in one AWS account, with an opinionated deploy script.
 | Vendor | Models | Bedrock API |
 |--------|--------|-------------|
 | Anthropic | Claude Fable 5.1, Opus 5.5, Sonnet 5.5 (default), Haiku 5.5 | Converse |
-| OpenAI | GPT-6 Astra, GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Luna | Responses |
+| OpenAI | GPT-6.2 Astra, GPT-6 Astra, GPT-6.2 Sol, GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Luna | Responses |
 | Moonshot AI | Kimi K3 | Responses |
 | xAI | Grok 4.7 | Converse |
 
-This is the lineup as of October 2026. Adding a model takes one entry in
+This is the lineup as of November 2026. Adding a model takes one entry in
 [`backend/src/config/models.ts`](backend/src/config/models.ts). When a model is retired,
 its chats continue on the model that replaces it.
 
