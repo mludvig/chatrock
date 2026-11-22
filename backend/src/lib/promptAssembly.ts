@@ -1,6 +1,7 @@
 import type { UserPreferences } from './preferences'
 import DEEP_RESEARCH_PROMPT from '../../prompts/deep-research.txt'
 import CONCISE_VISUAL_PROMPT from '../../prompts/concise-visual.txt'
+import MEMORY_CONTEXT_PROMPT from '../../prompts/memory-context.txt'
 
 export interface AssembleInput {
   basePrompt: string          // the chat's systemPrompt (client-supplied)
@@ -55,6 +56,12 @@ export function assembleSystemPrompt(input: AssembleInput): string {
     parts.push('Keep your answers concise and to the point.')
   } else if (input.prefs.answerLength === 'extensive') {
     parts.push('Provide thorough, detailed answers.')
+  }
+
+  // See docs/adr/0067-memory-as-quiet-background-context.md.
+  if (input.memories.length > 0 || input.memoryToolEnabled ||
+      (input.projectMemories?.length ?? 0) > 0 || input.projectMemoryToolEnabled) {
+    parts.push(MEMORY_CONTEXT_PROMPT)
   }
 
   // 4. User memory block

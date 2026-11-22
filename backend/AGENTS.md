@@ -141,6 +141,10 @@ Two writers, two stores (user and project):
 `enrichUserFacts()` (Sonnet) always runs; `summarizeChat()` (Sonnet) also always runs, merging the latest exchange into the chat's running summary + `topics[]`. When the chat belongs to a project, `enrichProjectFacts()` (Sonnet) additionally runs. Title generation is a **separate, independent call** — `generateChatTitle()` (Haiku, plain-text, no JSON parsing) — gated by `needTitle`. Each call has its own try/catch and logs on failure rather than swallowing silently.
 
 `assembleSystemPrompt` (`lib/promptAssembly.ts`) injects user memory as `- [memId] text` lines, project memory in a separate "About this project:" block, and a project manifest (files + sibling chats) for project chats.
+The shared `prompts/memory-context.txt` instruction makes user and project facts
+quiet background context. It is included once when either memory scope is present;
+explicit mention is reserved for direct recall or a necessary answer, assumption,
+constraint, or decision (ADR 0067).
 
 `lib/llm/toolGating.ts`'s `buildToolList(settings, ctx?)` builds the neutral tool list (shared across providers): web tools when `webSearchEnabled !== false`; Core browser tools when `browserCoreEnabled !== false`; `browse_web` when `browserExtendedEnabled === true`; memory tool when `memoryEnabled !== false` and the chat is not sensitive; project memory tool when `ctx?.projectId`, `memoryEnabled !== false`, `ctx.projectMemoryEnabled !== false` and the chat is not sensitive; the two project read tools when `ctx?.projectId`; `search_history` when `searchEnabled !== false` or `ctx.searchScope` is set; `create_visual` for top-level turns (not research sub-agents); `run_research_task` when `researchDepth === 'deep'` and the caller is not itself a sub-agent (`ctx.subAgentDepth` unset). Each adapter lowers this to its own wire format and appends its own cache marker (Converse: trailing `cachePoint` on the tool list).
 
