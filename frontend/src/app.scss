@@ -1491,6 +1491,22 @@ $header-h: 45px;
   padding: 2px 0 0 22px;
 }
 
+.output-limit-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  background: $surface;
+  font-size: 14px;
+
+  > div { flex: 1 1 240px; }
+  > button { flex-shrink: 0; }
+}
+
 // ── Thinking block ────────────────────────────────────────────────────────────
 .thinking-block {
   margin-bottom: 10px;

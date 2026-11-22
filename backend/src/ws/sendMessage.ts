@@ -483,6 +483,11 @@ const runSend = async (
         content: await hydrateBlocks((m.blocks ?? []) as Block[]),
       }))
     )
+    // Explicit user intent avoids assistant prefill, which thinking models reject.
+    // See docs/adr/0069-output-limit-notice-and-explicit-continuation.md.
+    if (bedrockMessages.at(-1)?.role === 'assistant') {
+      bedrockMessages.push({ role: 'user', content: [{ kind: 'text', text: 'Continue from where you stopped. Complete the answer without repeating what you already wrote.' }] })
+    }
     // New turns chain as CHILD of the leaf
     lastTurnMsgId = leafId
   } else if (isRerun) {
@@ -796,6 +801,7 @@ const runSend = async (
               ? { webSearchEnabled: effectiveModelSettings.webSearchEnabled } : {}),
             ...(chunk.role === 'assistant' ? { researchDepth: effectiveModelSettings.researchDepth ?? 'brief' } : {}),
             ...(chunk.truncated ? { truncated: true } : {}),
+            ...(chunk.stopReason !== undefined ? { stopReason: chunk.stopReason } : {}),
           }
 
           const hasToolUse = chunk.role === 'assistant' && chunk.content.some(b => b.kind === 'tool_call')

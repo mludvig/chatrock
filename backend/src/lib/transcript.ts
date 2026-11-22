@@ -54,6 +54,7 @@ export interface RawBubble {
   webSearchEnabled?: boolean
   errored?: boolean
   truncated?: boolean
+  stopReason?: string
   researchDepth?: string
 }
 
@@ -80,6 +81,7 @@ export interface TurnRow {
   webSearchEnabled?: boolean
   incomplete?: boolean
   truncated?: boolean
+  stopReason?: string
   researchDepth?: string
 }
 
@@ -156,6 +158,9 @@ export function groupTurnsToBubbles(rows: TurnRow[]): RawConversationResponse {
       if (row.truncated && currentBubble) {
         currentBubble.truncated = true
       }
+      // The latest assistant turn replaces an earlier limit after Continue succeeds.
+      // See docs/adr/0069-output-limit-notice-and-explicit-continuation.md.
+      if (currentBubble) currentBubble.stopReason = row.stopReason
 
       // Map blocks → ordered steps (never expose `opaque`)
       for (const block of row.blocks) {

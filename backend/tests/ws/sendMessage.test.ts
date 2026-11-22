@@ -1187,7 +1187,7 @@ test('f3: a turn chunk with truncated:true persists truncated:true and researchD
   expect(assistantPut.researchDepth).toBe('extended')
 })
 
-test('f4: a clean-stop turn chunk persists no truncated field, and defaults researchDepth to brief when absent', async () => {
+test.each(['end_turn', 'max_tokens'])('f4: persists stop reason %s without conflating it with research truncation', async (stopReason) => {
   mockDynamo.getConnection.mockResolvedValue({ userSub: 'user-1', connectedAt: '' })
   mockDynamo.getChat.mockResolvedValue({ PK: 'USER#user-1', SK: 'CHAT#c1', model: MODEL, systemPrompt: '', title: 'Existing' })
   mockDynamo.listMessages.mockResolvedValue([])
@@ -1195,8 +1195,8 @@ test('f4: a clean-stop turn chunk persists no truncated field, and defaults rese
   mockDynamo.updateChatActiveLeaf.mockResolvedValue(undefined)
 
   async function* fakeStream() {
-    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'complete' }], turnIndex: 0 }
-    yield { type: 'stop' as const, stopReason: 'end_turn' }
+    yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'complete' }], turnIndex: 0, stopReason }
+    yield { type: 'stop' as const, stopReason }
   }
   mockBedrock.converseStream.mockReturnValue(fakeStream())
 
@@ -1209,6 +1209,7 @@ test('f4: a clean-stop turn chunk persists no truncated field, and defaults rese
     .find(r => r.role === 'assistant')!
 
   expect(assistantPut.truncated).toBeUndefined()
+  expect(assistantPut.stopReason).toBe(stopReason)
   expect(assistantPut.researchDepth).toBe('brief')
 })
 
@@ -1851,7 +1852,7 @@ test('cont3: continue new turns reuse the failed responseId so bubbles fuse', as
   expect(asstPut.responseId).toBe('r0')
 })
 
-test('cont4: continue replay is INCLUSIVE of the leaf (assistant-terminated history = prefill)', async () => {
+test('cont4: continue includes the leaf and ends with explicit user intent, avoiding unsupported assistant prefill', async () => {
   continueBase()
   async function* fakeStream() {
     yield { type: 'turn' as const, role: 'assistant' as const, content: [{ kind: 'text' as const, text: 'continued' }], turnIndex: 0 }
@@ -1862,12 +1863,15 @@ test('cont4: continue replay is INCLUSIVE of the leaf (assistant-terminated hist
   await buildHandler(mockPost)(continueEvent())
 
   const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
-  // Should be: [user-u1, assistant-a1] (leaf included, not just root→parent)
-  expect(passedMessages).toHaveLength(2)
+  // Leaf included, followed by transient continuation intent (not a stored user bubble).
+  expect(passedMessages).toHaveLength(3)
   expect(passedMessages[0].role).toBe('user')
   expect(passedMessages[0].content).toEqual([{ kind: 'text', text: 'original question' }])
   expect(passedMessages[1].role).toBe('assistant')
   expect(passedMessages[1].content).toEqual([{ kind: 'text', text: 'partial answer' }])
+  expect(passedMessages[2]).toEqual({
+    role: 'user', content: [{ kind: 'text', text: 'Continue from where you stopped. Complete the answer without repeating what you already wrote.' }],
+  })
 })
 
 test('cont5: continue updateChatActiveLeaf called with the new continuation turn msgId', async () => {
@@ -1988,8 +1992,9 @@ test('cont9: continue uses resolveResponseLeaf — bubble msgId (first turn) res
   // Backend should resolve to a2 (deepest turn in r0), so replay includes a2 and
   // new turn chains from a2
   const [, , passedMessages] = mockBedrock.converseStream.mock.calls[0]
-  // Full path: u1, a1, tr1, a2 (4 messages)
-  expect(passedMessages).toHaveLength(4)
+  // Full path: u1, a1, tr1, a2, followed by transient continuation intent.
+  expect(passedMessages).toHaveLength(5)
+  expect(passedMessages[4].role).toBe('user')
 
   const asstPut = mockDynamo.putMessage.mock.calls
     .map(c => c[0] as Record<string, unknown>)

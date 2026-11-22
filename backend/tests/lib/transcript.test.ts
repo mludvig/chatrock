@@ -6,6 +6,24 @@ const bubble = (overrides: Partial<RawBubble>): RawBubble => ({
   ...overrides,
 })
 
+test('output-limit metadata survives grouping and is replaced when Continue completes the same response', () => {
+  const first: TurnRow = {
+    PK: 'CHAT#c', SK: 'MSG#1', msgId: 'a', parentId: null, role: 'assistant',
+    model: 'model', createdAt: 't', turnIndex: 0, responseId: 'r',
+    blocks: [{ kind: 'thinking', text: 'Reasoning' }], stopReason: 'max_tokens',
+  }
+  expect(groupTurnsToBubbles([first]).bubbles[0].stopReason).toBe('max_tokens')
+  const next: TurnRow = {
+    ...first, SK: 'MSG#2', msgId: 'b', parentId: 'a',
+    blocks: [{ kind: 'text', text: 'The answer' }], stopReason: 'end_turn',
+  }
+  const completed = groupTurnsToBubbles([first, next]).bubbles
+  expect(completed).toHaveLength(1)
+  expect(completed[0].stopReason).toBe('end_turn')
+  expect(completed[0].steps).toHaveLength(2)
+  expect(groupTurnsToBubbles([{ ...first, stopReason: undefined }]).bubbles[0].stopReason).toBeUndefined()
+})
+
 test('visuals survive durable grouping and clean share/export without exposing executable markup', () => {
   const visual = renderChart('Revenue', { type: 'bar', labels: ['Q1', 'Q2'], series: [{ name: 'USD', values: [10, 20] }] })
   const base = { PK: 'CHAT#c', SK: 'MSG#x', model: 'small', createdAt: 't', turnIndex: 0, responseId: 'r' }

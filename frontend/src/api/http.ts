@@ -113,6 +113,7 @@ export interface Message {
   // Set on assistant bubbles that hit the round-budget ceiling — a complete answer, just
   // budget-limited (distinct from errored). See docs/adr/0020-research-depth-and-budget-pacing.md.
   truncated?: boolean
+  stopReason?: string
 }
 
 export type ThinkingEffort = 'off' | 'low' | 'medium' | 'high' | 'max'

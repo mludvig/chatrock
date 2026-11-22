@@ -248,7 +248,7 @@ async function* streamRounds(
     // Yield usage first (so sendMessage.ts can read lastUsage before processing turn)
     if (result.usage) yield { type: 'usage', usage: result.usage }
     // Yield the verbatim assistant turn for persistence — neutral format at rest.
-    yield { type: 'turn', role: 'assistant', content: result.content, turnIndex }
+    yield { type: 'turn', role: 'assistant', content: result.content, turnIndex, stopReason: result.stopReason }
     turnIndex++
 
     if (result.stopReason !== 'tool_use' || result.toolUses.length === 0) {
@@ -492,10 +492,10 @@ async function* streamRounds(
     // Strip any tool_call blocks and guarantee there's always visible text to persist.
     const finalContent = finalResult.content.filter(b => b.kind !== 'tool_call')
     const hasText = finalContent.some(b => b.kind === 'text' && b.text)
-    if (!hasText) {
+    if (!hasText && finalResult.stopReason !== 'max_tokens') {
       finalContent.push({ kind: 'text', text: "I've reached my research step limit for this turn. Here's what I found before stopping — let me know if you'd like me to continue." })
     }
-    yield { type: 'turn', role: 'assistant', content: finalContent, turnIndex, truncated: true }
+    yield { type: 'turn', role: 'assistant', content: finalContent, turnIndex, truncated: true, stopReason: finalResult.stopReason }
     yield { type: 'stop', stopReason: finalResult.stopReason === 'tool_use' ? 'max_rounds' : finalResult.stopReason }
   } else {
     yield { type: 'stop', stopReason: 'max_rounds' }

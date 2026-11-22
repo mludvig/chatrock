@@ -27,7 +27,7 @@ export type StreamChunk =
   // path (loop.ts) — a distinct signal from `incomplete` (mid-turn abort/error): the model
   // wrote a complete answer, it just ran out of research budget. See
   // docs/adr/0020-research-depth-and-budget-pacing.md.
-  | { type: 'turn'; role: 'user' | 'assistant'; content: Block[]; turnIndex: number; truncated?: boolean }
+  | { type: 'turn'; role: 'user' | 'assistant'; content: Block[]; turnIndex: number; truncated?: boolean; stopReason?: string }
   // Forwarded as a compact WS event for live display
   | { type: 'usage'; usage: TokenUsage }
   // Emitted when manage_memory / manage_project_memory succeeds — triggers memoryUpdated WS

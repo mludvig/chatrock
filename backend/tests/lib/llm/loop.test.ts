@@ -39,6 +39,21 @@ beforeEach(() => {
   mockExecuteTool.mockReset()
 })
 
+test('a thinking-only output limit is carried on the persisted turn without starting another paid call', async () => {
+  // eslint-disable-next-line require-yield -- mock returns a complete provider turn
+  const streamTurn = jest.fn(async function* () {
+    return { stopReason: 'max_tokens', toolUses: [], content: [{ kind: 'thinking' as const, text: 'Still reasoning' }] }
+  })
+  mockGetProvider.mockReturnValue({ id: 'bedrock-converse', sanitizeHistory: m => m, streamTurn, once: jest.fn() })
+  const chunks = []
+  for await (const c of converseStream(DEFAULT_CHAT_MODEL, 'system', [], { call: TEST_CALL })) chunks.push(c)
+  expect(streamTurn).toHaveBeenCalledTimes(1)
+  expect(chunks.find(c => c.type === 'turn')).toMatchObject({
+    stopReason: 'max_tokens', content: [{ kind: 'thinking', text: 'Still reasoning' }],
+  })
+  expect(chunks.at(-1)).toEqual({ type: 'stop', stopReason: 'max_tokens' })
+})
+
 test('visual result reaches both the live frame and canonical persisted tool result', async () => {
   const visual = { title: 'Flow', summary: 'A to B', format: 'svg' as const, source: '<svg><text>A to B</text></svg>', height: 300 }
   let round = 0

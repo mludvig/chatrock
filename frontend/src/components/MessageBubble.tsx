@@ -219,6 +219,8 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
   const idle = isStreaming && 'idle' in message && !!(message as StreamingMsg).idle
   const longWait = isStreaming && 'longWait' in message && !!(message as StreamingMsg).longWait
   const steps: Step[] = message.steps ?? []
+  const outputLimited = isAssistant && !isStreaming && 'stopReason' in message && message.stopReason === 'max_tokens'
+  const hasAnswerText = steps.some(step => step.kind === 'text' && step.text.trim())
   const [copied, setCopied] = useState(false)
   const { models } = useChatStore()
 
@@ -326,6 +328,23 @@ const MessageBubble = memo(forwardRef<HTMLDivElement, Props>(function MessageBub
         )}
 
       </div>
+
+      {outputLimited && (
+        <div className="output-limit-notice" role="status">
+          <div>
+            <strong>Output limit reached.</strong>{' '}
+            {hasAnswerText
+              ? 'This response used its thinking and answer budget.'
+              : 'The model reached its thinking and answer budget before writing an answer.'}
+            {' '}Select Continue to proceed with another response budget.
+          </div>
+          {onContinue && 'msgId' in message && (
+            <button className="btn-secondary" onClick={() => onContinue(message.msgId)}>
+              <FontAwesomeIcon icon={faPlay} /> Continue
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Per-message metadata line — assistant bubbles only, not streaming */}
       {isAssistant && !isStreaming && 'model' in message && (message as Message).createdAt && (() => {
