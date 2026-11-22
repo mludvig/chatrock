@@ -141,7 +141,7 @@ function buildReasoningParams(caps: ReturnType<typeof getCapabilities>, settings
 
 function isUndecryptableReasoningError(err: unknown): boolean {
   return (err as { status?: number }).status === 400
-    && /encrypted content cannot be used in a different region|encrypted reasoning was created for a different model/i.test((err as Error).message)
+    && /encrypted content cannot be used in a different region|encrypted reasoning was created for a different model|invalid encrypted view/i.test((err as Error).message)
 }
 
 async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnResult> {
@@ -166,9 +166,11 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   try {
     stream = await create(input)
   } catch (err) {
-    if (!isUndecryptableReasoningError(err)) throw err
+    if (req.abortSignal?.aborted || !input.some(item => item.type === 'reasoning') || !isUndecryptableReasoningError(err)) throw err
     // A safety net behind fromNeutralMessages' same-model rule: the API's decryption rules are
     // undocumented, so retry without reasoning. See docs/adr/0052-encrypted-reasoning-replays-only-to-its-own-model.md.
+    // Cross-account "invalid encrypted view": docs/adr/0070-recover-signed-thinking-prefix-mismatch.md.
+    console.log(JSON.stringify({ event: 'encrypted_reasoning_recovery', model: req.modelId }))
     stream = await create(input.filter(item => item.type !== 'reasoning'))
   }
 

@@ -127,15 +127,26 @@ async function* streamOneTurn(
   cachingEnabled: boolean,
   abortSignal?: AbortSignal,
   forceToolName?: string,
+  recoverThinkingBinding = false,
 ): AsyncGenerator<StreamChunk, RawTurnResult> {
   // Only attach toolConfig when there is at least one real toolSpec — a list
   // containing only CACHE_POINT_TOOL (no toolSpec) is treated as empty.
   const hasRealTools = tools.some(t => 'toolSpec' in (t as object))
+  const inferenceParams = buildInferenceParams(modelId, settings)
+  if (recoverThinkingBinding) {
+    const fields = inferenceParams.additionalModelRequestFields as Record<string, DocumentType>
+    fields.anthropic_beta = ['thinking-binding-controls-2026-08-01']
+    fields.thinking = {
+      type: 'adaptive',
+      ...fields.thinking as Record<string, DocumentType>,
+      block_binding: { prefix_mismatch_behavior: 'drop_block' },
+    }
+  }
   const cmd = new ConverseStreamCommand({
     modelId,
     system: buildSystemWithCache(systemPrompt, cachingEnabled),
     messages,
-    ...buildInferenceParams(modelId, settings),
+    ...inferenceParams,
     ...(hasRealTools
       ? { toolConfig: { tools, ...(forceToolName ? { toolChoice: { tool: { name: forceToolName } } } : {}) } }
       : {}),
@@ -356,12 +367,26 @@ async function* streamTurn(req: TurnRequest): AsyncGenerator<StreamChunk, TurnRe
   // always runs with thinking off (a tool-choice round needs none anyway).
   const roundSettings = toolChoiceForce ? { ...req.settings, thinkingEffort: 'off' as const } : req.settings
 
-  const gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, cachingEnabled, req.abortSignal, toolChoiceForce)
+  let gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, cachingEnabled, req.abortSignal, toolChoiceForce)
   let raw: RawTurnResult | undefined
+  let emitted = false
+  let recoveredBinding = false
   while (true) {
-    const { value, done } = await gen.next()
-    if (done) { raw = value; break }
-    yield value
+    try {
+      const { value, done } = await gen.next()
+      if (done) { raw = value; break }
+      emitted = true
+      yield value
+    } catch (e) {
+      // Retry only the provider's explicit prefix-binding rejection, before any output.
+      // See docs/adr/0070-recover-signed-thinking-prefix-mismatch.md.
+      if (emitted || recoveredBinding || req.abortSignal?.aborted ||
+          !String(e).includes('bound to a different conversation') ||
+          !String(e).includes('thinking')) throw e
+      recoveredBinding = true
+      console.log(JSON.stringify({ event: 'thinking_prefix_recovery', model: req.modelId }))
+      gen = streamOneTurn(req.modelId, req.systemPrompt, withCache, tools, roundSettings, cachingEnabled, req.abortSignal, toolChoiceForce, true)
+    }
   }
   if (!raw) throw new Error('bedrockConverse.streamTurn: no result from streamOneTurn')
 

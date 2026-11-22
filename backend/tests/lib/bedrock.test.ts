@@ -15,6 +15,7 @@ import { converseStream, converseOnce, coalesceMessages, healDanglingToolUse, be
 import { TOOL_RESULTS_ROUND_CAP } from '../../src/lib/llm/blocks'
 import { STREAM_STALL_TIMEOUT_MS } from '../../src/lib/llm/loop'
 import { DEFAULT_CHAT_MODEL } from '../../src/config/models'
+import type { StreamChunk } from '../../src/lib/llm/types'
 import * as tools from '../../src/lib/tools'
 import * as attachmentsLib from '../../src/lib/attachments'
 import { s3KeyPrefix } from '../../src/lib/attachments'
@@ -77,6 +78,58 @@ function fakeStreamResponse(events: unknown[]) {
 }
 
 // ── Test 1: reasoning text + signature + text + toolUse ──────────────────────
+
+test('recovers a thinking prefix mismatch once without changing canonical request messages', async () => {
+  const mismatch = new Error('ValidationException: thinking block is bound to a different conversation')
+  getMockSend().mockRejectedValueOnce(mismatch).mockResolvedValueOnce(fakeStreamResponse([
+    { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Continued' } } },
+    { messageStop: { stopReason: 'end_turn' } },
+  ]))
+  const chunks = []
+  for await (const chunk of converseStream(DEFAULT_CHAT_MODEL, 'system', [], { call: TEST_CALL })) chunks.push(chunk)
+  expect(getMockSend()).toHaveBeenCalledTimes(2)
+  const first = getMockSend().mock.calls[0][0].input
+  const second = getMockSend().mock.calls[1][0].input
+  expect(first.additionalModelRequestFields.anthropic_beta).toBeUndefined()
+  expect(second.additionalModelRequestFields).toMatchObject({
+    anthropic_beta: ['thinking-binding-controls-2026-08-01'],
+    thinking: { block_binding: { prefix_mismatch_behavior: 'drop_block' } },
+  })
+  expect(second.messages).toEqual(first.messages)
+  expect(second.inferenceConfig).toEqual(first.inferenceConfig)
+  expect(chunks.filter(c => c.type === 'delta')).toEqual([{ type: 'delta', text: 'Continued' }])
+})
+
+test('a repeated thinking prefix mismatch fails rather than retrying indefinitely', async () => {
+  getMockSend().mockRejectedValue(new Error('ValidationException: thinking block is bound to a different conversation'))
+  await expect((async () => {
+    for await (const chunk of converseStream(DEFAULT_CHAT_MODEL, 'system', [], { call: TEST_CALL })) void chunk
+  })()).rejects.toThrow('bound to a different conversation')
+  expect(getMockSend()).toHaveBeenCalledTimes(2)
+})
+
+test('a signature error unrelated to prefix binding is not softened', async () => {
+  getMockSend().mockRejectedValue(new Error('ValidationException: Invalid thinking signature'))
+  await expect((async () => {
+    for await (const chunk of converseStream(DEFAULT_CHAT_MODEL, 'system', [], { call: TEST_CALL })) void chunk
+  })()).rejects.toThrow('Invalid thinking signature')
+  expect(getMockSend()).toHaveBeenCalledTimes(1)
+})
+
+test('thinking prefix recovery cannot duplicate output that has already streamed', async () => {
+  getMockSend().mockResolvedValue({
+    stream: (async function* () {
+      yield { contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'Partial' } } }
+      throw new Error('ValidationException: thinking block is bound to a different conversation')
+    })(),
+  })
+  const chunks: StreamChunk[] = []
+  await expect((async () => {
+    for await (const chunk of converseStream(DEFAULT_CHAT_MODEL, 'system', [], { call: TEST_CALL })) chunks.push(chunk)
+  })()).rejects.toThrow('bound to a different conversation')
+  expect(getMockSend()).toHaveBeenCalledTimes(1)
+  expect(chunks.filter(c => c.type === 'delta')).toEqual([{ type: 'delta', text: 'Partial' }])
+})
 
 test('assembles verbatim turn chunk with reasoning text+signature, text, toolUse', async () => {
   getMockSend().mockResolvedValueOnce(fakeStreamResponse([

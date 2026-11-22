@@ -296,6 +296,7 @@ describe('bedrockResponses.streamTurn', () => {
     test.each([
       '400 Encrypted content cannot be used in a different region from the one that created it.',
       '400 encrypted reasoning was created for a different model',
+      '400 invalid encrypted view',
     ])('retries once without reasoning items when the API rejects it: %s', async (message) => {
       mockCreate
         .mockRejectedValueOnce(Object.assign(new Error(message), { status: 400 }))
@@ -307,6 +308,15 @@ describe('bedrockResponses.streamTurn', () => {
       expect(mockCreate).toHaveBeenCalledTimes(2)
       expect(hasReasoning(mockCreate.mock.calls[0][0].input)).toBe(true)
       expect(hasReasoning(mockCreate.mock.calls[1][0].input)).toBe(false)
+      expect(mockCreate.mock.calls[1][0].input).toEqual(
+        mockCreate.mock.calls[0][0].input.filter((i: { type?: string }) => i.type !== 'reasoning'),
+      )
+    })
+
+    test('does not loop when the stripped replay is also rejected', async () => {
+      mockCreate.mockRejectedValue(Object.assign(new Error('400 invalid encrypted view'), { status: 400 }))
+      await expect(drain(turn())).rejects.toThrow('invalid encrypted view')
+      expect(mockCreate).toHaveBeenCalledTimes(2)
     })
 
     test('does not retry any other 400', async () => {
