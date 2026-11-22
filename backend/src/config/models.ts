@@ -54,8 +54,8 @@ export interface Model {
   capabilities: ModelCapabilities
 }
 
-// Global cross-region inference profiles — available in ap-southeast-2
-// Verified via: aws bedrock list-inference-profiles --region ap-southeast-2 --type-equals SYSTEM_DEFINED
+// Global cross-region inference profiles — available in the deployment region
+// Verified via: aws bedrock list-inference-profiles --region $AWS_REGION --type-equals SYSTEM_DEFINED
 export const MODELS: Model[] = [
   {
     id: 'global.anthropic.claude-fable-5-1',
@@ -78,7 +78,7 @@ export const MODELS: Model[] = [
     replaces: ['global.anthropic.claude-sonnet-5', 'global.anthropic.claude-sonnet-4-6', 'apac.anthropic.claude-sonnet-4-6'],
     capabilities: { provider: 'bedrock-converse', thinking: 'adaptive', thinkingOff: 'between_tools', forcedToolChoice: false, attachments: true, pdf: true, promptCaching: 'explicit', maxOutputTokens: 16000 },
   },
-  // Verified live against ap-southeast-2 Oct 2026: images, PDF/txt documents, cachePoints,
+  // Verified live Oct 2026: images, PDF/txt documents, cachePoints,
   // forced toolChoice (with or without thinking) and adaptive thinking at every effort all
   // work; temperature/topP are rejected as deprecated.
   {
@@ -89,7 +89,7 @@ export const MODELS: Model[] = [
   },
   // OpenAI GPT via the Responses API on bedrock-runtime (docs/adr/0048-openai-models-on-bedrock-runtime.md).
   // Always reasons (no 'off' level) — thinkingLevels omits it.
-  // Verified live against ap-southeast-2 Oct 2026: reasoning.summary 'auto' streams a summary on all
+  // Verified live Oct 2026: reasoning.summary 'auto' streams a summary on all
   // four GPT models ('detailed' is barely longer); one reasoning item may carry several summary parts.
   // GPT-6.2 verified live Nov 2026 (Sol and Astra; there is no 6.2 Terra/Luna): images (also inside a
   // tool result), txt documents, tools, forced tool_choice with and without reasoning, own-reasoning
@@ -166,7 +166,7 @@ export const MODELS: Model[] = [
     },
   },
   // Moonshot Kimi K3 via the Responses API (docs/adr/0051-kimi-k3-on-the-responses-api.md).
-  // Verified live against ap-southeast-2 Sep 2026: effort accepts none|low|medium|high|xhigh|max
+  // Verified live Sep 2026: effort accepts none|low|medium|high|xhigh|max
   // ('off' is sent as 'none'); reasoning streams as reasoning_text, with no encrypted_content;
   // images, PDF input_file, tools, forced tool_choice and automatic prompt caching all work.
   {
@@ -179,7 +179,7 @@ export const MODELS: Model[] = [
       maxOutputTokens: 16000,
     },
   },
-  // xAI Grok via Bedrock Converse. Verified live against ap-southeast-2 Oct 2026 (Grok 4.7):
+  // xAI Grok via Bedrock Converse. Verified live Oct 2026 (Grok 4.7):
   // image blocks work; document blocks are rejected ("This model doesn't support documents"), so
   // with pdf off text documents are inlined as text (verified Nov 2026) and PDFs become a note;
   // temperature/topP are rejected (ValidationException); a cachePoint is an AccessDeniedException.
