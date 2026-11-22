@@ -33,7 +33,7 @@ test('picking a model is not saved until a message is sent', async ({ page }) =>
     const before = await request<{ model: string }>(page, 'GET', `/chats/${chat.chatId}`)
     await page.goto(`/c/${chat.chatId}`)
     await expect(page.locator(`.sidebar a[href="/c/${chat.chatId}"]`)).toBeVisible()
-    await page.locator('.model-picker').selectOption({ label: 'GPT-5.6 Terra' })
+    await page.locator('.model-picker').selectOption({ label: 'GPT-6.1 Terra' })
     await page.reload()
     const after = await request<{ model: string }>(page, 'GET', `/chats/${chat.chatId}`)
     expect(after.model).toBe(before.model)
@@ -47,7 +47,7 @@ test('switching model keeps the selected thinking effort', async ({ page }) => {
   await page.locator('.model-picker').selectOption({ label: 'GPT-6.1 Sol' })
   const effort = page.getByLabel('Thinking effort', { exact: true })
   await effort.selectOption('medium')
-  await page.locator('.model-picker').selectOption({ label: 'GPT-5.6 Terra' })
+  await page.locator('.model-picker').selectOption({ label: 'GPT-6.1 Terra' })
   await expect(effort).toHaveValue('medium')
 })
 

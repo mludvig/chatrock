@@ -106,7 +106,7 @@ one deployment in one AWS account, with an opinionated deploy script.
 | Vendor | Models | Bedrock API |
 |--------|--------|-------------|
 | Anthropic | Claude Fable 5.1, Opus 5.5, Sonnet 5.5 (default), Haiku 5.5 | Converse |
-| OpenAI | GPT-6 Astra, GPT-6.1 Sol, GPT-5.6 Terra, GPT-6 Luna | Responses |
+| OpenAI | GPT-6 Astra, GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Luna | Responses |
 | Moonshot AI | Kimi K3 | Responses |
 | xAI | Grok 4.7 | Converse |
 

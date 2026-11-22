@@ -112,10 +112,13 @@ export const MODELS: Model[] = [
       maxOutputTokens: 16000,
     },
   },
+  // Verified live Oct 2026: images (also inside a tool result), PDF/txt documents, tools, forced
+  // tool_choice with and without reasoning, every effort level, own-reasoning replay and
+  // automatic prompt caching (cache read on the repeat call) all work.
   {
-    id: 'global.openai.gpt-5.6-terra',
-    name: 'GPT-5.6 Terra',
-    replaces: ['openai.gpt-5.6-terra'],
+    id: 'global.openai.gpt-6.1-terra',
+    name: 'GPT-6.1 Terra',
+    replaces: ['global.openai.gpt-5.6-terra', 'openai.gpt-5.6-terra'],
     capabilities: {
       provider: 'bedrock-responses',
       thinking: 'effort', thinkingLevels: ['low', 'medium', 'high', 'max'],

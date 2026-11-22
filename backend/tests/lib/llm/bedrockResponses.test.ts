@@ -52,7 +52,7 @@ describe('bedrockResponses.streamTurn', () => {
     ]))
 
     const gen = bedrockResponsesProvider.streamTurn({
-      modelId: 'global.openai.gpt-5.6-terra',
+      modelId: 'global.openai.gpt-6.1-terra',
       systemPrompt: 'be helpful',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }],
       tools: [],
@@ -74,7 +74,7 @@ describe('bedrockResponses.streamTurn', () => {
 
     // instructions/store:false/stream:true are always sent
     const params = mockCreate.mock.calls[0][0]
-    expect(params.model).toBe('global.openai.gpt-5.6-terra')
+    expect(params.model).toBe('global.openai.gpt-6.1-terra')
     expect(params.instructions).toBe('be helpful')
     expect(params.store).toBe(false)
     expect(params.stream).toBe(true)
@@ -99,7 +99,7 @@ describe('bedrockResponses.streamTurn', () => {
     ]))
 
     const gen = bedrockResponsesProvider.streamTurn({
-      modelId: 'global.openai.gpt-5.6-terra',
+      modelId: 'global.openai.gpt-6.1-terra',
       systemPrompt: '',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'What is 7*8?' }] }],
       tools: [],
@@ -175,7 +175,7 @@ describe('bedrockResponses.streamTurn', () => {
     mockCreate.mockResolvedValue(fakeStream([{ type: 'response.completed', response }]))
 
     const { result } = await drain(bedrockResponsesProvider.streamTurn({
-      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'max' }, cacheBoundaryIndex: -1,
+      modelId: 'global.openai.gpt-6.1-terra', systemPrompt: '', messages: [], tools: [], settings: { thinkingEffort: 'max' }, cacheBoundaryIndex: -1,
     }))
 
     expect(result.content[0]).toEqual({ kind: 'thinking', text: 'deep thought' })
@@ -231,7 +231,7 @@ describe('bedrockResponses.streamTurn', () => {
     ]))
 
     const gen = bedrockResponsesProvider.streamTurn({
-      modelId: 'global.openai.gpt-5.6-terra',
+      modelId: 'global.openai.gpt-6.1-terra',
       systemPrompt: '',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'search for x' }] }],
       tools: [{ name: 'web_search', description: 'search', inputSchema: { type: 'object', properties: {} } }],
@@ -256,7 +256,7 @@ describe('bedrockResponses.streamTurn', () => {
       { type: 'response.completed', response: { status: 'completed', output_text: '', output: [], usage: undefined } },
     ]))
     await drain(bedrockResponsesProvider.streamTurn({
-      modelId: 'global.openai.gpt-5.6-terra',
+      modelId: 'global.openai.gpt-6.1-terra',
       systemPrompt: '',
       messages: [],
       tools: [{ name: 'search_history', description: 'x', inputSchema: {} }],
@@ -275,7 +275,7 @@ describe('bedrockResponses.streamTurn', () => {
       { type: 'response.incomplete', response },
     ]))
     const { result } = await drain(bedrockResponsesProvider.streamTurn({
-      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '', messages: [], tools: [], settings: {}, cacheBoundaryIndex: -1,
+      modelId: 'global.openai.gpt-6.1-terra', systemPrompt: '', messages: [], tools: [], settings: {}, cacheBoundaryIndex: -1,
     }))
     expect(result.stopReason).toBe('max_tokens')
   })
@@ -363,7 +363,7 @@ describe('bedrockResponses.once', () => {
   test('returns trimmed output_text, sends store:false', async () => {
     mockCreate.mockResolvedValue({ output_text: '  Paris  ' })
     const result = await bedrockResponsesProvider.once({
-      modelId: 'global.openai.gpt-5.6-terra',
+      modelId: 'global.openai.gpt-6.1-terra',
       systemPrompt: 'Answer concisely.',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'capital of France?' }] }],
       maxTokens: 32,
@@ -380,7 +380,7 @@ describe('bedrockResponses client', () => {
   test('targets the bedrock-runtime endpoint in the backend region', async () => {
     mockCreate.mockResolvedValue({ output_text: 'ok' })
     await bedrockResponsesProvider.once({
-      modelId: 'global.openai.gpt-5.6-terra', systemPrompt: '',
+      modelId: 'global.openai.gpt-6.1-terra', systemPrompt: '',
       messages: [{ role: 'user', content: [{ kind: 'text', text: 'hi' }] }],
     })
     // eslint-disable-next-line @typescript-eslint/no-require-imports

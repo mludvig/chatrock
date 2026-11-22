@@ -51,6 +51,7 @@ test('resolveModelId hands a retired id to the model that replaces it', () => {
   expect(resolveModelId('global.xai.grok-4.6').model).toBe('global.xai.grok-4.7')
   expect(resolveModelId('global.anthropic.claude-sonnet-5-5').model).toBe('global.anthropic.claude-sonnet-5-5')
   expect(resolveModelId('global.openai.gpt-5.6-luna').model).toBe('global.openai.gpt-6-luna')
+  expect(resolveModelId('global.openai.gpt-5.6-terra').model).toBe('global.openai.gpt-6.1-terra')
 })
 
 test('resolveModelId falls back to DEFAULT_CHAT_MODEL for an id nothing replaces', () => {
